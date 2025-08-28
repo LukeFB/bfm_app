@@ -1,7 +1,31 @@
 import 'package:flutter/material.dart';
 
-void main() {
-  runApp(const MyApp());
+// Added imports
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart'; // Brings in defaultTargetPlatform
+import 'package:bfm_app/app.dart';
+
+//DB
+import 'package:sqflite/sqflite.dart' as sqflite; // mobile
+import 'package:sqflite_common_ffi/sqflite_ffi.dart'; // desktop
+import 'package:bfm_app/db/database.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Detect platform
+  if ([
+    TargetPlatform.windows,
+    TargetPlatform.linux,
+    TargetPlatform.macOS,
+  ].contains(defaultTargetPlatform)) {
+    // Desktop → use FFI
+    sqfliteFfiInit();
+    sqflite.databaseFactory = databaseFactoryFfi;
+  }
+
+  await BfmDatabase.instance.database; // ensures DB tables are created
+  runApp(const ProviderScope(child: MyApp()));
 }
 
 class MyApp extends StatelessWidget {
