@@ -21,9 +21,9 @@ class BudgetScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: const [
           _TransactionItem(label: "Fortnite", amount: -10.00, date: "Mon"),
-          _TransactionItem(label: "Groceries", amount: -45.20, date: "Fri"),
+          _TransactionItem(label: "Groceries", amount: -35.20, date: "Fri"),
           _TransactionItem(label: "Rent", amount: -180.00, date: "Thur"),
-          _TransactionItem(label: "Savings", amount: -10.00, date: "Thur"),
+          _TransactionItem(label: "Textbooks", amount: -20.00, date: "Thur"),
           _TransactionItem(label: "StudyLink", amount: 280.00, date: "Wed"),
         ],
       ),

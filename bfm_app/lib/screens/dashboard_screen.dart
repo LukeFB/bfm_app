@@ -59,7 +59,7 @@ class DashboardScreen extends StatelessWidget {
                       backgroundColor: Colors.grey,
                     ),
                     const SizedBox(height: 4),
-                    const Text("40% of \$500 saved"),
+                    const Text("40% of \$200 saved"),
                   ],
                 ),
               ),
@@ -89,9 +89,9 @@ class DashboardScreen extends StatelessWidget {
                 child: Column(
                   children: const [
                     _ActivityItem(label: "Fortnite", amount: -10.00, date: "Mon"),
-                    _ActivityItem(label: "Groceries", amount: -45.20, date: "Fri"),
+                    _ActivityItem(label: "Groceries", amount: -35.20, date: "Fri"),
                     _ActivityItem(label: "Rent", amount: -180.00, date: "Thur"),
-                    _ActivityItem(label: "Savings", amount: -10.00, date: "Thur"),
+                    _ActivityItem(label: "Textbooks", amount: -20.00, date: "Thur"),
                     _ActivityItem(label: "StudyLink Payment", amount: 280.00, date: "Wed"),
                   ],
                 ),
@@ -115,7 +115,7 @@ class DashboardScreen extends StatelessWidget {
                       ),
                     ),
                     SizedBox(height: 16),
-                    Text("You’ve stayed under budget 3 weeks in a row!",
+                    Text("By staying under budget 3 weeks in a row, you have saved: \$40",
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -161,33 +161,42 @@ class DashboardScreen extends StatelessWidget {
       ),
 
       // Bottom Action Bar
-      bottomNavigationBar: Container(
-        color: bfmBlue,
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _BottomBarButton(
-              icon: Icons.add,
-              label: "Transactions",
-              onTap: () => Navigator.pushNamed(context, '/budget'),
-            ),
-            _BottomBarButton(
-              icon: Icons.insights,
-              label: "Insights",
-              onTap: () => Navigator.pushNamed(context, '/insights'),
-            ),
-            _BottomBarButton(
-              icon: Icons.flag,
-              label: "Goals",
-              onTap: () => Navigator.pushNamed(context, '/goals'),
-            ),
-            _BottomBarButton(
-              icon: Icons.chat_bubble,
-              label: "Moni AI",
-              onTap: () => Navigator.pushNamed(context, '/chat'),
-            ),
-          ],
+      bottomNavigationBar: SafeArea(
+        child: Container(
+          color: bfmBlue,
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: _BottomBarButton(
+                  icon: Icons.add,
+                  label: "Transactions",
+                  onTap: () => Navigator.pushNamed(context, '/budget'),
+                ),
+              ),
+              Expanded(
+                child: _BottomBarButton(
+                  icon: Icons.insights,
+                  label: "Insights",
+                  onTap: () => Navigator.pushNamed(context, '/insights'),
+                ),
+              ),
+              Expanded(
+                child: _BottomBarButton(
+                  icon: Icons.flag,
+                  label: "Goals",
+                  onTap: () => Navigator.pushNamed(context, '/goals'),
+                ),
+              ),
+              Expanded(
+                child: _BottomBarButton(
+                  icon: Icons.chat_bubble,
+                  label: "Moni AI",
+                  onTap: () => Navigator.pushNamed(context, '/chat'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

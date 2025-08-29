@@ -1,5 +1,6 @@
-import 'package:bfm_app/screens/dashboard_screen.dart';
+import 'package:bubble/bubble.dart';
 import 'package:flutter/material.dart';
+import 'package:bfm_app/screens/dashboard_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -10,7 +11,10 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final List<_Message> _messages = [
-    _Message(text: "Kia ora! How can I help with your budget today?", isUser: false),
+    _Message(
+      text: "Kia ora! How can I help with your budget today?",
+      isUser: false,
+    ),
   ];
   final TextEditingController _controller = TextEditingController();
 
@@ -19,7 +23,13 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty) return;
     setState(() {
       _messages.add(_Message(text: text, isUser: true));
-      _messages.add(_Message(text: "🤖 (AI Reply placeholder)", isUser: false));
+      _messages.add(
+        _Message(
+          text:
+              "Great! I’ve added a savings goal for Textbooks — \$200 by the end of the semester. If you stick to \$20 a week, you’ll get there in 10 weeks.\n\n💡 Tip: set an automatic transfer for Mondays so you don’t even have to think about it.",
+          isUser: false,
+        ),
+      );
     });
     _controller.clear();
   }
@@ -27,28 +37,35 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(title: const Text("Moni AI")),
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
+            child: ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: _messages.length,
               itemBuilder: (context, index) {
                 final msg = _messages[index];
                 return Align(
-                  alignment: msg.isUser ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 4),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: msg.isUser ? Colors.blue[200] : bfmBeige,
-                      borderRadius: BorderRadius.circular(12),
+                  alignment: msg.isUser
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: Bubble(
+                    margin: const BubbleEdges.only(top: 10),
+                    nip: msg.isUser
+                        ? BubbleNip.rightBottom
+                        : BubbleNip.leftBottom, // 👈 tail position
+                    color: msg.isUser ? Colors.blue[200]! : bfmBeige,
+                    child: Text(
+                      msg.text,
+                      style: const TextStyle(fontSize: 14),
                     ),
-                    child: Text(msg.text),
                   ),
                 );
               },
+              separatorBuilder: (context, index) =>
+                  const SizedBox(height: 4), // spacing between bubbles
             ),
           ),
           Padding(
