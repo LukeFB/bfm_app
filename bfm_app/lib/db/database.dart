@@ -74,7 +74,7 @@ class AppDatabase {
       );
     ''');
 
-    // --- Recurring Bills (expected, not inserted into transactions) ---
+    // --- Recurring Bills (expected bills) ---
     await db.execute('''
       CREATE TABLE recurring_transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
