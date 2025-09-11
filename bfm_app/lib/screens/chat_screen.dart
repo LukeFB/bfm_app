@@ -55,7 +55,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     margin: const BubbleEdges.only(top: 10),
                     nip: msg.isUser
                         ? BubbleNip.rightBottom
-                        : BubbleNip.leftBottom, // 👈 tail position
+                        : BubbleNip.leftBottom, // tail position
                     color: msg.isUser ? Colors.blue[200]! : bfmBeige,
                     child: Text(
                       msg.text,

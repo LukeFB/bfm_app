@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:bfm_app/screens/dashboard_screen.dart';
 import 'package:bfm_app/screens/onboarding_screen.dart';
-import 'package:bfm_app/screens/budget_screen.dart';
+import 'package:bfm_app/screens/transactions_screen.dart';
 import 'package:bfm_app/screens/goals_screen.dart';
 import 'package:bfm_app/screens/chat_screen.dart';
 import 'package:bfm_app/screens/insights_screen.dart';
@@ -28,7 +28,7 @@ class MyApp extends StatelessWidget {
       routes: {
         '/onboarding': (_) => const OnboardingScreen(),
         '/dashboard': (_) => const DashboardScreen(),
-        '/budget': (_) => const BudgetScreen(),
+        '/transaction': (_) => const TransactionsScreen(),
         '/goals': (_) => const GoalsScreen(),
         '/chat': (_) => const ChatScreen(),
         '/insights': (_) => const InsightsScreen(),
