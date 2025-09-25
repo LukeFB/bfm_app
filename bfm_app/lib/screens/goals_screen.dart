@@ -1,6 +1,9 @@
 import 'package:bfm_app/screens/dashboard_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:bfm_app/db/database.dart';
+import 'package:bfm_app/db/app_database.dart';
+
+import 'package:bfm_app/repositories/goal_repository.dart';
+import 'package:bfm_app/models/goal_model.dart';
 
 class GoalsScreen extends StatefulWidget {
   const GoalsScreen({Key? key}) : super(key: key);
@@ -20,7 +23,7 @@ class _GoalsScreenState extends State<GoalsScreen> {
 
   void _refreshGoals() {
     setState(() {
-      _goalsFuture = getGoals();
+      _goalsFuture = GoalRepository.getAll();
     });
   }
 
@@ -135,8 +138,9 @@ class _GoalsScreenState extends State<GoalsScreen> {
                 targetAmount: double.tryParse(targetController.text) ?? 0,
                 currentAmount: double.tryParse(currentController.text) ?? 0,
                 dueDate: dueDateController.text.isNotEmpty ? dueDateController.text : null,
+                status: 'active'
               );
-              await insertGoal(newGoal);
+              await GoalRepository.insert(newGoal);
               _refreshGoals();
               Navigator.of(context).pop(true); // return true so dashboard can decide to refresh
             },
@@ -188,7 +192,7 @@ class _GoalsScreenState extends State<GoalsScreen> {
           TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text("Cancel")),
           ElevatedButton(
             onPressed: () async {
-              await updateGoal(goal.id!, {
+              await GoalRepository.update(goal.id!, {
                 "title": titleController.text,
                 "target_amount": double.tryParse(targetController.text) ?? goal.targetAmount,
                 "current_amount": double.tryParse(currentController.text) ?? goal.currentAmount,
@@ -206,7 +210,7 @@ class _GoalsScreenState extends State<GoalsScreen> {
 
   // --- Delete Goal ---
   Future<void> _deleteGoal(int id) async {
-    await deleteGoal(id);
+    await GoalRepository.delete(id);
     _refreshGoals();
   }
 }

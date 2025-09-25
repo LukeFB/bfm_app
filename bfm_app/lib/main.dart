@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-import 'package:bfm_app/db/database.dart';
+import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/app.dart';
 
 void main() async {
@@ -31,7 +31,6 @@ void main() async {
 }
 
 /// Seeds categories, transactions, budgets, goals, and recurring bills.
-/// This makes the dashboard look full with test values before live data feeds.
 Future<void> seedMockData() async {
   final db = await AppDatabase.instance.database;
 
@@ -63,9 +62,9 @@ Future<void> seedMockData() async {
     "type": "expense",
   });
   await db.insert("transactions", {
-    "category_id": 3,
+    "category_id": 3, 
     "amount": -500.00,
-    "description": "September Rent",
+    "description": "Rent",
     "date": "2025-09-05",
     "type": "expense",
   });

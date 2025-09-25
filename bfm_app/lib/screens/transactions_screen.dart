@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:bfm_app/db/database.dart';
+import 'package:bfm_app/db/app_database.dart';
+import 'package:bfm_app/repositories/transaction_repository.dart';
+import 'package:bfm_app/models/transaction_model.dart';
 
 class TransactionsScreen extends StatefulWidget {
   const TransactionsScreen({Key? key}) : super(key: key);
@@ -19,7 +21,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
 
   void _refreshTransactions() {
     setState(() {
-      _transactionsFuture = getAllTransactions();
+      _transactionsFuture = TransactionRepository.getAll();
     });
   }
 
@@ -140,7 +142,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                 type: type,
                 categoryId: selectedCategoryId,
               );
-              await insertTransaction(txn);
+              await TransactionRepository.insert(txn);
               _refreshTransactions();
               Navigator.of(context).pop(true);
             },
@@ -153,7 +155,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
 
   // --- Delete Transaction ---
   Future<void> _deleteTransaction(int id) async {
-    await deleteTransaction(id);
+    await TransactionRepository.delete(id);
     _refreshTransactions();
   }
 }

@@ -1,12 +1,63 @@
-// lib/screens/dashboard_screen.dart
-import 'package:flutter/material.dart';
-import 'package:bfm_app/db/database.dart';
+/// ---------------------------------------------------------------------------
+/// File: dashboard_screen.dart
+/// Author: Luke Fraser-Brown
+///
+/// High-level description:
+///   This is the main landing page of the BFM app. It pulls together
+///   financial data from multiple sources (budgets, goals, transactions,
+///   recurring bills) and presents them as a dashboard.
+///
+/// Design philosophy:
+///   - Keep UI layout and data-loading concerns separate.
+///     -> Database queries live in `DashboardService`.
+///     -> Models are defined in `DashData` and other classes.
+///     -> Widgets (cards, buttons, activity items) are imported here.
+///
+///   - State management is kept lightweight with `FutureBuilder` and
+///     `setState` because this screen is refresh-based and does not
+///     need fine-grained reactivity.
+///
+///   - Visual design is card-based, with distinct sections for budgets,
+///     goals, alerts, activity, streaks, tips, and events.
+///
+/// Future scope:
+///   - Replace FutureBuilder + setState with a state management
+///     solution (e.g. Riverpod, Bloc) if complexity grows.
+///   - Make alerts, tips, and events dynamic from DB instead of static.
+/// ---------------------------------------------------------------------------
 
-// brand colors — unchanged
+import 'package:flutter/material.dart';
+import 'package:bfm_app/models/dash_data.dart';
+import 'package:bfm_app/services/dashboard_service.dart';
+import 'package:bfm_app/utils/date_utils.dart';
+import 'package:bfm_app/widgets/dashboard_card.dart';
+import 'package:bfm_app/widgets/bottom_bar_button.dart';
+import 'package:bfm_app/widgets/activity_item.dart';
+
+import 'package:bfm_app/repositories/transaction_repository.dart';
+
+import 'package:bfm_app/models/goal_model.dart';
+import 'package:bfm_app/models/transaction_model.dart';
+
+/// Brand colors used throughout the app. These constants
+/// centralize color definitions for consistency.
 const Color bfmBlue = Color(0xFF005494);
 const Color bfmOrange = Color(0xFFFF6934);
 const Color bfmBeige = Color(0xFFF5F5E1);
 
+/// ---------------------------------------------------------------------------
+/// DashboardScreen
+/// ---------------------------------------------------------------------------
+/// StatefulWidget because:
+///   - We need to hold a Future in state (`_future`) to avoid re-triggering
+///     DB queries every rebuild.
+///   - We refresh data after navigation actions (e.g. when a new
+///     transaction is added).
+///
+/// Lifecycle:
+///   - initState(): load initial dashboard data.
+///   - _refresh(): trigger reload on pull-to-refresh or return from routes.
+/// ---------------------------------------------------------------------------
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -15,87 +66,33 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  late Future<_DashData> _future; // cache the future so FutureBuilder reloads only when we say so
+  /// The dashboard data future. This is cached and re-assigned
+  /// only when `_refresh` is explicitly called.
+  late Future<DashData> _future;
 
   @override
   void initState() {
     super.initState();
-    _future = _load(); // first load
+    _future = _load(); // kick off initial load
   }
 
-  // ----------------- data loaders -----------------
-  Future<double> _getTotalWeeklyBudget() async {
-    final total = await getTotalWeeklyBudget();
-    return total.isNaN ? 0.0 : total;
-  }
-
-  Future<double> _getThisWeekExpenses() async {
-    final db = await AppDatabase.instance.database;
-    final now = DateTime.now();
-    final startOfWeek = DateTime(now.year, now.month, now.day)
-        .subtract(Duration(days: now.weekday - 1)); // Monday
-    String _fmt(DateTime d) =>
-        "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
-    final start = _fmt(startOfWeek);
-    final end = _fmt(now);
-
-    final res = await db.rawQuery('''
-      SELECT SUM(amount) AS spent
-      FROM transactions
-      WHERE type = 'expense'
-        AND date BETWEEN ? AND ?
-    ''', [start, end]);
-
-    final raw = (res.isNotEmpty ? res.first['spent'] : null);
-    final value = (raw is num) ? raw.toDouble() : 0.0;
-    return value.abs();
-  }
-
-  Future<GoalModel?> _getPrimaryGoal() async {
-    final goals = await getGoals();
-    return goals.isEmpty ? null : goals.first;
-  }
-
-  Future<List<String>> _getAlerts() async {
-    final db = await AppDatabase.instance.database;
-    final today = DateTime.now();
-    final soon = today.add(const Duration(days: 7));
-
-    final rows = await db.query(
-      'recurring_transactions',
-      columns: ['description', 'next_due_date', 'amount'],
-    );
-
-    final List<String> alerts = [];
-    for (final r in rows) {
-      final desc = (r['description'] ?? 'Bill') as String;
-      final amt = (r['amount'] is num) ? (r['amount'] as num).toDouble() : 0.0;
-      final dueStr = r['next_due_date'] as String?;
-      if (dueStr == null || dueStr.trim().isEmpty) continue;
-      DateTime? due;
-      try { due = DateTime.parse(dueStr); } catch (_) { continue; }
-      final days = due.difference(today).inDays;
-      if (days >= 0 && due.isBefore(soon)) {
-        alerts.add("⚠️ $desc (\$${amt.toStringAsFixed(0)}) due in $days day${days == 1 ? '' : 's'}");
-      }
-    }
-    if (alerts.isEmpty) {
-      return const [
-        "👉 You spent \$30 on Fortnite last month",
-        "💡 StudyLink payment due in 3 days",
-        "⚠️ Phone bill due in 4 days",
-      ];
-    }
-    return alerts;
-  }
-
-  Future<_DashData> _load() async {
+  /// Fetches and aggregates all dashboard data from services.
+  ///
+  /// Loads in parallel via Future.wait:
+  ///   0: Total weekly budget
+  ///   1: Expenses for current week
+  ///   2: Primary goal
+  ///   3: Alerts
+  ///   4: Recent transactions
+  ///
+  /// Returns a DashData object that wraps everything for easy use in UI.
+  Future<DashData> _load() async {
     final results = await Future.wait([
-      _getTotalWeeklyBudget(),  // 0
-      _getThisWeekExpenses(),   // 1
-      _getPrimaryGoal(),        // 2
-      _getAlerts(),             // 3
-      getRecentTransactions(5), // 4
+      DashboardService.getTotalWeeklyBudgetSafe(),
+      DashboardService.getThisWeekExpenses(),
+      DashboardService.getPrimaryGoal(),
+      DashboardService.getAlerts(),
+      TransactionRepository.getRecent(5),
     ]);
 
     final totalWeekly = results[0] as double;
@@ -104,7 +101,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final alerts = results[3] as List<String>;
     final recent = results[4] as List<TransactionModel>;
 
-    return _DashData(
+    return DashData(
       leftToSpendThisWeek: (totalWeekly - spentThisWeek),
       totalWeeklyBudget: totalWeekly,
       primaryGoal: goal,
@@ -113,33 +110,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // helper
-  String _weekdayLabel(String ymd) {
-    try {
-      final d = DateTime.parse(ymd);
-      const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-      return names[d.weekday - 1];
-    } catch (_) {
-      return ymd;
-    }
-  }
-
+  /// Triggers a full reload of the dashboard data.
+  /// Called by pull-to-refresh gestures and after returning from
+  /// other routes (transactions, goals, etc).
   Future<void> _refresh() async {
     setState(() {
-      _future = _load(); // trigger FutureBuilder to refetch
+      _future = _load();
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // -------------------- BODY --------------------
       body: SafeArea(
-        child: FutureBuilder<_DashData>(
+        child: FutureBuilder<DashData>(
           future: _future,
           builder: (context, snap) {
+            // Loading state: show spinner
             if (snap.connectionState != ConnectionState.done) {
               return const Center(child: CircularProgressIndicator());
             }
+
+            // Error state: render error message visibly
             if (snap.hasError) {
               return Center(
                 child: Padding(
@@ -151,10 +144,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               );
             }
+
+            // Success: snapshot contains data
             final data = snap.data!;
+
+            // Pre-format numbers for display
             final leftToSpendStr = "\$${data.leftToSpendThisWeek.toStringAsFixed(1)}";
             final weeklyBudgetStr = "Weekly budget: \$${data.totalWeeklyBudget.toStringAsFixed(0)}";
 
+            // Goal progress calculation with fallbacks
             final goalTitle = data.primaryGoal?.title ?? "Textbooks";
             final goalTarget = data.primaryGoal?.targetAmount ?? 200.0;
             final goalCurrent = data.primaryGoal?.currentAmount ?? (200.0 * 0.4);
@@ -162,6 +160,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final goalPercentLabel =
                 "${(goalProgress * 100).toStringAsFixed(0)}% of \$${goalTarget.toStringAsFixed(0)} saved";
 
+            // Main scrollable dashboard content
             return RefreshIndicator(
               onRefresh: _refresh,
               child: SingleChildScrollView(
@@ -199,8 +198,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                     const SizedBox(height: 24),
 
-                    // ---------- GOALS SNAPSHOT ----------
-                    _DashboardCard(
+                    // ---------- GOALS ----------
+                    DashboardCard(
                       title: "Savings Goals",
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -221,7 +220,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     const SizedBox(height: 24),
 
                     // ---------- ALERTS ----------
-                    _DashboardCard(
+                    DashboardCard(
                       title: "Alerts",
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -237,15 +236,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     const SizedBox(height: 24),
 
                     // ---------- RECENT ACTIVITY ----------
-                    _DashboardCard(
+                    DashboardCard(
                       title: "Recent Activity",
                       child: Column(
                         children: data.recent.map((t) {
-                          final date = _weekdayLabel(t.date);
+                          final date = DateUtilsBFM.weekdayLabel(t.date);
                           final amt = (t.type == 'expense')
                               ? -t.amount.abs()
                               : t.amount.abs();
-                          return _ActivityItem(
+                          return ActivityItem(
                             label: t.description.isEmpty ? "Transaction" : t.description,
                             amount: amt,
                             date: date,
@@ -256,8 +255,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                     const SizedBox(height: 24),
 
-                    // ---------- STREAKS / TIP / EVENTS TODO ----------
-                    const _DashboardCard(
+                    // ---------- STREAKS ----------
+                    const DashboardCard(
                       title: "Streaks",
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -285,7 +284,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                     const SizedBox(height: 24),
 
-                    const _DashboardCard(
+                    // ---------- FINANCIAL TIP ----------
+                    const DashboardCard(
                       title: "Financial Tip",
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -300,7 +300,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                     const SizedBox(height: 24),
 
-                    const _DashboardCard(
+                    // ---------- EVENTS ----------
+                    const DashboardCard(
                       title: "Upcoming Events",
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -319,7 +320,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
 
-      // ---------- BOTTOM BAR ----------
+      // -------------------- BOTTOM NAVIGATION --------------------
       bottomNavigationBar: SafeArea(
         child: Container(
           color: bfmBlue,
@@ -327,19 +328,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: Row(
             children: [
               Expanded(
-                child: _BottomBarButton(
+                child: BottomBarButton(
                   icon: Icons.add,
                   label: "Transactions",
                   onTap: () async {
-                    // Wait for the route to return, then refresh
                     await Navigator.pushNamed(context, '/transaction');
                     if (!mounted) return;
-                    _refresh();
+                    _refresh(); // always refresh after returning
                   },
                 ),
               ),
               Expanded(
-                child: _BottomBarButton(
+                child: BottomBarButton(
                   icon: Icons.insights,
                   label: "Insights",
                   onTap: () async {
@@ -350,23 +350,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ),
               Expanded(
-                child: _BottomBarButton(
+                child: BottomBarButton(
                   icon: Icons.flag,
                   label: "Goals",
                   onTap: () async {
                     final changed = await Navigator.pushNamed(context, '/goals');
                     if (!mounted) return;
-                    // If goals changed, or just in case, refresh
-                    if (changed == true) {
-                      _refresh();
-                    } else {
-                      _refresh(); // Always refresh on return
-                    }
+                    _refresh(); // refresh regardless of returned flag
                   },
                 ),
               ),
               Expanded(
-                child: _BottomBarButton(
+                child: BottomBarButton(
                   icon: Icons.chat_bubble,
                   label: "Moni AI",
                   onTap: () async {
@@ -379,111 +374,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-// helper types/widgets
-class _DashData {
-  final double leftToSpendThisWeek;
-  final double totalWeeklyBudget;
-  final GoalModel? primaryGoal;
-  final List<String> alerts;
-  final List<TransactionModel> recent;
-  _DashData({
-    required this.leftToSpendThisWeek,
-    required this.totalWeeklyBudget,
-    required this.primaryGoal,
-    required this.alerts,
-    required this.recent,
-  });
-}
-
-class _DashboardCard extends StatelessWidget {
-  final String title;
-  final Widget child;
-  const _DashboardCard({required this.title, required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: const [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 6,
-            offset: Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              )),
-          const SizedBox(height: 12),
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-class _BottomBarButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Future<void> Function() onTap; // make it async-friendly
-  const _BottomBarButton({required this.icon, required this.label, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap, // await handled in caller
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: Colors.white),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ActivityItem extends StatelessWidget {
-  final String label;
-  final double amount;
-  final String date;
-  const _ActivityItem({required this.label, required this.amount, required this.date});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label),
-          Text("\$${amount.toStringAsFixed(2)}",
-              style: TextStyle(
-                color: amount < 0 ? Colors.red : Colors.green,
-                fontWeight: FontWeight.bold,
-              )),
-          Text(date, style: const TextStyle(color: Colors.black54)),
-        ],
       ),
     );
   }
