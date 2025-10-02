@@ -108,8 +108,14 @@ class TransactionModel {
       'type': type,
     };
     if (includeId && id != null) m['id'] = id;
+    // Include Akahu metadata in DB map if available
+    if (akahuId != null) m['akahu_id'] = akahuId;
+    if (accountId != null) m['account_id'] = accountId;
+    if (connectionId != null) m['connection_id'] = connectionId;
+    if (merchantName != null) m['merchant_name'] = merchantName;
     return m;
   }
+
 
   /// Convert to an enriched map that includes Akahu metadata.
   ///
@@ -156,7 +162,20 @@ class TransactionModel {
     }
 
     // Map akahu type to local domain
-    final localType = TransactionModel.mapAkahuTypeToLocal(akahuType);
+    //final localType = TransactionModel.mapAkahuTypeToLocal(akahuType);
+    String localType;
+    final amt = (a['amount'] as num).toDouble();
+
+    // Prefer amount sign over type guess
+    if (amt < 0) {
+      localType = 'expense';
+    } else if (amt > 0) {
+      localType = 'income';
+    } else {
+      // fallback: if 0, try type
+      localType = TransactionModel.mapAkahuTypeToLocal(akahuType);
+    }
+
 
     final merchant = a['merchant'] as Map<String, dynamic>?;
 

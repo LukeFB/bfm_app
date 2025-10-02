@@ -1,17 +1,98 @@
+import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:flutter/material.dart';
+import 'package:local_auth/local_auth.dart';                       // Auth
+        
+
 import 'package:bfm_app/screens/dashboard_screen.dart';
-import 'package:bfm_app/screens/onboarding_screen.dart';
+// import 'package:bfm_app/screens/onboarding_screen.dart';
 import 'package:bfm_app/screens/transactions_screen.dart';
 import 'package:bfm_app/screens/goals_screen.dart';
 import 'package:bfm_app/screens/chat_screen.dart';
 import 'package:bfm_app/screens/insights_screen.dart';
 import 'package:bfm_app/screens/settings_screen.dart';
-import 'package:bfm_app/screens/start_screen.dart';
-import 'package:bfm_app/screens/login_screen.dart';
-import 'package:bfm_app/screens/register_screen.dart';
+import 'package:bfm_app/screens/bank_connect_screen.dart';        // BankConnect screen
+
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:flutter/material.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bfm_app/repositories/transaction_repository.dart';
+
+class LockGate extends StatefulWidget {
+  const LockGate({Key? key}) : super(key: key);
+
+  @override
+  State<LockGate> createState() => _LockGateState();
+}
+
+class _LockGateState extends State<LockGate> {
+  final LocalAuthentication auth = LocalAuthentication();
+  bool _authenticating = false;
+  String _error = "";
+
+  Future<void> _authenticate() async {
+    setState(() {
+      _authenticating = true;
+      _error = "";
+    });
+
+    try {
+      final didAuthenticate = await auth.authenticate(
+        localizedReason: 'Unlock Bay Financial Mentors',
+        options: const AuthenticationOptions(
+          stickyAuth: false,
+          biometricOnly: false,
+          useErrorDialogs: true,
+        ),
+      );
+
+      if (didAuthenticate) {
+        final prefs = await SharedPreferences.getInstance();
+        final connected = prefs.getBool('bank_connected') ?? false;
+        final nextRoute = connected ? '/dashboard' : '/bankconnect';
+
+        if (!mounted) return;
+        Navigator.pushReplacementNamed(context, nextRoute);
+      } else {
+        setState(() => _error = "Authentication failed. Try again.");
+      }
+    } catch (e) {
+      setState(() => _error = "Auth error: $e");
+    }
+
+    setState(() => _authenticating = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Secure Login")),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.lock, size: 80, color: Colors.black54),
+            const SizedBox(height: 20),
+            _authenticating
+                ? const CircularProgressIndicator()
+                : ElevatedButton(
+                    onPressed: _authenticate,
+                    child: const Text("Unlock with PIN / Biometric"),
+                  ),
+            if (_error.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(_error, style: const TextStyle(color: Colors.red)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  const MyApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -20,25 +101,20 @@ class MyApp extends StatelessWidget {
       title: 'BFM App',
       theme: ThemeData(
         primaryColor: const Color(0xFF005494),
-        colorScheme: ColorScheme.fromSwatch().copyWith(
-          secondary: const Color(0xFFFF6934),
-        ),
+        colorScheme: ColorScheme.fromSwatch().copyWith(secondary: const Color(0xFFFF6934)),
         scaffoldBackgroundColor: Colors.grey[100],
         fontFamily: 'Roboto',
       ),
-      // Dashboard
-      initialRoute: '/start',
+      home: const LockGate(),               // Set the home to our LockGate
       routes: {
-        '/start': (_) => const StartScreen(),
-        '/login': (_) => const LoginScreen(),
-        '/register': (_) => const RegisterScreen(),
-        '/onboarding': (_) => const OnboardingScreen(),
+        '/bankconnect': (_) => const BankConnectScreen(),  // NEW route for bank connection
         '/dashboard': (_) => const DashboardScreen(),
         '/transaction': (_) => const TransactionsScreen(),
         '/goals': (_) => const GoalsScreen(),
         '/chat': (_) => const ChatScreen(),
         '/insights': (_) => const InsightsScreen(),
         '/settings': (_) => const SettingsScreen(),
+        //'/onboarding': (_) => const OnboardingScreen(),
       },
     );
   }

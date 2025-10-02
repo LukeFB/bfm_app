@@ -102,4 +102,30 @@ class TransactionRepository {
     final value = (raw is num) ? raw.toDouble() : 0.0;
     return value.abs();
   }
+
+  /// Insert transactions from Akahu API payload
+  static Future<void> insertFromAkahu(List<Map<String, dynamic>> items) async {
+    final db = await AppDatabase.instance.database;
+    final batch = db.batch();
+
+    for (var item in items) {
+      // Use the model’s translator
+      final txn = TransactionModel.fromAkahu(item);
+
+      batch.insert(
+        'transactions',
+        txn.toDbMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    await batch.commit(noResult: true);
+  }
+
+
+  static Future<void> deleteAll() async {
+    final db = await AppDatabase.instance.database;
+    await db.delete("transactions");
+  }
+
 }

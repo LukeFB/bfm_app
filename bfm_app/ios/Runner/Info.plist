@@ -24,6 +24,20 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!--flutter_web_auth_2-->
+	<key>CFBundleURLTypes</key>
+	<array>
+	<dict>
+		<key>CFBundleURLSchemes</key>
+		<array>
+		<string>com.bfm.app</string>
+		</array>
+	</dict>
+	</array>
+	<!--FaceID-->
+	<key>NSFaceIDUsageDescription</key>
+	<string>Used to unlock the app with Face ID or device passcode</string>
+
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

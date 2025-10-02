@@ -330,7 +330,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Expanded(
                 child: BottomBarButton(
                   icon: Icons.add,
-                  label: "Transactions",
+                  label: "Transaction",
                   onTap: () async {
                     await Navigator.pushNamed(context, '/transaction');
                     if (!mounted) return;
@@ -368,6 +368,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     await Navigator.pushNamed(context, '/chat');
                     if (!mounted) return;
                     _refresh();
+                  },
+                ),
+              ),
+              Expanded(
+                child: BottomBarButton(
+                  icon: Icons.settings,
+                  label: "settings",
+                  onTap: () async {
+                    await Navigator.pushNamed(context, '/settings');
+                    if (!mounted) return;
+                    _refresh(); // refresh regardless of returned flag
                   },
                 ),
               ),
