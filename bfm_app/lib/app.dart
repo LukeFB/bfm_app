@@ -6,6 +6,9 @@ import 'package:bfm_app/screens/goals_screen.dart';
 import 'package:bfm_app/screens/chat_screen.dart';
 import 'package:bfm_app/screens/insights_screen.dart';
 import 'package:bfm_app/screens/settings_screen.dart';
+import 'package:bfm_app/screens/start_screen.dart';
+import 'package:bfm_app/screens/login_screen.dart';
+import 'package:bfm_app/screens/register_screen.dart';
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -24,8 +27,11 @@ class MyApp extends StatelessWidget {
         fontFamily: 'Roboto',
       ),
       // Dashboard
-      initialRoute: '/dashboard',
+      initialRoute: '/start',
       routes: {
+        '/start': (_) => const StartScreen(),
+        '/login': (_) => const LoginScreen(),
+        '/register': (_) => const RegisterScreen(),
         '/onboarding': (_) => const OnboardingScreen(),
         '/dashboard': (_) => const DashboardScreen(),
         '/transaction': (_) => const TransactionsScreen(),
