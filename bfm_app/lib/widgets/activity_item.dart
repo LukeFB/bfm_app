@@ -32,14 +32,27 @@ class ActivityItem extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label),
-          Text(
-            "\$${amount.toStringAsFixed(2)}",
-            style: TextStyle(
-              color: amount < 0 ? Colors.red : Colors.green,
-              fontWeight: FontWeight.bold,
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                "\$${amount.toStringAsFixed(2)}",
+                style: TextStyle(
+                  color: amount < 0 ? Colors.red : Colors.green,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ),
-          Text(date, style: const TextStyle(color: Colors.black54)),
+          const SizedBox(width: 32), // Add spacing between amount and date
+                    SizedBox(
+            width: 32, // Adjust width as needed for your date format
+            child: Text(
+              date,
+              textAlign: TextAlign.left,
+              style: const TextStyle(color: Colors.black54),
+            ),
+          ),
         ],
       ),
     );
