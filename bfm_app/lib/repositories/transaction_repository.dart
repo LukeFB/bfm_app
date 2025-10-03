@@ -123,7 +123,7 @@ class TransactionRepository {
   }
 
 
-  static Future<void> deleteAll() async {
+  static Future<void> clearAll() async {
     final db = await AppDatabase.instance.database;
     await db.delete("transactions");
   }

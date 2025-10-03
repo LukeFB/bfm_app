@@ -1,5 +1,5 @@
+import 'package:bfm_app/services/bank_service.dart';
 import 'package:flutter/material.dart';
-import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 // (import others if needed, e.g., for any stored tokens or account info)
 
@@ -35,15 +35,16 @@ class SettingsScreen extends StatelessWidget {
               final prefs = await SharedPreferences.getInstance();
               await prefs.setBool('bank_connected', false);
 
-              // 1. Clear all transaction data from the database
-              await TransactionRepository.deleteAll();
+              // Clear all transaction and recurring transaction data from the database
+              await BankService.disconnect();
+
               // (If you stored the bank access token or other info, also clear it here)
-              // 2. Navigate back to BankConnectScreen (reset navigation stack)
+              // Navigate back to BankConnectScreen (reset navigation stack)
               if (!context.mounted) return;
               Navigator.pushNamedAndRemoveUntil(context, '/bankconnect', (route) => false);
             },
           ),
-          // ... you can add more settings options here ...
+          // ... add more settings options here ...
         ],
       ),
     );

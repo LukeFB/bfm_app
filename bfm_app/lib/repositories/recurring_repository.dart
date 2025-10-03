@@ -14,4 +14,9 @@ class RecurringRepository {
     final result = await db.query('recurring_transactions');
     return result.map((e) => RecurringTransactionModel.fromMap(e)).toList();
   }
+
+  static Future<void> clearAll() async {
+    final db = await AppDatabase.instance.database;
+    await db.delete('recurring_transactions');
+  }
 }

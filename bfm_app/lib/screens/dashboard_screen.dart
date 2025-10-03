@@ -272,7 +272,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                           SizedBox(height: 16),
                           Text(
-                            "You have stayed under budget 3 weeks in a row",
+                            "You have opened the app 3 weeks in a row",
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
