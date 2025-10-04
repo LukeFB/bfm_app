@@ -6,6 +6,8 @@ Follow
 https://www.geeksforgeeks.org/installation-guide/how-to-install-flutter-on-windows/
 https://codelabs.developers.google.com/codelabs/flutter-codelab-first#0
 
+Set device pin 
+
 # To run
 start pixel 5 VM on android studio
 Run:

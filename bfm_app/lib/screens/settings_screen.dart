@@ -44,6 +44,17 @@ class SettingsScreen extends StatelessWidget {
               Navigator.pushNamedAndRemoveUntil(context, '/bankconnect', (route) => false);
             },
           ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blueGrey,
+            ),
+            icon: const Icon(Icons.bug_report),
+            label: const Text("View Debug Data"),
+            onPressed: () {
+              Navigator.pushNamed(context, '/debug');
+            },
+          ),
           // ... add more settings options here ...
         ],
       ),

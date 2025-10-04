@@ -46,7 +46,7 @@ class TransactionRepository {
   }
 
   /// Income – Expenses
-  static Future<double> getBalance() async {
+  static Future<double> getprofit() async {
     final db = await AppDatabase.instance.database;
     final result = await db.rawQuery('''
       SELECT 

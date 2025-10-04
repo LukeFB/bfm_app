@@ -1,6 +1,5 @@
-import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:flutter/material.dart';
-import 'package:local_auth/local_auth.dart';                       // Auth
+import 'package:local_auth/local_auth.dart'; // Auth
         
 
 import 'package:bfm_app/screens/dashboard_screen.dart';
@@ -10,14 +9,10 @@ import 'package:bfm_app/screens/goals_screen.dart';
 import 'package:bfm_app/screens/chat_screen.dart';
 import 'package:bfm_app/screens/insights_screen.dart';
 import 'package:bfm_app/screens/settings_screen.dart';
-import 'package:bfm_app/screens/bank_connect_screen.dart';        // BankConnect screen
+import 'package:bfm_app/screens/bank_connect_screen.dart'; // BankConnect screen
+import 'package:bfm_app/screens/debug_screen.dart'; // Debug
 
 import 'package:shared_preferences/shared_preferences.dart';
-
-import 'package:flutter/material.dart';
-import 'package:local_auth/local_auth.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:bfm_app/repositories/transaction_repository.dart';
 
 class LockGate extends StatefulWidget {
   const LockGate({Key? key}) : super(key: key);
@@ -105,15 +100,16 @@ class MyApp extends StatelessWidget {
         scaffoldBackgroundColor: Colors.grey[100],
         fontFamily: 'Roboto',
       ),
-      home: const LockGate(),               // Set the home to our LockGate
+      home: const LockGate(), // Set the home to our LockGate
       routes: {
-        '/bankconnect': (_) => const BankConnectScreen(),  // NEW route for bank connection
+        '/bankconnect': (_) => const BankConnectScreen(),
         '/dashboard': (_) => const DashboardScreen(),
         '/transaction': (_) => const TransactionsScreen(),
         '/goals': (_) => const GoalsScreen(),
         '/chat': (_) => const ChatScreen(),
         '/insights': (_) => const InsightsScreen(),
         '/settings': (_) => const SettingsScreen(),
+        '/debug': (_) => const DebugScreen(), // Debug
         //'/onboarding': (_) => const OnboardingScreen(),
       },
     );

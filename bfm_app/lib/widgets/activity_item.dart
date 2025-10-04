@@ -1,6 +1,6 @@
 /// ---------------------------------------------------------------------------
 /// File: activity_item.dart
-/// Author: [Your Name]
+/// Author: Luke Fraser-Brown
 /// Description:
 ///   A single row representing one transaction in the "Recent Activity"
 ///   section of the dashboard.
@@ -38,7 +38,7 @@ class ActivityItem extends StatelessWidget {
               child: Text(
                 "\$${amount.toStringAsFixed(2)}",
                 style: TextStyle(
-                  color: amount < 0 ? Colors.red : Colors.green,
+                  color: amount < 0 ? const Color(0xFFFF6934) : Colors.green,
                   fontWeight: FontWeight.bold,
                 ),
               ),

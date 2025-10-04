@@ -159,7 +159,7 @@ class BudgetAnalysisService {
           frequency = 'weekly';
         }
         // --- Monthly rule: 26–32 days, ≥ 3 repeats ---
-        else if (avgGap >= 26 && avgGap <= 32 && cluster.length >= 3 && varianceOk) {
+        else if (avgGap >= 26 && avgGap <= 32 && cluster.length >= 2 && varianceOk) {
           frequency = 'monthly';
         } else {
           continue; // Not consistent enough → skip
