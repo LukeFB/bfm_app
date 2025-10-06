@@ -24,7 +24,7 @@ import 'package:bfm_app/models/recurring_transaction_model.dart';
 
 class BudgetAnalysisService {
   /// Calculate total income for the current week (Monday → today).
-  static Future<double> getWeeklyIncome() async {
+  static Future<double> getWeeklyIncome() async { // unused
     final db = await AppDatabase.instance.database;
     final now = DateTime.now();
     final monday = now.subtract(Duration(days: now.weekday - 1));
@@ -42,7 +42,7 @@ class BudgetAnalysisService {
   }
 
   /// Spending totals by category for this week.
-  static Future<Map<String, double>> getWeeklySpendingByCategory() async {
+  static Future<Map<String, double>> getWeeklySpendingByCategory() async { // unused
     final db = await AppDatabase.instance.database;
     final now = DateTime.now();
     final monday = now.subtract(Duration(days: now.weekday - 1));
@@ -67,7 +67,7 @@ class BudgetAnalysisService {
   }
 
   /// Remaining budget for this week.
-  static Future<double> getRemainingWeeklyBudget() async {
+  static Future<double> getRemainingWeeklyBudget() async { // unused
     double totalBudget = await BudgetRepository.getTotalWeeklyBudget();
     if (totalBudget.isNaN) totalBudget = 0.0;
 
@@ -102,22 +102,29 @@ class BudgetAnalysisService {
     final expenses = allTxns.where((t) => t.type.toLowerCase() == 'expense').toList();
     if (expenses.isEmpty) return;
 
-    // --- Step 2: group by normalized description ---
+    // Step 2: group by category name (if present), else normalized description
     final Map<String, List<dynamic>> groups = {};
     for (var t in expenses) {
-      final norm = _normalizeDesc(t.description.isEmpty ? 'unknown' : t.description);
-      groups.putIfAbsent(norm, () => []).add(t);
+      final label = _preferredGroupLabel(
+        categoryName: (t as dynamic).categoryName,  // NEW (dynamic to avoid coupling)
+        description: (t as dynamic).description,
+      );
+      groups.putIfAbsent(label, () => []).add(t);
     }
+
 
     // --- Step 3: avoid inserting duplicates ---
     final existing = await RecurringRepository.getAll();
     final existingKeys = existing
-        .map((r) => "${_normalizeDesc(r.description ?? '')}-${r.amount.round()}-${r.frequency}")
-        .toSet();
+      .map((r) {
+        final lbl = _normalizeText((r.description ?? '')); // NEW
+        return "$lbl-${r.amount.round()}-${r.frequency}";
+      })
+      .toSet();
 
     // --- Step 4: process each description group ---
     for (var entry in groups.entries) {
-      final desc = entry.key;
+      final label = entry.key;
       final txns = entry.value;
 
       // --- Step 4a: cluster by similar amount ---
@@ -159,7 +166,7 @@ class BudgetAnalysisService {
           frequency = 'weekly';
         }
         // --- Monthly rule: 26–32 days, ≥ 3 repeats ---
-        else if (avgGap >= 26 && avgGap <= 32 && cluster.length >= 2 && varianceOk) {
+        else if (avgGap >= 26 && avgGap <= 32 && cluster.length >= 3 && varianceOk) {
           frequency = 'monthly';
         } else {
           continue; // Not consistent enough → skip
@@ -174,8 +181,8 @@ class BudgetAnalysisService {
         // Average amount across this cluster
         final avgAmount = cluster.map((t) => t.amount).reduce((a, b) => a + b) / cluster.length;
 
-        // Unique key to avoid duplicates
-        final key = "$desc-${avgAmount.round()}-$frequency";
+        // Unique key to avoid duplicates (based on chosen label)
+        final key = "${_normalizeText(label)}-${avgAmount.round()}-$frequency";
         if (existingKeys.contains(key)) continue;
 
         // --- Step 4d: insert recurring model ---
@@ -184,7 +191,7 @@ class BudgetAnalysisService {
           amount: avgAmount.abs(),
           frequency: frequency,
           nextDueDate: nextDue.toIso8601String().substring(0, 10),
-          description: desc,
+          description: label,
         );
 
         await RecurringRepository.insert(recurring);
@@ -192,14 +199,22 @@ class BudgetAnalysisService {
     }
   }
 
-  /// Normalize descriptions (lowercase, strip digits/symbols, trim spaces).
-  static String _normalizeDesc(String raw) {
-    return raw
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z ]'), '') // keep only letters/spaces
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+  /// Normalize (lowercase, strip digits/symbols, trim spaces).
+  static String _normalizeText(String raw) {
+  return raw
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z ]'), '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
   }
+
+
+  static String _preferredGroupLabel({String? categoryName, required String description}) {
+    final cat = (categoryName ?? '').trim();
+    if (cat.isNotEmpty) return cat;
+    return _normalizeText(description.isEmpty ? 'unknown' : description);
+  }
+
 
   /// True if amounts are “close enough” (±pct%).
   static bool _amountsClose(double a, double b, {double pct = 0.05}) {

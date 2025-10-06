@@ -3,7 +3,7 @@ import 'package:bfm_app/models/transaction_model.dart';
 import 'package:sqflite/sqflite.dart';
 
 class TransactionRepository {
-  static Future<int> insert(TransactionModel txn) async {
+  static Future<int> insert(TransactionModel txn) async { // unused
     final db = await AppDatabase.instance.database;
     return await db.insert(
       'transactions',
@@ -46,7 +46,7 @@ class TransactionRepository {
   }
 
   /// Income – Expenses
-  static Future<double> getprofit() async {
+  static Future<double> getprofit() async { // unused
     final db = await AppDatabase.instance.database;
     final result = await db.rawQuery('''
       SELECT 

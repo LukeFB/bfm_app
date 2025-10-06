@@ -28,7 +28,7 @@ class BudgetRepository {
     return (result.first['total'] as num?)?.toDouble() ?? 0.0;
   }
 
-  static Future<double> getLeftToSpend(int categoryId) async {
+  static Future<double> getLeftToSpend(int categoryId) async { // unused
     final db = await AppDatabase.instance.database;
 
     // Weekly limit
@@ -62,7 +62,7 @@ class BudgetRepository {
     return weeklyLimit - spent;
   }
 
-  static Future<Map<String, dynamic>> getMonthlySummary(
+  static Future<Map<String, dynamic>> getMonthlySummary( // unused
       int year, int month) async {
     final db = await AppDatabase.instance.database;
 

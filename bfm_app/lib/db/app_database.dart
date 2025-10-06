@@ -19,8 +19,8 @@ class AppDatabase {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
 
-    // Open the database with version 2 and an onUpgrade callback
-    return await openDatabase(path, version: 2, onCreate: _createDB, onUpgrade: _upgradeDB);
+    // Open the database with version 3 and an onUpgrade callback
+    return await openDatabase(path, version: 3, onCreate: _createDB, onUpgrade: _upgradeDB);
   }
 
   // Define the onUpgrade to alter tables for new columns
@@ -31,8 +31,13 @@ class AppDatabase {
       await db.execute("ALTER TABLE transactions ADD COLUMN account_id TEXT;");
       await db.execute("ALTER TABLE transactions ADD COLUMN connection_id TEXT;");
       await db.execute("ALTER TABLE transactions ADD COLUMN merchant_name TEXT;");
-      // (If needed, add other columns like akahu_category_id to a categories table)
     }
+
+    if (oldVersion < 3) {
+      // cat name
+      await db.execute("ALTER TABLE transactions ADD COLUMN category_name TEXT;");
+    }
+
   }
 
   /// Database schema

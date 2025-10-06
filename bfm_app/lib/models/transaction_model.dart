@@ -46,6 +46,7 @@ class TransactionModel {
   final String description;
   final String date; // YYYY-MM-DD (we keep string to match current DB usage)
   final String type; // expected values: 'income' or 'expense'
+  final String? categoryName;
 
   // Optional enrichment
   final double? balance; // if provided by Akahu
@@ -60,6 +61,7 @@ class TransactionModel {
     this.accountId,
     this.connectionId,
     this.categoryId,
+    this.categoryName,
     required this.amount,
     required this.description,
     required this.date,
@@ -80,6 +82,7 @@ class TransactionModel {
       accountId: map['account_id'] as String?,
       connectionId: map['connection_id'] as String?,
       categoryId: map['category_id'] is int ? map['category_id'] as int : (map['category_id'] as int?),
+      categoryName: map['category_name'] as String?,
       amount: (map['amount'] as num).toDouble(),
       description: (map['description'] ?? '') as String,
       date: (map['date'] as String),
@@ -108,6 +111,7 @@ class TransactionModel {
       'type': type,
     };
     if (includeId && id != null) m['id'] = id;
+    if (categoryName != null) m['category_name'] = categoryName;
     // Include Akahu metadata in DB map if available
     if (akahuId != null) m['akahu_id'] = akahuId;
     if (accountId != null) m['account_id'] = accountId;
@@ -181,9 +185,11 @@ class TransactionModel {
 
     final categoryObj = a['category'] as Map<String, dynamic>?;
     String? akahuCategoryId;
+    String? catName;
     if (categoryObj != null) {
       // category may be nested; keep the ID for later mapping if needed
       akahuCategoryId = (categoryObj['_id'] ?? categoryObj['id']) as String?;
+      catName  = categoryObj?['name'] as String?;
     }
 
     return TransactionModel(
@@ -191,6 +197,7 @@ class TransactionModel {
       accountId: a['_account'] as String?,
       connectionId: a['_connection'] as String?,
       categoryId: null, // category mapping should be resolved by an enrichment step
+      categoryName: catName,
       amount: (a['amount'] as num).toDouble(),
       description: (a['description'] ?? '') as String,
       date: isoDay,
@@ -200,6 +207,7 @@ class TransactionModel {
       merchantWebsite: merchant == null ? null : (merchant['website'] as String?),
       logo: a['meta'] is Map && (a['meta'] as Map).containsKey('logo') ? (a['meta']['logo'] as String?) : null,
       meta: a['meta'] is Map ? Map<String, dynamic>.from(a['meta'] as Map) : null,
+
     );
   }
 

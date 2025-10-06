@@ -13,5 +13,7 @@ class BankService {
     // Clear bank connection flag
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('bank_connected', false);
+
+    // TODO: disconnect akahu clear tokens
   }
 }

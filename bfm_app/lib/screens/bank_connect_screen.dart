@@ -34,7 +34,7 @@ class _BankConnectScreenState extends State<BankConnectScreen> {
     await prefs.setBool('bank_connected', true);
 
     if (!mounted) return;
-    Navigator.pushReplacementNamed(context, '/dashboard');
+    Navigator.pushReplacementNamed(context, '/dashboard'); // TODO: budget building screen
   } catch (e) {
     debugPrint("Bank connect error: $e");
     if (!mounted) return;

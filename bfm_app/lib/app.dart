@@ -3,7 +3,6 @@ import 'package:local_auth/local_auth.dart'; // Auth
         
 
 import 'package:bfm_app/screens/dashboard_screen.dart';
-// import 'package:bfm_app/screens/onboarding_screen.dart';
 import 'package:bfm_app/screens/transactions_screen.dart';
 import 'package:bfm_app/screens/goals_screen.dart';
 import 'package:bfm_app/screens/chat_screen.dart';
@@ -45,7 +44,7 @@ class _LockGateState extends State<LockGate> {
       if (didAuthenticate) {
         final prefs = await SharedPreferences.getInstance();
         final connected = prefs.getBool('bank_connected') ?? false;
-        final nextRoute = connected ? '/dashboard' : '/bankconnect';
+        final nextRoute = connected ? '/dashboard' : '/bankconnect'; // BankConnect if not connected
 
         if (!mounted) return;
         Navigator.pushReplacementNamed(context, nextRoute);
@@ -73,7 +72,7 @@ class _LockGateState extends State<LockGate> {
                 ? const CircularProgressIndicator()
                 : ElevatedButton(
                     onPressed: _authenticate,
-                    child: const Text("Unlock with PIN / Biometric"),
+                    child: const Text("Unlock with PIN / Biometric"), // TODO: style login screen
                   ),
             if (_error.isNotEmpty) ...[
               const SizedBox(height: 12),

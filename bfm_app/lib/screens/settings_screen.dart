@@ -1,7 +1,7 @@
 import 'package:bfm_app/services/bank_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-// (import others if needed, e.g., for any stored tokens or account info)
+
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({Key? key}) : super(key: key);
