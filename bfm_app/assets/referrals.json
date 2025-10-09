@@ -1,0 +1,32 @@
+[
+  {
+    "tag": "food_support",
+    "title": "Good Neighbour Tauranga",
+    "desc": "Food rescue & parcels; community support services.",
+    "url": "https://goodneighbour.co.nz/"
+  },
+  {
+    "tag": "studylink",
+    "title": "StudyLink",
+    "desc": "Allowances, loans, application dates and eligibility.",
+    "url": "https://www.studylink.govt.nz/"
+  },
+  {
+    "tag": "budgeting",
+    "title": "Bay Financial Mentors",
+    "desc": "Free, confidential financial mentoring (Tauranga).",
+    "url": "https://www.bfm.org.nz/"
+  },
+  {
+    "tag": "parking",
+    "title": "Tauranga City Parking",
+    "desc": "CBD parking info, permits, and hourly rates.",
+    "url": "https://www.tauranga.govt.nz/"
+  },
+  {
+    "tag": "scholarship",
+    "title": "Waikato Scholarships",
+    "desc": "Scholarship finder for University of Waikato.",
+    "url": "https://www.waikato.ac.nz/scholarships/"
+  }
+]
