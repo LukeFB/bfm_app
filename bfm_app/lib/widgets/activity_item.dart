@@ -26,35 +26,42 @@ class ActivityItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isNegative = amount < 0;
+    // Show "-$186.30" instead of "$-186.30"
+    final amountStr = (isNegative ? "-\$" : "\$") + amount.abs().toStringAsFixed(2);
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label),
+          // Constrain the label so it can't push amount/date off-screen
           Expanded(
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: Text(
-                "\$${amount.toStringAsFixed(2)}",
-                style: TextStyle(
-                  color: amount < 0 ? const Color(0xFFFF6934) : Colors.green,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-          const SizedBox(width: 32), // Add spacing between amount and date
-                    SizedBox(
-            width: 32, // Adjust width as needed for your date format
-            child: Text(
-              date,
-              textAlign: TextAlign.left,
-              style: const TextStyle(color: Colors.black54),
+          const SizedBox(width: 8),
+
+          // Amount stays right of the label, never compressed to zero width
+          Text(
+            amountStr,
+            style: TextStyle(
+              color: isNegative ? const Color(0xFFFF6934) : Colors.green,
+              fontWeight: FontWeight.bold,
             ),
+          ),
+          const SizedBox(width: 12),
+
+          // Let the date take just what it needs (no fixed 32px box)
+          Text(
+            date,
+            style: const TextStyle(color: Colors.black54),
           ),
         ],
       ),
     );
   }
 }
+
