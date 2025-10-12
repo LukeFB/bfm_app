@@ -1,6 +1,6 @@
 /// ---------------------------------------------------------------------------
 /// File: lib/screens/settings_screen.dart
-/// Author: Luke Fraser-Brown
+/// Author: Luke Fraser-Brown & Jack Unsworth
 ///
 /// High-level description:
 ///   Settings page extended with an API key section, without removing your
@@ -15,6 +15,7 @@
 import 'package:bfm_app/services/bank_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bfm_app/services/budget_service.dart';
 
 // Added
 import 'package:bfm_app/services/api_key_store.dart';
@@ -174,6 +175,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
 
           // ... add more settings options here ...
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Card(
+              elevation: 1,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Budgets',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 8),
+                    const Text('Clear all weekly budgets stored locally.'),
+                    const SizedBox(height: 8),
+                    ElevatedButton(
+                      onPressed: () async {
+                        // Confirm action
+                        final confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('Clear Budgets'),
+                            content: const Text(
+                                'This will delete all your budgets. Are you sure?'),
+                            actions: [
+                              TextButton(
+                                  onPressed: () => Navigator.pop(ctx, false),
+                                  child: const Text('Cancel')),
+                              ElevatedButton(
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: const Text('Clear')),
+                            ],
+                          ),
+                        );
+
+                        if (confirm == true) {
+                          await BudgetService.clearAllBudgets();
+                          if (!context.mounted) return;
+
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('All budgets cleared.')),
+                          );
+                        }
+                      },
+                      child: const Text('Clear Budgets'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );

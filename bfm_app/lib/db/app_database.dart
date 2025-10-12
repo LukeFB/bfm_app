@@ -1,3 +1,7 @@
+// -----------------------------------------------------------------------------
+// Author: Jack Unsworth
+// -----------------------------------------------------------------------------
+
 import 'dart:async';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
@@ -19,14 +23,17 @@ class AppDatabase {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
 
-    // Open the database with version 3 and an onUpgrade callback
-    return await openDatabase(path, version: 3, onCreate: _createDB, onUpgrade: _upgradeDB);
+    // Version bumped to 4
+    return await openDatabase(
+      path,
+      version: 4,
+      onCreate: _createDB,
+      onUpgrade: _upgradeDB,
+    );
   }
 
-  // Define the onUpgrade to alter tables for new columns
   Future _upgradeDB(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      // Add new columns to transactions table for Akahu metadata
       await db.execute("ALTER TABLE transactions ADD COLUMN akahu_id TEXT;");
       await db.execute("ALTER TABLE transactions ADD COLUMN account_id TEXT;");
       await db.execute("ALTER TABLE transactions ADD COLUMN connection_id TEXT;");
@@ -34,15 +41,25 @@ class AppDatabase {
     }
 
     if (oldVersion < 3) {
-      // cat name
       await db.execute("ALTER TABLE transactions ADD COLUMN category_name TEXT;");
     }
 
+    if (oldVersion < 4) {
+      await db.execute('''
+        CREATE TABLE referrals (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          description TEXT,
+          link TEXT,
+          category TEXT,
+          source TEXT,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+      ''');
+    }
   }
 
-  /// Database schema
   Future _createDB(Database db, int version) async {
-    // --- Categories ---
     await db.execute('''
       CREATE TABLE categories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +69,6 @@ class AppDatabase {
       );
     ''');
 
-    // --- Transactions ---
     await db.execute('''
       CREATE TABLE transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,7 +81,6 @@ class AppDatabase {
       );
     ''');
 
-    // --- Goals ---
     await db.execute('''
       CREATE TABLE goals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,7 +92,6 @@ class AppDatabase {
       );
     ''');
 
-    // --- Budgets ---
     await db.execute('''
       CREATE TABLE budgets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,7 +105,6 @@ class AppDatabase {
       );
     ''');
 
-    // --- Recurring Transactions ---
     await db.execute('''
       CREATE TABLE recurring_transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,7 +119,6 @@ class AppDatabase {
       );
     ''');
 
-    // --- Alerts ---
     await db.execute('''
       CREATE TABLE alerts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,12 +127,23 @@ class AppDatabase {
       );
     ''');
 
-    // --- Events ---
     await db.execute('''
       CREATE TABLE events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         text TEXT NOT NULL,
         icon TEXT
+      );
+    ''');
+
+    await db.execute('''
+      CREATE TABLE referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        description TEXT,
+        link TEXT,
+        category TEXT,
+        source TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
     ''');
   }
