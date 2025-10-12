@@ -219,7 +219,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           );
                         }
                       },
-                      child: const Text('Clear Budgets'),
+                      child: const Text('Clear Current Budgets'),
                     ),
                   ],
                 ),

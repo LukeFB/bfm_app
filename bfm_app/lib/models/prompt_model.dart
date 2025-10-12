@@ -13,6 +13,7 @@ class PromptModel {
   /// Builds the full private context string for the AI assistant.
   /// includeBudgets → embed a brief budget summary
   /// includeReferrals → embed local referral list
+
   Future<String> buildPrompt({
     bool includeBudgets = true,
     bool includeReferrals = true,
@@ -33,7 +34,7 @@ class PromptModel {
   }
 
   // ---------------------------------------------------------------------------
-  // 🔹 Budget context
+  //  Budget context
   // ---------------------------------------------------------------------------
 
   Future<String> _buildBudgetContext() async {
@@ -84,7 +85,7 @@ class PromptModel {
   }
 
   // ---------------------------------------------------------------------------
-  // 🔹 Referral context
+  //  Referral context
   // ---------------------------------------------------------------------------
 
   Future<String> _buildReferralContext() async {
