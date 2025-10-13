@@ -1,29 +1,34 @@
 /// ---------------------------------------------------------------------------
-/// File: budget_suggestion_model.dart
+/// File: lib/models/budget_suggestion_model.dart
 /// Author: Luke Fraser-Brown
 ///
 /// Purpose:
-///   View-model for the Budget Build flow. Represents a single category
-///   suggestion derived from historical spending and system signals (e.g.,
-///   detected recurring transactions).
+///   Lightweight view-model used by the Budget Build screen. Represents either
+///   (a) a normal category suggestion, or (b) an "uncategorized-by-description"
+///   suggestion that the user can categorize inline.
 ///
-/// Notes:
-///   - `weeklySuggested` is a normalized weekly spend estimate over the
-///     chosen lookback window.
-///   - `hasRecurring` elevates this suggestion's priority in UI ordering.
-///   - `usageCount` comes from the categories table and indicates how often
-///     the category is referenced by transactions (popularity / familiarity).
+/// Fields:
+///   - categoryId         (null for uncategorized-by-description rows)
+///   - categoryName       (for uncategorized rows this is the description label)
+///   - weeklySuggested
+///   - usageCount
+///   - txCount
+///   - hasRecurring
+///   - isUncategorizedGroup
+///   - description        (only for uncategorized groups)
 /// ---------------------------------------------------------------------------
 
 class BudgetSuggestionModel {
-  final int? categoryId;               // may be null for "Uncategorized"
-  final String categoryName;           // display label
-  final double weeklySuggested;        // normalized weekly spend
-  final int usageCount;                // categories.usage_count
-  final int txCount;                   // transactions in the window
-  final bool hasRecurring;             // true if RecurringRepository has this category
-  final bool isUncategorized;          // helpful for disabling selection
-  final double priorityScore;          // derived for ordering (desc)
+  final int? categoryId;
+  final String categoryName;
+  final double weeklySuggested;
+  final int usageCount;
+  final int txCount;
+  final bool hasRecurring;
+
+  // "Uncategorized by description"
+  final bool isUncategorizedGroup;
+  final String? description;
 
   const BudgetSuggestionModel({
     required this.categoryId,
@@ -32,29 +37,9 @@ class BudgetSuggestionModel {
     required this.usageCount,
     required this.txCount,
     required this.hasRecurring,
-    required this.isUncategorized,
-    required this.priorityScore,
+    this.isUncategorizedGroup = false,
+    this.description,
   });
 
-  BudgetSuggestionModel copyWith({
-    int? categoryId,
-    String? categoryName,
-    double? weeklySuggested,
-    int? usageCount,
-    int? txCount,
-    bool? hasRecurring,
-    bool? isUncategorized,
-    double? priorityScore,
-  }) {
-    return BudgetSuggestionModel(
-      categoryId: categoryId ?? this.categoryId,
-      categoryName: categoryName ?? this.categoryName,
-      weeklySuggested: weeklySuggested ?? this.weeklySuggested,
-      usageCount: usageCount ?? this.usageCount,
-      txCount: txCount ?? this.txCount,
-      hasRecurring: hasRecurring ?? this.hasRecurring,
-      isUncategorized: isUncategorized ?? this.isUncategorized,
-      priorityScore: priorityScore ?? this.priorityScore,
-    );
-  }
+  bool get isUncategorized => categoryId == null && !isUncategorizedGroup;
 }

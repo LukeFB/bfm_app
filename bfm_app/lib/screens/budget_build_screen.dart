@@ -9,17 +9,22 @@
 ///   edit weekly limits, and save.
 ///
 /// UX notes:
-///   - Starts with all items deselected; one-tap "Select Recurring".
+///   - Starts with all items deselected.
 ///   - Excludes categories < $5/week by default (recurring are kept).
+///   - "Uncategorized" is split by description and can be categorised inline.
+///   - After Save, navigates straight to Dashboard.
+///   - NEW: "Uncategorized" rows appear FIRST and users can add a custom
+///     category directly from the Categorize sheet.
 /// ---------------------------------------------------------------------------
 
 import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:bfm_app/models/budget_model.dart';
 import 'package:bfm_app/models/budget_suggestion_model.dart';
 import 'package:bfm_app/services/budget_analysis_service.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
+import 'package:bfm_app/repositories/category_repository.dart';
+import 'package:bfm_app/repositories/transaction_repository.dart';
 
 class BudgetBuildScreen extends StatefulWidget {
   const BudgetBuildScreen({super.key});
@@ -29,11 +34,9 @@ class BudgetBuildScreen extends StatefulWidget {
 }
 
 class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
-  static const int _lookbackDays = 60;
-
   bool _loading = true;
   List<BudgetSuggestionModel> _suggestions = [];
-  final Map<int?, bool> _selected = {}; // by categoryId (null allowed)
+  final Map<int?, bool> _selected = {}; // by categoryId (null allowed for map keys)
   final Map<int?, TextEditingController> _amountCtrls = {};
 
   @override
@@ -46,12 +49,11 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     setState(() => _loading = true);
 
     final list = await BudgetAnalysisService.getCategoryWeeklyBudgetSuggestions(
-      lookbackDays: _lookbackDays,
-      minWeekly: 5.0, // exclude tiny categories (<$5/wk) unless recurring
+      minWeekly: 5.0,
     );
 
-    // Start deselected; prefill text fields with suggested values
-    for (final s in list) {
+    // Start deselected; prefill text fields
+    for (final s in list.where((x) => !x.isUncategorizedGroup)) {
       _selected[s.categoryId] = false;
       _amountCtrls[s.categoryId]?.dispose();
       _amountCtrls[s.categoryId] =
@@ -91,8 +93,9 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     int saved = 0;
 
     for (final s in _suggestions) {
+      if (s.isUncategorizedGroup) continue; // not selectable as budgets
       final selected = _selected[s.categoryId] ?? false;
-      if (!selected || s.isUncategorized || s.categoryId == null) continue;
+      if (!selected || s.categoryId == null) continue;
 
       final ctrl = _amountCtrls[s.categoryId]!;
       final weeklyLimit = _parseAmount(ctrl.text);
@@ -112,32 +115,132 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Saved $saved budget${saved == 1 ? '' : 's'}')),
     );
-    // → Go to dashboard after save
     Navigator.pushNamedAndRemoveUntil(context, '/dashboard', (route) => false);
   }
 
   void _selectAllRecurring() {
     setState(() {
-      for (final s in _suggestions) {
-        if (!s.isUncategorized && s.hasRecurring) {
-          _selected[s.categoryId] = true;
-          _amountCtrls[s.categoryId]?.text =
-              _roundTo(s.weeklySuggested, 1).toStringAsFixed(2);
-        }
+      for (final s in _suggestions.where((x) => !x.isUncategorizedGroup && x.hasRecurring)) {
+        _selected[s.categoryId] = true;
+        _amountCtrls[s.categoryId]?.text =
+            _roundTo(s.weeklySuggested, 1).toStringAsFixed(2);
       }
     });
   }
 
   void _clearAll() {
     setState(() {
-      for (final s in _suggestions) {
+      for (final s in _suggestions.where((x) => !x.isUncategorizedGroup)) {
         _selected[s.categoryId] = false;
       }
     });
   }
 
-  void _goCategorize() {
-    Navigator.pushNamed(context, '/categorize');
+  // Same normalisation as the service (local to avoid importing a private fn)
+  String _normalizeText(String raw) => raw
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z ]'), '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
+  Future<void> _categorizeUncatGroup(String description) async {
+    final cats = await CategoryRepository.getAllOrderedByUsage();
+    if (!mounted) return;
+
+    final selectedCatId = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final newCatCtrl = TextEditingController();
+        bool creating = false;
+
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            Future<void> _createCategory() async {
+              final name = newCatCtrl.text.trim();
+              if (name.isEmpty) return;
+              setModalState(() => creating = true);
+              final id = await CategoryRepository.ensureByName(name);
+              if (ctx.mounted) Navigator.pop(ctx, id);
+            }
+
+            return SafeArea(
+              child: SizedBox(
+                height: MediaQuery.of(ctx).size.height * 0.7,
+                child: Column(
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('Assign a Category',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                    ),
+                    const Divider(height: 1),
+
+                    // Existing categories
+                    Expanded(
+                      child: ListView.separated(
+                        itemCount: cats.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (_, i) {
+                          final c = cats[i];
+                          return ListTile(
+                            title: Text(c['name'] as String),
+                            onTap: () => Navigator.pop(ctx, c['id'] as int),
+                          );
+                        },
+                      ),
+                    ),
+
+                    // Create-new footer
+                    const Divider(height: 1),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: newCatCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Create new category',
+                                border: OutlineInputBorder(),
+                              ),
+                              onSubmitted: (_) => _createCategory(),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton(
+                            onPressed: creating ? null : _createCategory,
+                            child: creating
+                                ? const SizedBox(
+                                    width: 16, height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Text('Create'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (selectedCatId == null) return;
+
+    // Use NORMALIZED matcher so similar descriptions group correctly.
+    final key = _normalizeText(description);
+    await TransactionRepository.updateUncategorizedByDescriptionKey(key, selectedCatId);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Categorised “$description”')),
+    );
+    await _load(); // refresh suggestions
   }
 
   @override
@@ -157,21 +260,19 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                // Header summary (responsive: wraps on small screens)
+                // Header summary (responsive)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Suggested categories are ordered by detected recurring, popularity, and weekly spend. '
-                        'Small items (< \$5/wk) are hidden.',
+                        'Uncategorized items are shown first. Ordered by recurring, popularity, and weekly spend. Small items (< \$5/wk) are hidden.',
                         style: TextStyle(fontSize: 13, color: Colors.grey),
                       ),
                       const SizedBox(height: 8),
                       Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
+                        spacing: 8, runSpacing: 8,
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           ElevatedButton.icon(
@@ -197,6 +298,36 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                     itemCount: _suggestions.length,
                     itemBuilder: (context, i) {
                       final s = _suggestions[i];
+                      final bool isGroup = s.isUncategorizedGroup;
+
+                      if (isGroup) {
+                        // --- "uncategorized-by-description" row ---
+                        return Column(
+                          children: [
+                            ListTile(
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              title: Text(s.categoryName,
+                                  style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.orange)),
+                              subtitle: Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: Text(
+                                  'Weekly suggested: \$${s.weeklySuggested.toStringAsFixed(2)} • tx: ${s.txCount}',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ),
+                              trailing: TextButton.icon(
+                                icon: const Icon(Icons.category_outlined),
+                                label: const Text('Categorize'),
+                                onPressed: s.description == null
+                                    ? null
+                                    : () => _categorizeUncatGroup(s.description!),
+                              ),
+                            ),
+                            const Divider(height: 1),
+                          ],
+                        );
+                      }
+
                       final selected = _selected[s.categoryId] ?? false;
                       final ctrl = _amountCtrls[s.categoryId]!;
 
@@ -206,90 +337,64 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                             leading: Checkbox(
                               value: selected,
-                              onChanged: s.isUncategorized
-                                  ? null
-                                  : (v) => setState(() => _selected[s.categoryId] = v ?? false),
+                              onChanged: (v) => setState(() => _selected[s.categoryId] = v ?? false),
                             ),
                             title: Row(
                               children: [
                                 Expanded(
                                   child: Text(
                                     s.categoryName,
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      color: s.isUncategorized ? Colors.grey : null,
-                                    ),
+                                    style: const TextStyle(fontWeight: FontWeight.w600),
                                   ),
                                 ),
                                 if (s.hasRecurring)
                                   const _Pill(label: 'Recurring', icon: Icons.repeat),
                               ],
                             ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Text(
+                                'Weekly suggested: \$${s.weeklySuggested.toStringAsFixed(2)} • usage: ${s.usageCount} • tx: ${s.txCount}',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(72, 0, 16, 12),
+                            child: Row(
                               children: [
-                                const SizedBox(height: 6),
-                                Text(
-                                  'Weekly suggested: \$${s.weeklySuggested.toStringAsFixed(2)} • usage: ${s.usageCount} • tx: ${s.txCount}',
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                                if (s.isUncategorized)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 6),
-                                    child: Row(
-                                      children: [
-                                        const Expanded(
-                                          child: Text(
-                                            'Uncategorized spend — assign categories to include in budget.',
-                                            style: TextStyle(fontSize: 12, color: Colors.orange),
-                                          ),
-                                        ),
-                                        TextButton(
-                                          onPressed: _goCategorize,
-                                          child: const Text('Categorize'),
-                                        ),
-                                      ],
+                                Expanded(
+                                  child: TextField(
+                                    controller: ctrl,
+                                    enabled: selected,
+                                    keyboardType: const TextInputType.numberWithOptions(
+                                      signed: false, decimal: true,
                                     ),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Weekly limit',
+                                      prefixText: '\$',
+                                      border: OutlineInputBorder(),
+                                    ),
+                                    onChanged: (_) => setState(() {}), // update Selected total live
                                   ),
+                                ),
+                                const SizedBox(width: 8),
+                                _StepperButtons(
+                                  enabled: selected,
+                                  onMinus: () {
+                                    final v = _parseAmount(ctrl.text);
+                                    final n = _roundTo((v - 1.0).clamp(0.0, double.infinity), 1);
+                                    setState(() => ctrl.text = n.toStringAsFixed(2));
+                                  },
+                                  onPlus: () {
+                                    final v = _parseAmount(ctrl.text);
+                                    final n = _roundTo(v + 1.0, 1);
+                                    setState(() => ctrl.text = n.toStringAsFixed(2));
+                                  },
+                                ),
                               ],
                             ),
                           ),
-                          if (!s.isUncategorized)
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(72, 0, 16, 12),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: TextField(
-                                      controller: ctrl,
-                                      enabled: selected,
-                                      keyboardType: const TextInputType.numberWithOptions(
-                                        signed: false, decimal: true,
-                                      ),
-                                      decoration: const InputDecoration(
-                                        labelText: 'Weekly limit',
-                                        prefixText: '\$',
-                                        border: OutlineInputBorder(),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _StepperButtons(
-                                    enabled: selected,
-                                    onMinus: () {
-                                      final v = _parseAmount(ctrl.text);
-                                      final n = _roundTo((v - 1.0).clamp(0.0, double.infinity), 1);
-                                      setState(() => ctrl.text = n.toStringAsFixed(2));
-                                    },
-                                    onPlus: () {
-                                      final v = _parseAmount(ctrl.text);
-                                      final n = _roundTo(v + 1.0, 1);
-                                      setState(() => ctrl.text = n.toStringAsFixed(2));
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ),
                           const Divider(height: 1),
                         ],
                       );
@@ -297,7 +402,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                   ),
                 ),
 
-                // Save bar
+                // Save bar (no "Skip" – avoids overflow)
                 SafeArea(
                   top: false,
                   child: Container(
@@ -308,8 +413,12 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                     ),
                     child: Row(
                       children: [
-                        _SelectedTotalBadge(amount: _selectedTotal()),
-                        const Spacer(),
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: _SelectedTotalBadge(amount: _selectedTotal()),
+                          ),
+                        ),
                         const SizedBox(width: 8),
                         FilledButton.icon(
                           icon: const Icon(Icons.save_outlined),
@@ -328,6 +437,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   double _selectedTotal() {
     double sum = 0;
     for (final s in _suggestions) {
+      if (s.isUncategorizedGroup) continue;
       if (_selected[s.categoryId] ?? false) {
         sum += _parseAmount(_amountCtrls[s.categoryId]!.text);
       }
@@ -373,14 +483,8 @@ class _StepperButtons extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        IconButton(
-          icon: const Icon(Icons.remove_circle_outline),
-          onPressed: enabled ? onMinus : null,
-        ),
-        IconButton(
-          icon: const Icon(Icons.add_circle_outline),
-          onPressed: enabled ? onPlus : null,
-        ),
+        IconButton(icon: const Icon(Icons.remove_circle_outline), onPressed: enabled ? onMinus : null),
+        IconButton(icon: const Icon(Icons.add_circle_outline), onPressed: enabled ? onPlus : null),
       ],
     );
   }

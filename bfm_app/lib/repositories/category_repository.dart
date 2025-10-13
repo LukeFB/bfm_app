@@ -86,4 +86,15 @@ class CategoryRepository {
       limit: limit,
     );
   }
+
+  /// Increment usage_count when a transaction is categorised.
+  static Future<void> incrementUsage(int id, {int by = 1}) async {
+    final db = await AppDatabase.instance.database;
+    await db.rawUpdate('''
+      UPDATE categories
+      SET usage_count = IFNULL(usage_count, 0) + ?,
+          last_used_at = ?
+      WHERE id = ?
+    ''', [by, DateTime.now().toIso8601String(), id]);
+  }
 }

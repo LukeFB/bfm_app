@@ -1,5 +1,5 @@
 /// ---------------------------------------------------------------------------
-/// File: budget_analysis_service.dart
+/// File: lib/services/budget_analysis_service.dart
 /// Author: Luke Fraser-Brown
 ///
 /// Purpose:
@@ -8,29 +8,36 @@
 ///     - Weekly category spending
 ///     - Remaining weekly budget
 ///     - Recurring transaction detection
+///     - Category weekly suggestions for the Budget Build screen:
+///         • normal categories
+///         • split "Uncategorized" into per-description groups
 ///
 /// Notes:
 ///   - All analysis is local (SQLite).
-///   - Recurring detection uses description normalization + amount clustering
-///     so that multiple bills from the same payee (e.g. Mum rent vs Mum phone)
-///     don’t get merged incorrectly.
+///   - Weekly figures are normalised by the **actual data window**
+///     (first→last transaction date), via AnalysisUtils.
+///   - < minWeekly items are filtered out unless they are recurring.
 /// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
-import 'package:bfm_app/repositories/transaction_repository.dart';
+import 'package:bfm_app/models/budget_suggestion_model.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
+import 'package:bfm_app/repositories/transaction_repository.dart';
+import 'package:bfm_app/utils/analysis_utils.dart';
 import 'package:bfm_app/models/recurring_transaction_model.dart';
-import 'package:bfm_app/models/budget_suggestion_model.dart';
 
 class BudgetAnalysisService {
-  /// Calculate total income for the current week (Monday → today).
+  // -------------------- basic helpers (unchanged) --------------------
+
   static Future<double> getWeeklyIncome() async { // unused
     final db = await AppDatabase.instance.database;
     final now = DateTime.now();
     final monday = now.subtract(Duration(days: now.weekday - 1));
-    final start = monday.toIso8601String().substring(0, 10);
-    final end = now.toIso8601String().substring(0, 10);
+    String fmt(DateTime d) =>
+        "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+    final start = fmt(monday);
+    final end = fmt(now);
 
     final res = await db.rawQuery('''
       SELECT SUM(amount) as total_income
@@ -42,13 +49,14 @@ class BudgetAnalysisService {
     return (res.first['total_income'] as num?)?.toDouble() ?? 0.0;
   }
 
-  /// Spending totals by category for this week.
   static Future<Map<String, double>> getWeeklySpendingByCategory() async { // unused
     final db = await AppDatabase.instance.database;
     final now = DateTime.now();
     final monday = now.subtract(Duration(days: now.weekday - 1));
-    final start = monday.toIso8601String().substring(0, 10);
-    final end = now.toIso8601String().substring(0, 10);
+    String fmt(DateTime d) =>
+        "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+    final start = fmt(monday);
+    final end = fmt(now);
 
     final result = await db.rawQuery('''
       SELECT 
@@ -67,30 +75,16 @@ class BudgetAnalysisService {
     };
   }
 
-  /// Remaining budget for this week.
   static Future<double> getRemainingWeeklyBudget() async { // unused
     double totalBudget = await BudgetRepository.getTotalWeeklyBudget();
     if (totalBudget.isNaN) totalBudget = 0.0;
-
     double spent = await TransactionRepository.getThisWeekExpenses();
     final remaining = totalBudget - spent;
     return totalBudget > 0 ? remaining : 0.0;
   }
 
-  /// ---------------------------------------------------------------------------
-  /// Identify recurring transactions (weekly + monthly).
-  ///
-  /// Strategy:
-  ///   - Fetch all expenses from DB.
-  ///   - Normalize description text to reduce noise (remove numbers, symbols).
-  ///   - Group by description, then sub-cluster by amount (so "Mum $50 rent" and
-  ///     "Mum $40 phone" don’t merge into one bill).
-  ///   - Check date gaps between transactions:
-  ///       * Weekly: average gap ~7 days, ≥4 repeats required.
-  ///       * Monthly: average gap ~30 days, ≥3 repeats required.
-  ///       * Gaps must be consistent (low variance).
-  ///   - Save recurring bills into `recurring_transactions` with frequency flag.
-  /// ---------------------------------------------------------------------------
+  // -------------------- recurring detection (unchanged) --------------------
+
   static Future<void> identifyRecurringTransactions() async {
     final allTxns = await TransactionRepository.getAll();
     if (allTxns.isEmpty) return;
@@ -98,7 +92,6 @@ class BudgetAnalysisService {
     final expenses = allTxns.where((t) => t.type.toLowerCase() == 'expense').toList();
     if (expenses.isEmpty) return;
 
-    // group by category name (if present), else normalized description
     final Map<String, List<dynamic>> groups = {};
     for (var t in expenses) {
       final label = _preferredGroupLabel(
@@ -110,14 +103,16 @@ class BudgetAnalysisService {
 
     final existing = await RecurringRepository.getAll();
     final existingKeys = existing
-        .map((r) => "${_normalizeText((r.description ?? ''))}-${r.amount.round()}-${r.frequency}")
+        .map((r) {
+          final lbl = _normalizeText((r.description ?? ''));
+          return "$lbl-${r.amount.round()}-${r.frequency}";
+        })
         .toSet();
 
     for (var entry in groups.entries) {
       final label = entry.key;
       final txns = entry.value;
 
-      // cluster by similar amount
       final List<List<dynamic>> clusters = [];
       for (var t in txns) {
         bool added = false;
@@ -131,11 +126,11 @@ class BudgetAnalysisService {
         if (!added) clusters.add([t]);
       }
 
-      // analyze each cluster
       for (var cluster in clusters) {
         if (cluster.length < 2) continue;
 
         final dates = cluster.map((t) => DateTime.parse(t.date)).toList()..sort();
+
         final gaps = <int>[];
         for (int i = 1; i < dates.length; i++) {
           gaps.add(dates[i].difference(dates[i - 1]).inDays);
@@ -160,14 +155,18 @@ class BudgetAnalysisService {
             : DateTime(lastDate.year, lastDate.month + 1, lastDate.day);
 
         final avgAmount = cluster.map((t) => t.amount).reduce((a, b) => a + b) / cluster.length;
+
         final key = "${_normalizeText(label)}-${avgAmount.round()}-$frequency";
         if (existingKeys.contains(key)) continue;
+
+        final nextDueStr =
+            "${nextDue.year.toString().padLeft(4, '0')}-${nextDue.month.toString().padLeft(2, '0')}-${nextDue.day.toString().padLeft(2, '0')}";
 
         final recurring = RecurringTransactionModel(
           categoryId: cluster.first.categoryId ?? 1,
           amount: avgAmount.abs(),
           frequency: frequency,
-          nextDueDate: nextDue.toIso8601String().substring(0, 10),
+          nextDueDate: nextDueStr,
           description: label,
         );
 
@@ -176,127 +175,128 @@ class BudgetAnalysisService {
     }
   }
 
-  /// Windowed weekly income (normalized). // unused
-  static Future<double> getWindowedWeeklyIncome({int lookbackDays = 60}) async {
-    final db = await AppDatabase.instance.database;
-    final now = DateTime.now();
-    final start = _fmtDay(now.subtract(Duration(days: lookbackDays)));
-    final end = _fmtDay(now);
-    final res = await db.rawQuery('''
-      SELECT IFNULL(SUM(CASE WHEN type='income' THEN amount ELSE 0 END), 0) AS total
-      FROM transactions
-      WHERE date BETWEEN ? AND ?;
-    ''', [start, end]);
-    final total = (res.first['total'] as num?)?.toDouble() ?? 0.0;
-    // Use observed window, not the nominal lookback, to avoid under/over scaling
-    return total / 4.33; // coarse average weeks in a month
-  }
+  // -------------------- SUGGESTIONS (split Uncategorized) --------------------
 
-  /// ---------------------------------------------------------------------------
-  /// Category weekly budget suggestions (ordered).
-  ///
-  /// Purpose:
-  ///   Calculates normalized weekly expenditure per category and returns a
-  ///   typed list of suggestions to populate the "Build Budget" screen.
-  ///
-  /// Normalisation fix:
-  ///   We divide by *observed* days per category:
-  ///     weeks = max(1, (last_date - first_date + 1) / 7)
-  ///   This avoids halving when we only have ~1 month of data.
-  ///
-  /// Filtering:
-  ///   Exclude categories < [minWeekly] unless they have recurring.
-  /// ---------------------------------------------------------------------------
   static Future<List<BudgetSuggestionModel>> getCategoryWeeklyBudgetSuggestions({
-    int lookbackDays = 60,
     double minWeekly = 5.0,
   }) async {
     final db = await AppDatabase.instance.database;
-    final now = DateTime.now();
-    final start = _fmtDay(now.subtract(Duration(days: lookbackDays)));
-    final end = _fmtDay(now);
 
-    final rows = await db.rawQuery('''
+    // Actual data window → normalize to $/week
+    final range = await AnalysisUtils.getGlobalDateRange();
+    final start = (range['first'] ?? _today());
+    final end   = (range['last']  ?? _today());
+    final weeks = AnalysisUtils.observedWeeks(range['first'], range['last']);
+
+    // Recurring categories
+    final recurring = await RecurringRepository.getAll();
+    final recurringCatIds = recurring.map((r) => r.categoryId).toSet();
+
+    // 1) Normal categories (excluding Uncategorized)
+    final catRows = await db.rawQuery('''
       SELECT 
         t.category_id AS category_id,
-        COALESCE(c.name, 'Uncategorized') AS category_name,
+        c.name        AS category_name,
         IFNULL(c.usage_count, 0) AS usage_count,
         COUNT(*) AS tx_count,
-        IFNULL(SUM(CASE WHEN t.type='expense' THEN ABS(t.amount) ELSE 0 END), 0) AS total_spent,
-        MIN(date(t.date)) AS first_date,
-        MAX(date(t.date)) AS last_date
+        IFNULL(SUM(CASE WHEN t.type='expense' THEN ABS(t.amount) ELSE 0 END), 0) AS total_spent
       FROM transactions t
       LEFT JOIN categories c ON c.id = t.category_id
       WHERE date(t.date) BETWEEN ? AND ?
         AND t.type='expense'
+        AND c.name IS NOT NULL
+        AND c.name <> 'Uncategorized'
       GROUP BY t.category_id, c.name, c.usage_count
     ''', [start, end]);
 
-    final recurring = await RecurringRepository.getAll();
-    final recurringCatIds = recurring.map((r) => r.categoryId).toSet();
+    final List<BudgetSuggestionModel> out = [];
 
-    final list = <BudgetSuggestionModel>[];
-    for (final r in rows) {
+    for (final r in catRows) {
       final int? catId = r['category_id'] as int?;
-      final String name = (r['category_name'] as String?) ?? 'Uncategorized';
+      final String name = (r['category_name'] as String?) ?? 'Unknown';
       final int usageCount = (r['usage_count'] as num?)?.toInt() ?? 0;
       final int txCount = (r['tx_count'] as num?)?.toInt() ?? 0;
       final double totalSpent = (r['total_spent'] as num?)?.toDouble() ?? 0.0;
-
-      // observed window per category
-      final first = r['first_date'] as String?;
-      final last  = r['last_date'] as String?;
-      int days = 7; // at least a week to avoid dividing by very small numbers
-      if (first != null && last != null && first.isNotEmpty && last.isNotEmpty) {
-        try {
-          final d1 = DateTime.parse(first);
-          final d2 = DateTime.parse(last);
-          days = (d2.difference(d1).inDays + 1).clamp(7, 365);
-        } catch (_) {}
-      }
-      final weeks = (days / 7.0).clamp(1.0, 52.0);
-      final weekly = totalSpent / weeks;
+      final double weeklySuggested = totalSpent / weeks;
 
       final bool hasRecurring = catId != null && recurringCatIds.contains(catId);
-      final bool isUncategorized = catId == null;
-      final double priority = (hasRecurring ? 1e6 : 0) + (usageCount * 1e3) + weekly;
+      if (!hasRecurring && weeklySuggested < minWeekly) continue;
 
-      // Filter out tiny budgets unless recurring
-      if (!hasRecurring && weekly < minWeekly) continue;
-
-      list.add(BudgetSuggestionModel(
+      out.add(BudgetSuggestionModel(
         categoryId: catId,
         categoryName: name,
-        weeklySuggested: double.parse(weekly.toStringAsFixed(2)),
+        weeklySuggested: double.parse(weeklySuggested.toStringAsFixed(2)),
         usageCount: usageCount,
         txCount: txCount,
         hasRecurring: hasRecurring,
-        isUncategorized: isUncategorized,
-        priorityScore: priority,
       ));
     }
 
-    list.sort((a, b) => b.priorityScore.compareTo(a.priorityScore));
-    return list;
+    // 2) "Uncategorized by description" groups
+    final uncatRows = await db.rawQuery('''
+      SELECT 
+        t.description AS description,
+        COUNT(*)      AS tx_count,
+        IFNULL(SUM(ABS(t.amount)), 0) AS total_spent
+      FROM transactions t
+      LEFT JOIN categories c ON c.id = t.category_id
+      WHERE t.type='expense'
+        AND date(t.date) BETWEEN ? AND ?
+        AND (t.category_id IS NULL OR c.name IS NULL OR c.name = 'Uncategorized')
+      GROUP BY t.description
+      HAVING description IS NOT NULL AND TRIM(description) <> ''
+      ORDER BY total_spent DESC
+    ''', [start, end]);
+
+    for (final r in uncatRows) {
+      final desc = (r['description'] as String?)?.trim() ?? '';
+      if (desc.isEmpty) continue;
+
+      final txCount = (r['tx_count'] as num?)?.toInt() ?? 0;
+      final totalSpent = (r['total_spent'] as num?)?.toDouble() ?? 0.0;
+      final double weeklySuggested = totalSpent / weeks;
+
+      if (weeklySuggested < minWeekly) continue;
+
+      out.add(BudgetSuggestionModel(
+        categoryId: null,
+        categoryName: desc,
+        weeklySuggested: double.parse(weeklySuggested.toStringAsFixed(2)),
+        usageCount: 0,
+        txCount: txCount,
+        hasRecurring: false,
+        isUncategorizedGroup: true,
+        description: desc,
+      ));
+    }
+
+    // 3) Order: UNCATEGORIZED GROUPS → recurring → usage_count → weekly_suggested
+    out.sort((a, b) {
+      if (a.isUncategorizedGroup != b.isUncategorizedGroup) {
+        // put uncategorized groups first
+        return a.isUncategorizedGroup ? -1 : 1;
+      }
+      if (b.hasRecurring != a.hasRecurring) {
+        return (b.hasRecurring ? 1 : 0).compareTo(a.hasRecurring ? 1 : 0);
+      }
+      if (b.usageCount != a.usageCount) {
+        return b.usageCount.compareTo(a.usageCount);
+      }
+      return b.weeklySuggested.compareTo(a.weeklySuggested);
+    });
+
+    return out;
   }
 
-  /// Backwards-compat alias.
-  static Future<List<BudgetSuggestionModel>> getCategoryWeeklySuggestions({
-    int lookbackDays = 60,
-    double minWeekly = 5.0,
-  }) {
-    return getCategoryWeeklyBudgetSuggestions(
-      lookbackDays: lookbackDays,
-      minWeekly: minWeekly,
-    );
-  }
+  // -------------------- helpers --------------------
 
-  // helpers
-  static String _normalizeText(String raw) => raw
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z ]'), ' ')
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
+  static String _normalizeText(String raw) {
+    return raw
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z ]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
 
   static String _preferredGroupLabel({String? categoryName, required String description}) {
     final cat = (categoryName ?? '').trim();
@@ -310,6 +310,8 @@ class BudgetAnalysisService {
     return diff <= (a.abs() * pct);
   }
 
-  static String _fmtDay(DateTime d) =>
-      "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+  static String _today() {
+    final n = DateTime.now();
+    return "${n.year.toString().padLeft(4, '0')}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}";
+  }
 }

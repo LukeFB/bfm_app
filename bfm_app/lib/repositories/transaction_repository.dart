@@ -112,10 +112,8 @@ class TransactionRepository {
     final batch = db.batch();
 
     for (var item in items) {
-      // Use the model’s translator
       final txn = TransactionModel.fromAkahu(item);
 
-      // Ensure category exists (by name from enrichment), get id
       int? categoryId;
       final catName = txn.categoryName?.trim();
       if (catName != null && catName.isNotEmpty) {
@@ -149,5 +147,96 @@ class TransactionRepository {
   static Future<void> clearAll() async {
     final db = await AppDatabase.instance.database;
     await db.delete("transactions");
+  }
+
+  // ---------------------------------------------------------------------------
+  // inline categorisation helpers
+  // ---------------------------------------------------------------------------
+
+  /// Update all *uncategorized* expenses with an exact description match.
+  static Future<int> updateUncategorizedByDescription(String description, int categoryId) async {
+    final db = await AppDatabase.instance.database;
+    return await db.update(
+      'transactions',
+      {'category_id': categoryId},
+      where: "type='expense' AND category_id IS NULL AND description = ?",
+      whereArgs: [description],
+      conflictAlgorithm: ConflictAlgorithm.abort,
+    );
+  }
+
+  /// Fetch all distinct descriptions present in uncategorized expenses (optional).
+  static Future<List<String>> getDistinctUncategorizedDescriptions({int limit = 200}) async {
+    final db = await AppDatabase.instance.database;
+    final res = await db.rawQuery('''
+      SELECT description
+      FROM transactions
+      WHERE type='expense' AND category_id IS NULL
+      GROUP BY description
+      ORDER BY COUNT(*) DESC
+      LIMIT ?
+    ''', [limit]);
+    return res.map((e) => (e['description'] as String?) ?? '').toList();
+  }
+
+  // Local normaliser (kept in sync with analysis)
+  static String _normalizeText(String raw) {
+    return raw
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z ]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  /// Bulk-categorise uncategorized expenses that match a **normalized
+  /// description key**. Does not touch already-categorised rows.
+  static Future<void> updateUncategorizedByDescriptionKey(
+    String normalizedDescriptionKey,
+    int newCategoryId,
+  ) async {
+    final db = await AppDatabase.instance.database;
+
+    // Get name for backfill (optional but nice for UI)
+    String? catName;
+    final cat = await db.query(
+      'categories',
+      columns: ['name'],
+      where: 'id = ?',
+      whereArgs: [newCategoryId],
+      limit: 1,
+    );
+    if (cat.isNotEmpty) catName = cat.first['name'] as String?;
+
+    // Pull uncategorized expenses and match by normalized description (Dart-side)
+    final rows = await db.query(
+      'transactions',
+      columns: ['id', 'description'],
+      where: "type = 'expense' AND category_id IS NULL",
+    );
+
+    final idsToUpdate = <int>[];
+    for (final r in rows) {
+      final id = r['id'] as int?;
+      final desc = (r['description'] as String? ?? '');
+      final key = _normalizeText(desc);
+      if (id != null && key == normalizedDescriptionKey) {
+        idsToUpdate.add(id);
+      }
+    }
+    if (idsToUpdate.isEmpty) return;
+
+    final batch = db.batch();
+    for (final id in idsToUpdate) {
+      batch.update(
+        'transactions',
+        {
+          'category_id': newCategoryId,
+          if (catName != null) 'category_name': catName,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    }
+    await batch.commit(noResult: true);
   }
 }

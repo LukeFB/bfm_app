@@ -85,7 +85,7 @@ class _LockGateState extends State<LockGate> {
                 ? const CircularProgressIndicator()
                 : ElevatedButton(
                     onPressed: _authenticate,
-                    child: const Text("Unlock with PIN / Biometric"), // TODO: style login screen
+                    child: const Text("Unlock with PIN"), // TODO: style login screen
                   ),
             if (_error.isNotEmpty) ...[
               const SizedBox(height: 12),
