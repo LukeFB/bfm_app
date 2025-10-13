@@ -11,8 +11,6 @@
 /// UX notes:
 ///   - Starts with all items deselected; one-tap "Select Recurring".
 ///   - Excludes categories < $5/week by default (recurring are kept).
-///   - "Uncategorized" row includes a Categorize shortcut.
-///   - After Save, navigates to Dashboard (Skip for now available).
 /// ---------------------------------------------------------------------------
 
 import 'dart:math';
@@ -185,12 +183,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                             onPressed: _clearAll,
                             child: const Text('Clear All'),
                           ),
-                          OutlinedButton.icon(
-                            icon: const Icon(Icons.category_outlined),
-                            onPressed: _goCategorize,
-                            label: const Text('Categorize “Uncategorized”'),
-                          ),
-                          _SelectedTotalBadge(amount: _selectedTotal()),
                         ],
                       ),
                     ],
@@ -318,11 +310,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                       children: [
                         _SelectedTotalBadge(amount: _selectedTotal()),
                         const Spacer(),
-                        TextButton(
-                          onPressed: () => Navigator.pushNamedAndRemoveUntil(
-                              context, '/dashboard', (route) => false),
-                          child: const Text('Skip for now'),
-                        ),
                         const SizedBox(width: 8),
                         FilledButton.icon(
                           icon: const Icon(Icons.save_outlined),
