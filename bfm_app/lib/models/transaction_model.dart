@@ -120,7 +120,6 @@ class TransactionModel {
     return m;
   }
 
-
   /// Convert to an enriched map that includes Akahu metadata.
   ///
   /// This is useful if you expand the DB to keep reconciliation columns.
@@ -160,13 +159,13 @@ class TransactionModel {
     String isoDay;
     try {
       final parsed = DateTime.parse(dt);
-      isoDay = "${parsed.year.toString().padLeft(4, '0')}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')}";
+      isoDay =
+          "${parsed.year.toString().padLeft(4, '0')}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')}";
     } catch (_) {
       isoDay = dt.split('T').first; // best-effort
     }
 
     // Map akahu type to local domain
-    //final localType = TransactionModel.mapAkahuTypeToLocal(akahuType);
     String localType;
     final amt = (a['amount'] as num).toDouble();
 
@@ -180,16 +179,14 @@ class TransactionModel {
       localType = TransactionModel.mapAkahuTypeToLocal(akahuType);
     }
 
-
     final merchant = a['merchant'] as Map<String, dynamic>?;
 
     final categoryObj = a['category'] as Map<String, dynamic>?;
     String? akahuCategoryId;
     String? catName;
     if (categoryObj != null) {
-      // category may be nested; keep the ID for later mapping if needed
       akahuCategoryId = (categoryObj['_id'] ?? categoryObj['id']) as String?;
-      catName  = categoryObj?['name'] as String?;
+      catName = categoryObj['name'] as String?;
     }
 
     return TransactionModel(
@@ -204,10 +201,12 @@ class TransactionModel {
       type: localType,
       balance: a['balance'] is num ? (a['balance'] as num).toDouble() : null,
       merchantName: merchant == null ? null : (merchant['name'] as String?),
-      merchantWebsite: merchant == null ? null : (merchant['website'] as String?),
-      logo: a['meta'] is Map && (a['meta'] as Map).containsKey('logo') ? (a['meta']['logo'] as String?) : null,
+      merchantWebsite:
+          merchant == null ? null : (merchant['website'] as String?),
+      logo: a['meta'] is Map && (a['meta'] as Map).containsKey('logo')
+          ? (a['meta']['logo'] as String?)
+          : null,
       meta: a['meta'] is Map ? Map<String, dynamic>.from(a['meta'] as Map) : null,
-
     );
   }
 
@@ -225,7 +224,8 @@ class TransactionModel {
   double get signedAmount => isExpense ? -amount.abs() : amount.abs();
 
   /// Return a simple human-friendly amount string with currency symbol.
-  String formattedAmount({int decimals = 2}) => '\$${amount.toStringAsFixed(decimals)}';
+  String formattedAmount({int decimals = 2}) =>
+      '\$${amount.toStringAsFixed(decimals)}';
 
   /// Map Akahu's many granular types into our simplified domain of
   /// 'expense' / 'income'. This is conservative and should be extended

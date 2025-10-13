@@ -20,29 +20,31 @@ class _BankConnectScreenState extends State<BankConnectScreen> {
     final userToken = _userTokenController.text.trim();
 
     try {
-    // Fetch from Akahu
-    final items = await AkahuService.fetchTransactions(appToken, userToken);
+      // Fetch from Akahu
+      final items = await AkahuService.fetchTransactions(appToken, userToken);
 
-    // Insert into DB
-    await TransactionRepository.insertFromAkahu(items);
+      // Insert into DB
+      await TransactionRepository.insertFromAkahu(items);
 
-    // Detect recurring
-    await BudgetAnalysisService.identifyRecurringTransactions();
+      // Detect recurring
+      await BudgetAnalysisService.identifyRecurringTransactions();
 
-    // Mark connected
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('bank_connected', true);
+      // Mark connected
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('bank_connected', true);
 
-    if (!mounted) return;
-    Navigator.pushReplacementNamed(context, '/dashboard'); // TODO: budget building screen
-  } catch (e) {
-    debugPrint("Bank connect error: $e");
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Error: $e")),
-    );
+      if (!mounted) return;
+
+      // ✅ Send the user straight to the new Budget Build screen
+      Navigator.pushReplacementNamed(context, '/budget/build');
+    } catch (e) {
+      debugPrint("Bank connect error: $e");
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e")),
+      );
+    }
   }
-}
 
   @override
   Widget build(BuildContext context) {

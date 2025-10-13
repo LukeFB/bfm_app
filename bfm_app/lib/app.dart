@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:local_auth/local_auth.dart'; // Auth
         
-
 import 'package:bfm_app/screens/dashboard_screen.dart';
 import 'package:bfm_app/screens/transactions_screen.dart';
 import 'package:bfm_app/screens/goals_screen.dart';
@@ -10,6 +9,12 @@ import 'package:bfm_app/screens/insights_screen.dart';
 import 'package:bfm_app/screens/settings_screen.dart';
 import 'package:bfm_app/screens/bank_connect_screen.dart'; // BankConnect screen
 import 'package:bfm_app/screens/debug_screen.dart'; // Debug
+
+// ✅ NEW: Budget Build screen
+import 'package:bfm_app/screens/budget_build_screen.dart';
+
+// ✅ Used to decide if we should send a connected user to budget builder
+import 'package:bfm_app/repositories/budget_repository.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -44,7 +49,15 @@ class _LockGateState extends State<LockGate> {
       if (didAuthenticate) {
         final prefs = await SharedPreferences.getInstance();
         final connected = prefs.getBool('bank_connected') ?? false;
-        final nextRoute = connected ? '/dashboard' : '/bankconnect'; // BankConnect if not connected
+
+        String nextRoute;
+        if (!connected) {
+          nextRoute = '/bankconnect';
+        } else {
+          // ✅ If bank connected but no budgets saved yet → go to builder
+          final budgets = await BudgetRepository.getAll();
+          nextRoute = budgets.isEmpty ? '/budget/build' : '/dashboard';
+        }
 
         if (!mounted) return;
         Navigator.pushReplacementNamed(context, nextRoute);
@@ -109,7 +122,9 @@ class MyApp extends StatelessWidget {
         '/insights': (_) => const InsightsScreen(),
         '/settings': (_) => const SettingsScreen(),
         '/debug': (_) => const DebugScreen(), // Debug
-        //'/onboarding': (_) => const OnboardingScreen(),
+
+        // ✅ NEW: route to the Budget Build screen (post-bank-connect)
+        '/budget/build': (_) => const BudgetBuildScreen(),
       },
     );
   }

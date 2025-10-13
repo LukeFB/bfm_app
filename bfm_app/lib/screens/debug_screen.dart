@@ -27,6 +27,17 @@ class _DebugScreenState extends State<DebugScreen> {
     _load();
   }
 
+  String _fmtBytes(int bytes) {
+    const units = ['B', 'KB', 'MB', 'GB'];
+    double size = bytes.toDouble();
+    int unit = 0;
+    while (size >= 1024 && unit < units.length - 1) {
+      size /= 1024;
+      unit++;
+    }
+    return '${size.toStringAsFixed(2)} ${units[unit]}';
+  }
+
   Future<void> _load() async {
     final buf = StringBuffer();
 
@@ -53,8 +64,27 @@ class _DebugScreenState extends State<DebugScreen> {
     // ---------- DB meta ----------
     final db = await AppDatabase.instance.database;
     final userVersion = (await db.rawQuery('PRAGMA user_version;')).first.values.first;
+    final fkOn = (await db.rawQuery('PRAGMA foreign_keys;')).first.values.first;
+    String? dbPath;
+    try {
+      final dblist = await db.rawQuery('PRAGMA database_list;');
+      final main = dblist.firstWhere((r) => (r['name'] as String?) == 'main', orElse: () => {});
+      dbPath = (main['file'] ?? '') as String?;
+    } catch (_) {}
+    int dbBytes = 0;
+    try {
+      final pageSize = (await db.rawQuery('PRAGMA page_size;')).first.values.first as int;
+      final pageCount = (await db.rawQuery('PRAGMA page_count;')).first.values.first as int;
+      dbBytes = pageSize * pageCount;
+    } catch (_) {}
+
     buf.writeln('🗄️  DATABASE');
     buf.writeln('- sqlite user_version: $userVersion');
+    buf.writeln('- foreign_keys: $fkOn');
+    if (dbPath != null && dbPath!.isNotEmpty) {
+      buf.writeln('- path: $dbPath');
+      buf.writeln('- size: ${_fmtBytes(dbBytes)} ($dbBytes bytes)');
+    }
 
     // table info helper
     Future<String> tableInfo(String t) async {
@@ -63,16 +93,35 @@ class _DebugScreenState extends State<DebugScreen> {
       return '• $t (rows: $cnt)\n  columns: ${cols.map((c) => c['name']).toList()}';
     }
 
-    buf.writeln(await tableInfo('transactions'));
-    buf.writeln(await tableInfo('recurring_transactions'));
-    // If you have budgets & categories tables:
+    try { buf.writeln(await tableInfo('transactions')); } catch (_) {}
+    try { buf.writeln(await tableInfo('recurring_transactions')); } catch (_) {}
     try { buf.writeln(await tableInfo('budgets')); } catch (_) {}
     try { buf.writeln(await tableInfo('categories')); } catch (_) {}
     buf.writeln('');
 
+    // ---------- Indexes / Triggers ----------
+    Future<void> dumpIndexesFor(String table) async {
+      try {
+        final idx = await db.rawQuery('PRAGMA index_list($table);');
+        if (idx.isNotEmpty) {
+          buf.writeln('   $table indexes: ${idx.map((e) => e['name']).toList()}');
+        }
+      } catch (_) {}
+    }
+
+    buf.writeln('🧩 INDEXES & TRIGGERS');
+    await dumpIndexesFor('transactions');
+    await dumpIndexesFor('categories');
+    try {
+      final triggers = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name;",
+      );
+      buf.writeln('   triggers: ${triggers.map((e) => e['name']).toList()}');
+    } catch (_) {}
+    buf.writeln('');
+
     // ---------- Budgets ----------
     buf.writeln('💰 BUDGETS');
-    // read budgets raw to avoid repo coupling
     List<Map<String, dynamic>> rows = [];
     try {
       rows = await db.query('budgets', orderBy: 'id ASC');
@@ -81,8 +130,73 @@ class _DebugScreenState extends State<DebugScreen> {
       buf.writeln('(none)');
     } else {
       for (final r in rows) {
-        buf.writeln('- [${r['id']}] ${r['name'] ?? "Unnamed"} | weekly_limit: ${r['weekly_limit']}');
+        buf.writeln('- [${r['id']}] ${r['category_id']} | weekly_limit: ${r['weekly_limit']} | start: ${r['period_start']}');
       }
+    }
+    buf.writeln('');
+
+    // ---------- Categories ----------
+    buf.writeln('🏷️  CATEGORIES');
+    try {
+      // Top categories & actual txn counts (join) — ordered by usage_count then name
+      final cats = await db.rawQuery('''
+        SELECT
+          c.id, c.name, c.usage_count, c.first_seen_at, c.last_used_at,
+          IFNULL(COUNT(t.id), 0) AS tx_count
+        FROM categories c
+        LEFT JOIN transactions t ON t.category_id = c.id
+        GROUP BY c.id
+        ORDER BY c.usage_count DESC, c.name ASC
+        LIMIT 50;
+      ''');
+
+      if (cats.isEmpty) {
+        buf.writeln('(none)');
+      } else {
+        for (final c in cats) {
+          final id = c['id'];
+          final name = c['name'];
+          final uc = c['usage_count'];
+          final txc = c['tx_count'];
+          final last = c['last_used_at'] ?? '';
+          final delta = (uc is int && txc is int) ? (uc - txc) : 0;
+          final mismatch = delta == 0 ? '' : '  ⚠︎ usage≠actual (Δ=$delta)';
+          buf.writeln('- [$id] $name | usage_count=$uc | tx=$txc | last_used=$last$mismatch');
+        }
+        if (cats.length >= 50) buf.writeln('  ...(only first 50 shown)');
+      }
+
+      // Mismatch summary
+      final mismatches = await db.rawQuery('''
+        SELECT COUNT(1) AS cnt
+        FROM (
+          SELECT c.id, c.usage_count, IFNULL(COUNT(t.id),0) AS txc
+          FROM categories c
+          LEFT JOIN transactions t ON t.category_id = c.id
+          GROUP BY c.id
+          HAVING c.usage_count != IFNULL(COUNT(t.id),0)
+        )
+      ''');
+      final mm = (mismatches.first['cnt'] as num?)?.toInt() ?? 0;
+      if (mm > 0) {
+        buf.writeln('  → ⚠︎ categories with usage_count mismatch: $mm');
+      }
+
+      // Orphans / empties
+      final orphanTxn = Sqflite.firstIntValue(await db.rawQuery('''
+        SELECT COUNT(*) FROM transactions t
+        LEFT JOIN categories c ON c.id = t.category_id
+        WHERE t.category_id IS NOT NULL AND c.id IS NULL
+      ''')) ?? 0;
+      final emptyCats = Sqflite.firstIntValue(await db.rawQuery('''
+        SELECT COUNT(*) FROM categories c
+        LEFT JOIN transactions t ON t.category_id = c.id
+        WHERE t.id IS NULL
+      ''')) ?? 0;
+      buf.writeln('  orphans: txns→missing category: $orphanTxn');
+      buf.writeln('  empty categories (no txns): $emptyCats');
+    } catch (e) {
+      buf.writeln('(error reading categories: $e)');
     }
     buf.writeln('');
 
@@ -142,9 +256,16 @@ class _DebugScreenState extends State<DebugScreen> {
     if (txns.length > 50) buf.writeln('  ...(only first 50 shown)');
     buf.writeln('');
 
-    // ---------- Consistency checks ----------
+    // ---------- Integrity / Consistency checks ----------
     buf.writeln('🔍 CONSISTENCY CHECKS');
     final warnings = <String>[];
+
+    // 0) PRAGMA integrity_check
+    try {
+      final ic = await db.rawQuery('PRAGMA integrity_check;');
+      final res = (ic.first.values.first ?? '').toString();
+      if (res != 'ok') warnings.add('integrity_check: $res');
+    } catch (_) {}
 
     // 1) Wrong sign vs type
     for (final t in txns.take(500)) { // limit to keep fast

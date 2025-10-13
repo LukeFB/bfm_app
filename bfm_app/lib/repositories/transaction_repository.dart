@@ -1,5 +1,6 @@
 import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/models/transaction_model.dart';
+import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:sqflite/sqflite.dart';
 
 class TransactionRepository {
@@ -70,8 +71,8 @@ class TransactionRepository {
 
     Map<String, double> totals = {};
     for (var row in result) {
-      totals[row['category'] as String] =
-          (row['total'] as num?)?.toDouble().abs() ?? 0.0;
+      final key = (row['category'] as String?) ?? 'Uncategorized';
+      totals[key] = (row['total'] as num?)?.toDouble().abs() ?? 0.0;
     }
     return totals;
   }
@@ -104,6 +105,8 @@ class TransactionRepository {
   }
 
   /// Insert transactions from Akahu API payload
+  /// - Ensures categories exist (by enriched name) and assigns category_id
+  /// - Triggers maintain categories.usage_count
   static Future<void> insertFromAkahu(List<Map<String, dynamic>> items) async {
     final db = await AppDatabase.instance.database;
     final batch = db.batch();
@@ -112,9 +115,30 @@ class TransactionRepository {
       // Use the model’s translator
       final txn = TransactionModel.fromAkahu(item);
 
+      // Ensure category exists (by name from enrichment), get id
+      int? categoryId;
+      final catName = txn.categoryName?.trim();
+      if (catName != null && catName.isNotEmpty) {
+        final akahuCategoryId = (item['category'] is Map<String, dynamic>)
+            ? ((item['category'] as Map<String, dynamic>)['_id'] ??
+                (item['category'] as Map<String, dynamic>)['id']) as String?
+            : null;
+
+        categoryId = await CategoryRepository.ensureByName(
+          catName,
+          akahuCategoryId: akahuCategoryId,
+        );
+      } else {
+        categoryId = await CategoryRepository.ensureByName('Uncategorized');
+      }
+
+      final map = txn.toDbMap();
+      map['category_id'] = categoryId;
+      map['category_name'] = catName ?? 'Uncategorized';
+
       batch.insert(
         'transactions',
-        txn.toDbMap(),
+        map,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
@@ -122,10 +146,8 @@ class TransactionRepository {
     await batch.commit(noResult: true);
   }
 
-
   static Future<void> clearAll() async {
     final db = await AppDatabase.instance.database;
     await db.delete("transactions");
   }
-
 }

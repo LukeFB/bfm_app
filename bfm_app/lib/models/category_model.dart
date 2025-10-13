@@ -2,6 +2,11 @@
 /// File: category_model.dart
 /// Author: Luke Fraser-Brown
 ///
+
+/// ---------------------------------------------------------------------------
+/// File: category_model.dart
+/// Author: Luke Fraser-Brown
+///
 /// Purpose:
 ///   Domain model for expense/income categories (Food, Rent, Bills, etc).
 ///   Maps to `categories` table and may be populated from Akahu enrichment
@@ -21,12 +26,20 @@ class CategoryModel {
   final String? color; // hex color as string (e.g. "#FFEEAA")
   final String? akahuCategoryId; // external mapping (optional)
 
+  // Optional bookkeeping
+  final int? usageCount;
+  final String? firstSeenAt;
+  final String? lastUsedAt;
+
   const CategoryModel({
     this.id,
     required this.name,
     this.icon,
     this.color,
     this.akahuCategoryId,
+    this.usageCount,
+    this.firstSeenAt,
+    this.lastUsedAt,
   });
 
   factory CategoryModel.fromMap(Map<String, dynamic> m) {
@@ -36,6 +49,9 @@ class CategoryModel {
       icon: m['icon'] as String?,
       color: m['color'] as String?,
       akahuCategoryId: m['akahu_category_id'] as String?,
+      usageCount: (m['usage_count'] as num?)?.toInt(),
+      firstSeenAt: m['first_seen_at'] as String?,
+      lastUsedAt: m['last_used_at'] as String?,
     );
   }
 
@@ -45,8 +61,12 @@ class CategoryModel {
       'icon': icon,
       'color': color,
       'akahu_category_id': akahuCategoryId,
+      if (usageCount != null) 'usage_count': usageCount,
+      if (firstSeenAt != null) 'first_seen_at': firstSeenAt,
+      if (lastUsedAt != null) 'last_used_at': lastUsedAt,
     };
     if (includeId && id != null) m['id'] = id;
     return m;
   }
 }
+
