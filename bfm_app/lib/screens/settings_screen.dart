@@ -20,6 +20,8 @@ import 'package:bfm_app/services/budget_service.dart';
 // Added
 import 'package:bfm_app/services/api_key_store.dart';
 
+import 'package:bfm_app/services/test_data_service.dart';
+
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
 
@@ -220,6 +222,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         }
                       },
                       child: const Text('Clear Current Budgets'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Card(
+              elevation: 1,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Test Data',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 8),
+                    const Text('Insert sample categories and budgets for testing.'),
+                    const SizedBox(height: 8),
+                    ElevatedButton(
+                      onPressed: () async {
+                        await TestDataService.addTestData();
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Test data added!')),
+                        );
+                      },
+                      child: const Text('Add Test Data'),
                     ),
                   ],
                 ),
