@@ -13,8 +13,8 @@
 ///   - Excludes categories < $5/week by default (recurring are kept).
 ///   - "Uncategorized" is split by description and can be categorised inline.
 ///   - After Save, navigates straight to Dashboard.
-///   - NEW: "Uncategorized" rows appear FIRST and users can add a custom
-///     category directly from the Categorize sheet.
+///   - Users can create a NEW category while categorising an uncategorized row,
+///     and optionally add it to the budget immediately with a custom weekly amount.
 /// ---------------------------------------------------------------------------
 
 import 'dart:math';
@@ -143,17 +143,29 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
 
-  Future<void> _categorizeUncatGroup(String description) async {
+  /// Categorize an "uncategorized-by-description" suggestion:
+  /// - Choose existing OR create new category.
+  /// - Optionally add to budget with custom weekly amount.
+  Future<void> _categorizeUncatGroup(BudgetSuggestionModel s) async {
+    // Preload categories for list
     final cats = await CategoryRepository.getAllOrderedByUsage();
+
     if (!mounted) return;
 
-    final selectedCatId = await showModalBottomSheet<int>(
+    // Result payload from the modal
+    final result = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
       builder: (ctx) {
-        final newCatCtrl = TextEditingController();
+        int? chosenId;
+        String? chosenName;
+        final amountCtrl = TextEditingController(
+          text: _roundTo(s.weeklySuggested, 1).toStringAsFixed(2),
+        );
+        bool addToBudget = true;
         bool creating = false;
+        final newCatCtrl = TextEditingController();
 
         return StatefulBuilder(
           builder: (ctx, setModalState) {
@@ -162,66 +174,138 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
               if (name.isEmpty) return;
               setModalState(() => creating = true);
               final id = await CategoryRepository.ensureByName(name);
-              if (ctx.mounted) Navigator.pop(ctx, id);
+              chosenId = id;
+              chosenName = name;
+              setModalState(() => creating = false);
+            }
+
+            void _pick(Map<String, dynamic> c) {
+              chosenId = c['id'] as int;
+              chosenName = (c['name'] as String?) ?? 'Category';
+              setModalState(() {}); // refresh checkmark
             }
 
             return SafeArea(
-              child: SizedBox(
-                height: MediaQuery.of(ctx).size.height * 0.7,
-                child: Column(
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Text('Assign a Category',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                    ),
-                    const Divider(height: 1),
-
-                    // Existing categories
-                    Expanded(
-                      child: ListView.separated(
-                        itemCount: cats.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (_, i) {
-                          final c = cats[i];
-                          return ListTile(
-                            title: Text(c['name'] as String),
-                            onTap: () => Navigator.pop(ctx, c['id'] as int),
-                          );
-                        },
+              child: Padding(
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(ctx).viewInsets.bottom,
+                ),
+                child: SizedBox(
+                  height: MediaQuery.of(ctx).size.height * 0.8,
+                  child: Column(
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        child: Text('Assign a Category',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                       ),
-                    ),
+                      const Divider(height: 1),
 
-                    // Create-new footer
-                    const Divider(height: 1),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: newCatCtrl,
-                              decoration: const InputDecoration(
-                                labelText: 'Create new category',
-                                border: OutlineInputBorder(),
+                      // Existing categories
+                      Expanded(
+                        child: ListView.separated(
+                          itemCount: cats.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (_, i) {
+                            final c = cats[i];
+                            final selected = chosenId == c['id'];
+                            return ListTile(
+                              title: Text(c['name'] as String),
+                              trailing: selected ? const Icon(Icons.check, color: Colors.green) : null,
+                              onTap: () => _pick(c),
+                            );
+                          },
+                        ),
+                      ),
+
+                      // Create new category
+                      const Divider(height: 1),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: newCatCtrl,
+                                decoration: const InputDecoration(
+                                  labelText: 'Create new category',
+                                  border: OutlineInputBorder(),
+                                ),
+                                onSubmitted: (_) => _createCategory(),
                               ),
-                              onSubmitted: (_) => _createCategory(),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          FilledButton(
-                            onPressed: creating ? null : _createCategory,
-                            child: creating
-                                ? const SizedBox(
-                                    width: 16, height: 16,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : const Text('Create'),
-                          ),
-                        ],
+                            const SizedBox(width: 8),
+                            FilledButton(
+                              onPressed: creating ? null : _createCategory,
+                              child: creating
+                                  ? const SizedBox(
+                                      width: 16, height: 16,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Text('Create'),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+
+                      // Budget inline
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: amountCtrl,
+                                keyboardType: const TextInputType.numberWithOptions(
+                                  signed: false, decimal: true,
+                                ),
+                                decoration: const InputDecoration(
+                                  labelText: 'Add to weekly budget as',
+                                  prefixText: '\$',
+                                  border: OutlineInputBorder(),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('Add now', style: TextStyle(fontSize: 12)),
+                                Switch(
+                                  value: addToBudget,
+                                  onChanged: (v) => setModalState(() => addToBudget = v),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // Confirm
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                        child: Row(
+                          children: [
+                            const Spacer(),
+                            FilledButton.icon(
+                              icon: const Icon(Icons.done),
+                              onPressed: (chosenId == null)
+                                  ? null
+                                  : () {
+                                      Navigator.pop(ctx, {
+                                        'categoryId': chosenId,
+                                        'categoryName': chosenName ?? 'Category',
+                                        'add': addToBudget,
+                                        'amount': double.tryParse(amountCtrl.text.trim()) ?? 0.0,
+                                      });
+                                    },
+                              label: const Text('Assign'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -230,17 +314,53 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       },
     );
 
-    if (selectedCatId == null) return;
+    if (result == null) return;
 
-    // Use NORMALIZED matcher so similar descriptions group correctly.
-    final key = _normalizeText(description);
-    await TransactionRepository.updateUncategorizedByDescriptionKey(key, selectedCatId);
+    final int catId = result['categoryId'] as int;
+    final String catName = (result['categoryName'] as String?) ?? 'Category';
+    final bool addToBudget = (result['add'] as bool?) ?? false;
+    final double weeklyAmount = (result['amount'] as num?)?.toDouble() ?? 0.0;
+
+    // Re-tag uncategorized rows by normalized description key
+    final key = _normalizeText(s.description ?? s.categoryName);
+    await TransactionRepository.updateUncategorizedByDescriptionKey(key, catId);
+
+    // Refresh suggestions from DB
+    await _load();
+
+    // If user chose to add immediately, pre-select and set amount
+    if (addToBudget) {
+      if (!_amountCtrls.containsKey(catId)) {
+        // If the category doesn't show up due to filtering, inject a lightweight row
+        _amountCtrls[catId] = TextEditingController(text: weeklyAmount.toStringAsFixed(2));
+        _selected[catId] = true;
+
+        setState(() {
+          _suggestions.insert(
+            0,
+            BudgetSuggestionModel(
+              categoryId: catId,
+              categoryName: catName,
+              weeklySuggested: weeklyAmount,
+              usageCount: 0,
+              txCount: 0,
+              hasRecurring: false,
+              isUncategorizedGroup: false,
+            ),
+          );
+        });
+      } else {
+        setState(() {
+          _selected[catId] = true;
+          _amountCtrls[catId]!.text = weeklyAmount.toStringAsFixed(2);
+        });
+      }
+    }
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Categorised “$description”')),
+      SnackBar(content: Text('Categorised “${s.categoryName}” → $catName')),
     );
-    await _load(); // refresh suggestions
   }
 
   @override
@@ -301,13 +421,15 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                       final bool isGroup = s.isUncategorizedGroup;
 
                       if (isGroup) {
-                        // --- "uncategorized-by-description" row ---
+                        // --- "uncategorized-by-description" row (with Categorize) ---
                         return Column(
                           children: [
                             ListTile(
                               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              title: Text(s.categoryName,
-                                  style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.orange)),
+                              title: Text(
+                                s.categoryName,
+                                style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.orange),
+                              ),
                               subtitle: Padding(
                                 padding: const EdgeInsets.only(top: 6),
                                 child: Text(
@@ -318,9 +440,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                               trailing: TextButton.icon(
                                 icon: const Icon(Icons.category_outlined),
                                 label: const Text('Categorize'),
-                                onPressed: s.description == null
-                                    ? null
-                                    : () => _categorizeUncatGroup(s.description!),
+                                onPressed: () => _categorizeUncatGroup(s),
                               ),
                             ),
                             const Divider(height: 1),
