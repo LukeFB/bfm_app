@@ -86,12 +86,214 @@ function App() {
     }
   };
 
+  // Logout function
+  const logout = async () => {
+    // Optionally, call a backend endpoint to clear the cookie (recommended for security)
+    await fetch(`${API}/logout`, { method: 'POST', credentials: 'include' });
+    setLoggedInUser(null);
+    setMsg('');
+    setUsername('');
+  };
+
   if (loggedInUser) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>
-        Welcome, <b>{loggedInUser}</b>!<br />
-        <span style={{ fontSize: 16, color: '#888' }}>You are logged in.</span>
+      <div style={{
+        minHeight: '100vh',
+        background: '#f3f2f1',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        <div style={{
+          display: 'flex',
+          gap: 32,
+          background: 'none'
+        }}>
+          {/* List Card */}
+          <div style={{
+            background: '#fff',
+            boxShadow: '8px 8px 0 0 rgba(0,0,0,0.25)',
+            padding: '32px 24px',
+            minWidth: 340,
+            maxWidth: 400,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'stretch'
+          }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between'
+            }}>
+            <h2 style={{
+              color: BLUE,
+              fontWeight: 700,
+              fontSize: 22,
+              margin: 0,
+              marginBottom: 18,
+              letterSpacing: '-1px'
+            }}>
+              Welcome, <b>{loggedInUser}</b>
+            </h2>
+            <button
+              onClick={logout}
+              style={{
+                background: ORANGE,
+                color: '#fff',
+                fontWeight: 600,
+                fontSize: 15,
+                border: 'none',
+                padding: '10px 0',
+                boxShadow: '4px 4px 0 0 rgba(0,0,0,0.18)',
+                cursor: 'pointer',
+                marginBottom: 18,
+                marginTop: 0,
+                width: 140,
+                alignSelf: 'flex-end'
+              }}>
+              Log out
+            </button>
+          </div>
+          <div style={{
+            fontWeight: 600,
+            color: ORANGE,
+            marginBottom: 12,
+            fontSize: 17
+          }}>
+            Knowledgebase Entries
+          </div>
+          <ul style={{ padding: 0, margin: 0, listStyle: 'none' }}>
+            <li style={{
+              background: '#f7f7f7',
+              border: `1.5px solid ${BLUE}`,
+
+              padding: '12px 16px',
+              marginBottom: 10
+            }}>
+              <b>Budgeting Basics</b><br />
+              <span style={{ color: '#555', fontSize: 14 }}>How to create and stick to a budget.</span>
+            </li>
+            <li style={{
+              background: '#f7f7f7',
+              border: `1.5px solid ${BLUE}`,
+
+              padding: '12px 16px',
+              marginBottom: 10
+            }}>
+              <b>Understanding KiwiSaver</b><br />
+              <span style={{ color: '#555', fontSize: 14 }}>A guide to New Zealand's retirement savings scheme.</span>
+            </li>
+            <li style={{
+              background: '#f7f7f7',
+              border: `1.5px solid ${BLUE}`,
+
+              padding: '12px 16px',
+              marginBottom: 10
+            }}>
+              <b>Dealing with Debt</b><br />
+              <span style={{ color: '#555', fontSize: 14 }}>Tips for managing and reducing personal debt.</span>
+            </li>
+            <li style={{
+              background: '#f7f7f7',
+              border: `1.5px solid ${BLUE}`,
+
+              padding: '12px 16px',
+              marginBottom: 10
+            }}>
+              <b>Emergency Funds</b><br />
+              <span style={{ color: '#555', fontSize: 14 }}>Why and how to build an emergency savings fund.</span>
+            </li>
+            <li style={{
+              background: '#f7f7f7',
+              border: `1.5px solid ${BLUE}`,
+
+              padding: '12px 16px',
+              marginBottom: 10
+            }}>
+              <b>Dealing with Debt</b><br />
+              <span style={{ color: '#555', fontSize: 14 }}>Tips for managing and reducing personal debt.</span>
+            </li>
+            <li style={{
+              background: '#f7f7f7',
+              border: `1.5px solid ${BLUE}`,
+
+              padding: '12px 16px',
+              marginBottom: 10
+            }}>
+              <b>Dealing with Debt</b><br />
+              <span style={{ color: '#555', fontSize: 14 }}>Tips for managing and reducing personal debt.</span>
+            </li>
+          </ul>
+        </div>
+        {/* Add Object Card */}
+        <div style={{
+          background: '#fff',
+          boxShadow: '8px 8px 0 0 rgba(0,0,0,0.25)',
+
+          padding: '32px 24px',
+          minWidth: 300,
+          maxWidth: 320,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'stretch'
+        }}>
+          <h3 style={{
+            color: BLUE,
+            fontWeight: 700,
+            fontSize: 20,
+            margin: 0,
+            marginBottom: 18,
+            letterSpacing: '-1px'
+          }}>
+            Add Entry
+          </h3>
+          <input
+            type="text"
+            placeholder="Title"
+            disabled
+            style={{
+              padding: '12px 10px',
+              fontSize: 16,
+              border: `1.5px solid ${BLUE}`,
+
+              marginBottom: 16,
+              outline: 'none',
+              background: '#f7f7f7'
+            }}
+          />
+          <textarea
+            placeholder="Description"
+            disabled
+            rows={4}
+            style={{
+              padding: '12px 10px',
+              fontSize: 16,
+              border: `1.5px solid ${BLUE}`,
+
+              marginBottom: 24,
+              outline: 'none',
+              background: '#f7f7f7',
+              resize: 'none'
+            }}
+          />
+          <button
+            disabled
+            style={{
+              background: ORANGE,
+              color: '#fff',
+              fontWeight: 600,
+              fontSize: 16,
+              border: 'none',
+
+              padding: '12px 0',
+              boxShadow: '4px 4px 0 0 rgba(0,0,0,0.18)',
+              cursor: 'not-allowed',
+              opacity: 0.7
+            }}>
+            Add Entry
+          </button>
+        </div>
       </div>
+      </div >
     );
   }
 
@@ -146,7 +348,7 @@ function App() {
             outline: 'none'
           }}
         />
-                <div style={{
+        <div style={{
           color: '#000000',
           fontSize: 14,
           textAlign: 'center',

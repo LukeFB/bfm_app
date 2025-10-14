@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from webauthn.helpers import options_to_json_dict
@@ -40,7 +40,7 @@ SECRET_KEY = "super-secret-key"  # Use a secure random key in production
 ALGORITHM = "HS256"
 
 RP_ID = "localhost"
-ORIGIN = "http://localhost:3000"
+ORIGIN = "http://localhost:8000"
 
 def create_session_token(username):
     expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
@@ -61,6 +61,12 @@ async def me(request: Request):
     if not username:
         raise HTTPException(401, "Not authenticated")
     return {"username": username}
+
+@app.post("/logout")
+async def logout():
+    response = JSONResponse({"logout": True})
+    response.delete_cookie("session")
+    return response
 
 @app.post("/register/options")
 async def register_options(request: Request):
@@ -167,3 +173,6 @@ async def authenticate_verify(request: Request):
         return response
     except Exception as e:
         raise HTTPException(400, f"Authentication failed: {e}")
+    
+frontend_path = os.path.join(os.path.dirname(__file__), "backend-ui", "build")
+app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
