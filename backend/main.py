@@ -1,13 +1,12 @@
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from webauthn.helpers import options_to_json_dict
 from webauthn.helpers.structs import (
     AuthenticatorSelectionCriteria,
     AttestationConveyancePreference,
     UserVerificationRequirement,
-    AuthenticationCredential,
-    RegistrationCredential,
     PublicKeyCredentialDescriptor,
     PublicKeyCredentialType
 )
@@ -18,7 +17,9 @@ from webauthn import (
     verify_authentication_response,
 )
 import secrets
-import json
+from jose import jwt
+import datetime
+import os
 
 app = FastAPI()
 
@@ -35,8 +36,31 @@ app.add_middleware(
 USERS = {}
 CREDENTIALS = {}
 
+SECRET_KEY = "super-secret-key"  # Use a secure random key in production
+ALGORITHM = "HS256"
+
 RP_ID = "localhost"
 ORIGIN = "http://localhost:3000"
+
+def create_session_token(username):
+    expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
+    to_encode = {"sub": username, "exp": expire}
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_username_from_token(token):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload.get("sub")
+    except Exception:
+        return None
+    
+@app.get("/me")
+async def me(request: Request):
+    token = request.cookies.get("session")
+    username = get_username_from_token(token) if token else None
+    if not username:
+        raise HTTPException(401, "Not authenticated")
+    return {"username": username}
 
 @app.post("/register/options")
 async def register_options(request: Request):
@@ -130,6 +154,16 @@ async def authenticate_verify(request: Request):
         )
         # Update sign count
         cred["sign_count"] = verification.new_sign_count
-        return {"authenticated": True}
+                # Create session token
+        token = create_session_token(username)
+        response = JSONResponse({"authenticated": True})
+        response.set_cookie(
+            key="session",
+            value=token,
+            httponly=True,
+            samesite="lax",
+            max_age=60*60*24,  # 1 day
+        )
+        return response
     except Exception as e:
         raise HTTPException(400, f"Authentication failed: {e}")

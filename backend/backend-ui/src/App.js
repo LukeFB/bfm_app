@@ -13,12 +13,28 @@ const API = 'http://localhost:8000';
 function App() {
   const [username, setUsername] = useState('');
   const [msg, setMsg] = useState('');
+  const [loggedInUser, setLoggedInUser] = useState(null);
+
+  // Check session on mount
+  React.useEffect(() => {
+    fetch(`${API}/me`, { credentials: 'include' })
+      .then(res => {
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.username) setLoggedInUser(data.username);
+        // else do nothing, user is not logged in
+      })
+      .catch(() => {
+        // Optionally handle fetch/network errors here
+      });
+  }, []);
 
   // Registration
   const register = async () => {
     setMsg('');
     try {
-      // 1. Get registration options from backend
       const res1 = await fetch(`${API}/register/options`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -26,11 +42,7 @@ function App() {
       });
       if (!res1.ok) throw new Error(await res1.text());
       const opts = await res1.json();
-
-      // 2. Start registration ceremony
       const attResp = await startRegistration(opts);
-
-      // 3. Send attestation response to backend for verification
       const res2 = await fetch(`${API}/register/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -50,7 +62,6 @@ function App() {
   const login = async () => {
     setMsg('');
     try {
-      // 1. Get authentication options from backend
       const res1 = await fetch(`${API}/authenticate/options`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -58,11 +69,7 @@ function App() {
       });
       if (!res1.ok) throw new Error(await res1.text());
       const opts = await res1.json();
-
-      // 2. Start authentication ceremony
       const assertionResp = await startAuthentication(opts);
-
-      // 3. Send assertion response to backend for verification
       const res2 = await fetch(`${API}/authenticate/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -73,10 +80,20 @@ function App() {
       });
       if (!res2.ok) throw new Error(await res2.text());
       setMsg('Authentication successful!');
+      setLoggedInUser(username);
     } catch (e) {
       setMsg('Authentication failed: ' + e.message);
     }
   };
+
+  if (loggedInUser) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>
+        Welcome, <b>{loggedInUser}</b>!<br />
+        <span style={{ fontSize: 16, color: '#888' }}>You are logged in.</span>
+      </div>
+    );
+  }
 
   return (
     <div style={{
