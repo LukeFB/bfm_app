@@ -15,9 +15,35 @@ function App() {
   const [msg, setMsg] = useState('');
   const [loggedInUser, setLoggedInUser] = useState(null);
 
+  const [entries, setEntries] = useState([]);
+  const [newTitle, setNewTitle] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+
+  const fetchEntries = async () => {
+    const res = await fetch(`${API}/entries`, { credentials: 'include' });
+    if (res.ok) {
+      setEntries(await res.json());
+    }
+  };
+
+  const addEntry = async () => {
+    if (!newTitle.trim() || !newDesc.trim()) return;
+    const res = await fetch(`${API}/entries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ title: newTitle, description: newDesc }),
+    });
+    if (res.ok) {
+      setNewTitle('');
+      setNewDesc('');
+      fetchEntries();
+    }
+  };
+
   // Check session on mount
   React.useEffect(() => {
-    fetch(`${API}/me`, { credentials: 'include' })
+    fetch(`${API}/auth/me`, { credentials: 'include' })
       .then(res => {
         if (!res.ok) return null;
         return res.json();
@@ -35,7 +61,7 @@ function App() {
   const register = async () => {
     setMsg('');
     try {
-      const res1 = await fetch(`${API}/register/options`, {
+      const res1 = await fetch(`${API}/auth/register/options`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username }),
@@ -43,7 +69,7 @@ function App() {
       if (!res1.ok) throw new Error(await res1.text());
       const opts = await res1.json();
       const attResp = await startRegistration(opts);
-      const res2 = await fetch(`${API}/register/verify`, {
+      const res2 = await fetch(`${API}/auth/register/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -62,7 +88,7 @@ function App() {
   const login = async () => {
     setMsg('');
     try {
-      const res1 = await fetch(`${API}/authenticate/options`, {
+      const res1 = await fetch(`${API}/auth/options`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username }),
@@ -70,7 +96,7 @@ function App() {
       if (!res1.ok) throw new Error(await res1.text());
       const opts = await res1.json();
       const assertionResp = await startAuthentication(opts);
-      const res2 = await fetch(`${API}/authenticate/verify`, {
+      const res2 = await fetch(`${API}/auth/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -81,6 +107,7 @@ function App() {
       if (!res2.ok) throw new Error(await res2.text());
       setMsg('Authentication successful!');
       setLoggedInUser(username);
+      fetchEntries();
     } catch (e) {
       setMsg('Authentication failed: ' + e.message);
     }
@@ -89,7 +116,7 @@ function App() {
   // Logout function
   const logout = async () => {
     // Optionally, call a backend endpoint to clear the cookie (recommended for security)
-    await fetch(`${API}/logout`, { method: 'POST', credentials: 'include' });
+    await fetch(`${API}/auth/logout`, { method: 'POST', credentials: 'include' });
     setLoggedInUser(null);
     setMsg('');
     setUsername('');
@@ -124,175 +151,116 @@ function App() {
               display: 'flex',
               justifyContent: 'space-between'
             }}>
-            <h2 style={{
-              color: BLUE,
-              fontWeight: 700,
-              fontSize: 22,
-              margin: 0,
-              marginBottom: 18,
-              letterSpacing: '-1px'
+              <h2 style={{
+                color: BLUE,
+                fontWeight: 700,
+                fontSize: 22,
+                margin: 0,
+                marginBottom: 18,
+                letterSpacing: '-1px'
+              }}>
+                Welcome, <b>{loggedInUser}</b>
+              </h2>
+              <button
+                onClick={logout}
+                style={{
+                  background: ORANGE,
+                  color: '#fff',
+                  fontWeight: 600,
+                  fontSize: 15,
+                  border: 'none',
+                  padding: '10px 0',
+                  boxShadow: '4px 4px 0 0 rgba(0,0,0,0.18)',
+                  cursor: 'pointer',
+                  marginBottom: 18,
+                  marginTop: 0,
+                  width: 140,
+                  alignSelf: 'flex-end'
+                }}>
+                Log out
+              </button>
+            </div>
+            <div style={{
+              fontWeight: 600,
+              color: ORANGE,
+              marginBottom: 12,
+              fontSize: 17
             }}>
-              Welcome, <b>{loggedInUser}</b>
-            </h2>
+              Knowledgebase Entries
+            </div>
+            <ul style={{ padding: 0, margin: 0, listStyle: 'none' }}>
+              {entries.map(e => (
+                <li key={e.id} style={{
+                  background: '#f7f7f7',
+                  border: `1.5px solid ${BLUE}`,
+                  padding: '12px 16px',
+                  marginBottom: 10
+                }}>
+                  <b>{e.title}</b><br />
+                  <span style={{ color: '#555', fontSize: 14 }}>{e.description}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          {/* Add Object Card */}
+          <div style={{
+            background: '#fff',
+            boxShadow: '8px 8px 0 0 rgba(0,0,0,0.25)',
+
+            padding: '32px 24px',
+            minWidth: 300,
+            maxWidth: 320,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'stretch'
+          }}>
+            <input
+              type="text"
+              placeholder="Title"
+              value={newTitle}
+              onChange={e => setNewTitle(e.target.value)}
+              style={{
+                padding: '12px 10px',
+                fontSize: 16,
+                border: `1.5px solid ${BLUE}`,
+                marginBottom: 16,
+                outline: 'none',
+                background: '#f7f7f7'
+              }}
+            />
+            <textarea
+              placeholder="Description"
+              value={newDesc}
+              onChange={e => setNewDesc(e.target.value)}
+              rows={4}
+              style={{
+                padding: '12px 10px',
+                fontSize: 16,
+                border: `1.5px solid ${BLUE}`,
+                marginBottom: 24,
+                outline: 'none',
+                background: '#f7f7f7',
+                resize: 'none'
+              }}
+            />
             <button
-              onClick={logout}
+              onClick={addEntry}
+              disabled={!newTitle.trim() || !newDesc.trim()}
               style={{
                 background: ORANGE,
                 color: '#fff',
                 fontWeight: 600,
-                fontSize: 15,
+                fontSize: 16,
                 border: 'none',
-                padding: '10px 0',
+                padding: '12px 0',
                 boxShadow: '4px 4px 0 0 rgba(0,0,0,0.18)',
-                cursor: 'pointer',
-                marginBottom: 18,
-                marginTop: 0,
-                width: 140,
-                alignSelf: 'flex-end'
+                cursor: (!newTitle.trim() || !newDesc.trim()) ? 'not-allowed' : 'pointer',
+                opacity: (!newTitle.trim() || !newDesc.trim()) ? 0.7 : 1
               }}>
-              Log out
+              Add Entry
             </button>
           </div>
-          <div style={{
-            fontWeight: 600,
-            color: ORANGE,
-            marginBottom: 12,
-            fontSize: 17
-          }}>
-            Knowledgebase Entries
-          </div>
-          <ul style={{ padding: 0, margin: 0, listStyle: 'none' }}>
-            <li style={{
-              background: '#f7f7f7',
-              border: `1.5px solid ${BLUE}`,
-
-              padding: '12px 16px',
-              marginBottom: 10
-            }}>
-              <b>Budgeting Basics</b><br />
-              <span style={{ color: '#555', fontSize: 14 }}>How to create and stick to a budget.</span>
-            </li>
-            <li style={{
-              background: '#f7f7f7',
-              border: `1.5px solid ${BLUE}`,
-
-              padding: '12px 16px',
-              marginBottom: 10
-            }}>
-              <b>Understanding KiwiSaver</b><br />
-              <span style={{ color: '#555', fontSize: 14 }}>A guide to New Zealand's retirement savings scheme.</span>
-            </li>
-            <li style={{
-              background: '#f7f7f7',
-              border: `1.5px solid ${BLUE}`,
-
-              padding: '12px 16px',
-              marginBottom: 10
-            }}>
-              <b>Dealing with Debt</b><br />
-              <span style={{ color: '#555', fontSize: 14 }}>Tips for managing and reducing personal debt.</span>
-            </li>
-            <li style={{
-              background: '#f7f7f7',
-              border: `1.5px solid ${BLUE}`,
-
-              padding: '12px 16px',
-              marginBottom: 10
-            }}>
-              <b>Emergency Funds</b><br />
-              <span style={{ color: '#555', fontSize: 14 }}>Why and how to build an emergency savings fund.</span>
-            </li>
-            <li style={{
-              background: '#f7f7f7',
-              border: `1.5px solid ${BLUE}`,
-
-              padding: '12px 16px',
-              marginBottom: 10
-            }}>
-              <b>Dealing with Debt</b><br />
-              <span style={{ color: '#555', fontSize: 14 }}>Tips for managing and reducing personal debt.</span>
-            </li>
-            <li style={{
-              background: '#f7f7f7',
-              border: `1.5px solid ${BLUE}`,
-
-              padding: '12px 16px',
-              marginBottom: 10
-            }}>
-              <b>Dealing with Debt</b><br />
-              <span style={{ color: '#555', fontSize: 14 }}>Tips for managing and reducing personal debt.</span>
-            </li>
-          </ul>
         </div>
-        {/* Add Object Card */}
-        <div style={{
-          background: '#fff',
-          boxShadow: '8px 8px 0 0 rgba(0,0,0,0.25)',
-
-          padding: '32px 24px',
-          minWidth: 300,
-          maxWidth: 320,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'stretch'
-        }}>
-          <h3 style={{
-            color: BLUE,
-            fontWeight: 700,
-            fontSize: 20,
-            margin: 0,
-            marginBottom: 18,
-            letterSpacing: '-1px'
-          }}>
-            Add Entry
-          </h3>
-          <input
-            type="text"
-            placeholder="Title"
-            disabled
-            style={{
-              padding: '12px 10px',
-              fontSize: 16,
-              border: `1.5px solid ${BLUE}`,
-
-              marginBottom: 16,
-              outline: 'none',
-              background: '#f7f7f7'
-            }}
-          />
-          <textarea
-            placeholder="Description"
-            disabled
-            rows={4}
-            style={{
-              padding: '12px 10px',
-              fontSize: 16,
-              border: `1.5px solid ${BLUE}`,
-
-              marginBottom: 24,
-              outline: 'none',
-              background: '#f7f7f7',
-              resize: 'none'
-            }}
-          />
-          <button
-            disabled
-            style={{
-              background: ORANGE,
-              color: '#fff',
-              fontWeight: 600,
-              fontSize: 16,
-              border: 'none',
-
-              padding: '12px 0',
-              boxShadow: '4px 4px 0 0 rgba(0,0,0,0.18)',
-              cursor: 'not-allowed',
-              opacity: 0.7
-            }}>
-            Add Entry
-          </button>
-        </div>
-      </div>
       </div >
     );
   }
