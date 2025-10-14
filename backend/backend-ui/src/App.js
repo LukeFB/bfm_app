@@ -93,25 +93,25 @@ function App() {
         boxShadow: '8px 8px 0 0 rgba(0,0,0,0.25)', // hard shadow down/right
         padding: '40px 32px 32px 32px',
         minWidth: 340,
-        maxWidth: 360,
+        maxWidth: 340,
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'stretch'
       }}>
 
-      {/* Logo */}
-      <img
-        src="bfm.jpg"
-        alt="Bay Financial Mentors"
-        style={{ width: 320, marginBottom: 32 }}
-      />
+        {/* Logo */}
+        <img
+          src="bfm.jpg"
+          alt="Bay Financial Mentors"
+          style={{ width: 320, marginBottom: 32 }}
+        />
 
         <h2 style={{
           color: BLUE,
           fontWeight: 700,
           fontSize: 28,
           margin: 0,
-          marginBottom: 36,
+          marginBottom: 12,
           letterSpacing: '-1px'
         }}>
           Moni Knowledgebase
@@ -125,44 +125,57 @@ function App() {
             padding: '12px 10px',
             fontSize: 16,
             border: `1.5px solid ${BLUE}`,
-            marginBottom: 12,
+            marginBottom: 8,
             outline: 'none'
           }}
         />
-        <button style={{
-          background: ORANGE,
-          color: '#fff',
-          fontWeight: 600,
-          fontSize: 16,
-          border: 'none',
-          padding: '12px 0',
-          boxShadow: '4px 4px 0 0 rgba(0,0,0,0.18)',
-          cursor: 'pointer',
-          marginBottom: 8
-        }}>
-          Sign in with Passkey
-        </button>
                 <div style={{
           color: '#000000',
           fontSize: 14,
           textAlign: 'center',
           marginTop: 8,
-          marginBottom: 8,
-          cursor: 'pointer'
+          marginBottom: 36,
+        }}>
+          {msg}
+        </div>
+        <button
+          onClick={login}
+          style={{
+            background: ORANGE,
+            color: '#fff',
+            fontWeight: 600,
+            fontSize: 16,
+            border: 'none',
+            padding: '12px 0',
+            boxShadow: '4px 4px 0 0 rgba(0,0,0,0.18)',
+            cursor: 'pointer',
+            marginBottom: 8
+          }}>
+          Sign in with Passkey
+        </button>
+        <div style={{
+          color: '#000000',
+          fontSize: 14,
+          textAlign: 'center',
+          marginTop: 8,
+          marginBottom: 16,
         }}>
           Or
         </div>
-                <button style={{
-          background: BLUE,
-          color: '#fff',
-          fontWeight: 600,
-          fontSize: 16,
-          border: 'none',
-          padding: '12px 0',
-          boxShadow: '4px 4px 0 0 rgba(0,0,0,0.18)',
-          cursor: 'pointer',
-          marginBottom: 8
-        }}>
+        <button
+          onClick={register}
+
+          style={{
+            background: BLUE,
+            color: '#fff',
+            fontWeight: 600,
+            fontSize: 16,
+            border: 'none',
+            padding: '12px 0',
+            boxShadow: '4px 4px 0 0 rgba(0,0,0,0.18)',
+            cursor: 'pointer',
+            marginBottom: 8
+          }}>
           Register
         </button>
       </div>
