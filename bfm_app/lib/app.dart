@@ -10,10 +10,7 @@ import 'package:bfm_app/screens/settings_screen.dart';
 import 'package:bfm_app/screens/bank_connect_screen.dart'; // BankConnect screen
 import 'package:bfm_app/screens/debug_screen.dart'; // Debug
 
-// ✅ NEW: Budget Build screen
 import 'package:bfm_app/screens/budget_build_screen.dart';
-
-// ✅ Used to decide if we should send a connected user to budget builder
 import 'package:bfm_app/repositories/budget_repository.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -122,8 +119,6 @@ class MyApp extends StatelessWidget {
         '/insights': (_) => const InsightsScreen(),
         '/settings': (_) => const SettingsScreen(),
         '/debug': (_) => const DebugScreen(), // Debug
-
-        // ✅ NEW: route to the Budget Build screen (post-bank-connect)
         '/budget/build': (_) => const BudgetBuildScreen(),
       },
     );
