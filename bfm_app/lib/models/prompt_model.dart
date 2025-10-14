@@ -1,6 +1,6 @@
 // -----------------------------------------------------------------------------
 // File: prompt_model.dart
-// Author: Jack Unsworth
+// Author: Jack Unsworth, Luke Fraser-Brown
 // -----------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
