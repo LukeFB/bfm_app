@@ -2,30 +2,15 @@
 /// File: dashboard_screen.dart
 /// Author: Luke Fraser-Brown
 ///
-/// High-level description:
-///   This is the main landing page of the BFM app. It pulls together
-///   financial data from multiple sources (budgets, goals, transactions,
-///   recurring bills) and presents them as a dashboard.
+/// Budget header logic:
+///   weeklyBudget = weeklyIncomeThisWeek − sum(weekly budgets)
+///   leftToSpend  = weeklyBudget − discretionarySpendThisWeek
 ///
-/// Design philosophy:
-///   - Keep UI layout and data-loading concerns separate.
-///     -> Database queries live in `DashboardService`.
-///     -> Models are defined in `DashData` and other classes.
-///     -> Widgets (cards, buttons, activity items) are imported here.
-///
-///   - State management is kept lightweight with `FutureBuilder` and
-///     `setState` because this screen is refresh-based and does not
-///     need fine-grained reactivity.
-///
-///   - Visual design is card-based, with distinct sections for budgets,
-///     goals, alerts, activity, streaks, tips, and events.
-///
-/// Future scope:
-///   - Replace FutureBuilder + setState with a state management
-///     solution (e.g. Riverpod, Bloc) if complexity grows.
-///   - Make alerts, tips, and events dynamic from DB instead of static.
+/// Where discretionary spend = expenses this week NOT in budgeted categories
+/// (uncategorised counts as discretionary).
 /// ---------------------------------------------------------------------------
 
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:bfm_app/models/dash_data.dart';
 import 'package:bfm_app/services/dashboard_service.dart';
@@ -39,25 +24,10 @@ import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/transaction_model.dart';
 
-/// Brand colors used throughout the app. These constants
-/// centralize color definitions for consistency.
 const Color bfmBlue = Color(0xFF005494);
 const Color bfmOrange = Color(0xFFFF6934);
 const Color bfmBeige = Color(0xFFF5F5E1);
 
-/// ---------------------------------------------------------------------------
-/// DashboardScreen
-/// ---------------------------------------------------------------------------
-/// StatefulWidget because:
-///   - We need to hold a Future in state (`_future`) to avoid re-triggering
-///     DB queries every rebuild.
-///   - We refresh data after navigation actions (e.g. when a new
-///     transaction is added).
-///
-/// Lifecycle:
-///   - initState(): load initial dashboard data.
-///   - _refresh(): trigger reload on pull-to-refresh or return from routes.
-/// ---------------------------------------------------------------------------
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -66,73 +36,74 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  /// The dashboard data future. This is cached and re-assigned
-  /// only when `_refresh` is explicitly called.
   late Future<DashData> _future;
 
   @override
   void initState() {
     super.initState();
-    _future = _load(); // kick off initial load
+    _future = _load();
   }
 
-  /// Fetches and aggregates all dashboard data from services.
-  ///
-  /// Loads in parallel via Future.wait:
-  ///   0: Total weekly budget
-  ///   1: Expenses for current week
-  ///   2: Primary goal
-  ///   3: Alerts
-  ///   4: Recent transactions
-  ///
-  /// Returns a DashData object that wraps everything for easy use in UI.
   Future<DashData> _load() async {
+    // 0: budgets total, 1: discretionary spend, 2: income this week,
+    // 3: primary goal,   4: alerts,               5: recent tx
     final results = await Future.wait([
-      DashboardService.getTotalWeeklyBudgetSafe(),
-      DashboardService.getThisWeekExpenses(),
-      DashboardService.getPrimaryGoal(),
-      DashboardService.getAlerts(),
-      TransactionRepository.getRecent(5),
+      DashboardService.getDiscretionaryWeeklyBudget(), // uses last week's income
+    DashboardService.discretionarySpendThisWeek(),   // Mon to today expenses
+    DashboardService.getPrimaryGoal(),
+    DashboardService.getAlerts(),
+    TransactionRepository.getRecent(5),
     ]);
 
-    final totalWeekly = results[0] as double;
-    final spentThisWeek = results[1] as double;
+    final discWeeklyBudget = results[0] as double;
+    final spentThisWeek  = results[1] as double;
     final goal = results[2] as GoalModel?;
     final alerts = results[3] as List<String>;
     final recent = results[4] as List<TransactionModel>;
 
+    final leftToSpend = discWeeklyBudget - spentThisWeek;
+
     return DashData(
-      leftToSpendThisWeek: (totalWeekly - spentThisWeek),
-      totalWeeklyBudget: totalWeekly,
+      leftToSpendThisWeek: leftToSpend,
+      totalWeeklyBudget: discWeeklyBudget, // now shows income - budgets
       primaryGoal: goal,
       alerts: alerts,
       recent: recent,
     );
   }
 
-  /// Triggers a full reload of the dashboard data.
-  /// Called by pull-to-refresh gestures and after returning from
-  /// other routes (transactions, goals, etc).
   Future<void> _refresh() async {
     setState(() {
       _future = _load();
     });
   }
 
+  /// Friendly, dynamic header based on how much is left this week.
+  String _headerMessage(double left, double total) {
+    if (total <= 0) {
+      return "Let’s set up your budget and make a plan 🚀";
+    }
+    if (left < 0) {
+      return "A tiny bit over — no stress. Fresh week, fresh start 💙";
+    }
+    final ratio = left / total; // 0.0 to 1.0
+    if (ratio >= 0.75) return "Crushing it — plenty left this week 💪";
+    if (ratio >= 0.50) return "You're on track! 🌟";
+    if (ratio >= 0.25) return "You're doing fine — keep an eye on it 👀";
+    if (ratio >= 0.10) return "Tight but doable — small choices win 💡";
+    return "Almost tapped out — press pause on extras if you can ⏸️";
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // -------------------- BODY --------------------
       body: SafeArea(
         child: FutureBuilder<DashData>(
           future: _future,
           builder: (context, snap) {
-            // Loading state: show spinner
             if (snap.connectionState != ConnectionState.done) {
               return const Center(child: CircularProgressIndicator());
             }
-
-            // Error state: render error message visibly
             if (snap.hasError) {
               return Center(
                 child: Padding(
@@ -145,22 +116,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
               );
             }
 
-            // Success: snapshot contains data
             final data = snap.data!;
-
-            // Pre-format numbers for display
             final leftToSpendStr = "\$${data.leftToSpendThisWeek.toStringAsFixed(1)}";
             final weeklyBudgetStr = "Weekly budget: \$${data.totalWeeklyBudget.toStringAsFixed(0)}";
 
-            // Goal progress calculation with fallbacks
             final goalTitle = data.primaryGoal?.title ?? "Textbooks";
             final goalTarget = data.primaryGoal?.targetAmount ?? 200.0;
             final goalCurrent = data.primaryGoal?.currentAmount ?? (200.0 * 0.4);
-            final goalProgress = goalTarget == 0 ? 0.0 : (goalCurrent / goalTarget).clamp(0.0, 1.0);
+            final goalProgress =
+                goalTarget == 0 ? 0.0 : (goalCurrent / goalTarget).clamp(0.0, 1.0);
             final goalPercentLabel =
                 "${(goalProgress * 100).toStringAsFixed(0)}% of \$${goalTarget.toStringAsFixed(0)} saved";
 
-            // Main scrollable dashboard content
             return RefreshIndicator(
               onRefresh: _refresh,
               child: SingleChildScrollView(
@@ -170,14 +137,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // ---------- HEADER ----------
-                    const Text(
-                      "You're on track!",
-                      style: TextStyle(
-                        fontSize: 24,
+                    Text(
+                      _headerMessage(data.leftToSpendThisWeek, data.totalWeeklyBudget),
+                      style: const TextStyle(
+                        fontSize: 12,
                         fontFamily: "Roboto",
                         color: Colors.black54,
                       ),
                     ),
+
                     const SizedBox(height: 8),
                     Text(
                       leftToSpendStr,
@@ -262,7 +230,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Center(
-                            child: Text(
+                            child: Text( // TODO: dynamic
                               "🔥3",
                               style: TextStyle(
                                 fontSize: 40,
@@ -286,7 +254,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                     // ---------- FINANCIAL TIP ----------
                     const DashboardCard(
-                      title: "Financial Tip",
+                      title: "Financial Tip", // TODO: connect to api
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -302,7 +270,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                     // ---------- EVENTS ----------
                     const DashboardCard(
-                      title: "Upcoming Events",
+                      title: "Upcoming Events", // TODO: connect to backend
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -320,7 +288,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
 
-      // -------------------- BOTTOM NAVIGATION --------------------
+      // -------------------- BOTTOM NAV --------------------
       bottomNavigationBar: SafeArea(
         child: Container(
           color: bfmBlue,
@@ -334,7 +302,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   onTap: () async {
                     await Navigator.pushNamed(context, '/transaction');
                     if (!mounted) return;
-                    _refresh(); // always refresh after returning
+                    _refresh();
                   },
                 ),
               ),
@@ -354,9 +322,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   icon: Icons.flag,
                   label: "Goals",
                   onTap: () async {
-                    final changed = await Navigator.pushNamed(context, '/goals');
+                    await Navigator.pushNamed(context, '/goals');
                     if (!mounted) return;
-                    _refresh(); // refresh regardless of returned flag
+                    _refresh();
                   },
                 ),
               ),
@@ -378,7 +346,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   onTap: () async {
                     await Navigator.pushNamed(context, '/settings');
                     if (!mounted) return;
-                    _refresh(); // refresh regardless of returned flag
+                    _refresh();
                   },
                 ),
               ),

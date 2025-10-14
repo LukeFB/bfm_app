@@ -6,16 +6,12 @@
 ///   from the database. This keeps DB logic out of the UI layer and makes
 ///   the DashboardScreen much more readable.
 ///
-/// Design decisions:
-///   - All methods are static: this avoids needing to instantiate the
-///     service and matches the "utility" nature of these loaders.
-///   - Each method encapsulates a specific query or aggregation, instead
-///     of scattering raw SQL through the UI.
-///   - This layer converts "raw DB rows" into strongly typed Dart values.
-///
-/// Future scope:
-///   - Could evolve into an injected repository pattern (e.g. using Riverpod).
-///   - Could add caching or offline-first logic here.
+/// Update:
+///   - Weekly budget header now uses LAST WEEK'S income instead of this week.
+///   - Adds weeklyIncomeLastWeek().
+///   - Adds getDiscretionaryWeeklyBudget() = lastWeekIncome - budgets.
+///   - Adds discretionarySpendThisWeek() helper.
+///   - Keeps original functions for compatibility.
 /// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
@@ -23,58 +19,50 @@ import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/models/goal_model.dart';
-import 'package:bfm_app/models/recurring_transaction_model.dart';
-import 'package:bfm_app/repositories/transaction_repository.dart';
 
 class DashboardService {
-  /// Safely fetches the total weekly budget.
-  ///
-  /// Wraps `getTotalWeeklyBudget()` but ensures we never return NaN,
-  /// which can occur if no budgets are defined yet.
+  /// Safely fetches the total weekly **budgets sum** (not income).
   static Future<double> getTotalWeeklyBudgetSafe() async {
     final total = await BudgetRepository.getTotalWeeklyBudget();
     return total.isNaN ? 0.0 : total;
   }
 
-  /// Calculates the total expenses for the current week.
-  ///
-  /// - Defines "week" as Monday → today (inclusive).
-  /// - Builds formatted YYYY-MM-DD strings for querying.
-  /// - Queries the `transactions` table for type='expense'.
-  /// - Returns the absolute value of spend (never negative).
+  /// Expenses for the **current** week (Mon→today).
   static Future<double> getThisWeekExpenses() async {
-    return TransactionRepository.getThisWeekExpenses();
+    final db = await AppDatabase.instance.database;
+    final now = DateTime.now();
+    final monday = now.subtract(Duration(days: now.weekday - 1));
+    String _fmt(DateTime d) =>
+        "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+    final start = _fmt(monday);
+    final end = _fmt(now);
+
+    final res = await db.rawQuery('''
+      SELECT IFNULL(SUM(ABS(amount)),0) AS v
+      FROM transactions
+      WHERE type='expense' AND date BETWEEN ? AND ?;
+    ''', [start, end]);
+
+    return (res.first['v'] as num?)?.toDouble() ?? 0.0;
   }
 
   /// Retrieves the user’s primary goal (if any).
-  ///
-  /// Strategy: returns the first goal in the table.
-  /// In future this may evolve to:
-  ///   - Prioritize "active" goals.
-  ///   - Or select the goal with nearest due_date.
   static Future<GoalModel?> getPrimaryGoal() async {
     final goals = await GoalRepository.getAll();
     return goals.isEmpty ? null : goals.first;
   }
 
-  /// Fetches alerts for upcoming recurring bills within 7 days.
-  ///
-  /// - Queries the `recurring_transactions` table.
-  /// - Compares `next_due_date` with today and "today + 7".
-  /// - Generates human-readable alert strings.
-  /// - Returns a few hard-coded fallback alerts if none are found.
+  /// Upcoming recurring alerts (unchanged).
   static Future<List<String>> getAlerts() async {
     final db = await AppDatabase.instance.database;
     final today = DateTime.now();
     final soon = today.add(const Duration(days: 7));
-
     final rows = await db.query(
       'recurring_transactions',
       columns: ['description', 'next_due_date', 'amount'],
     );
 
     final List<String> alerts = [];
-
     for (final r in rows) {
       final desc = (r['description'] ?? 'Bill') as String;
       final amt = (r['amount'] is num) ? (r['amount'] as num).toDouble() : 0.0;
@@ -82,11 +70,7 @@ class DashboardService {
       if (dueStr == null || dueStr.trim().isEmpty) continue;
 
       DateTime? due;
-      try {
-        due = DateTime.parse(dueStr);
-      } catch (_) {
-        continue; // skip invalid dates
-      }
+      try { due = DateTime.parse(dueStr); } catch (_) { continue; }
 
       final days = due.difference(today).inDays;
       if (days >= 0 && due.isBefore(soon)) {
@@ -94,5 +78,62 @@ class DashboardService {
       }
     }
     return alerts;
+  }
+
+  // ---------------------------------------------------------------------------
+  // NEW: income & header helpers
+  // ---------------------------------------------------------------------------
+
+  static String _fmtDay(DateTime d) =>
+      "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+
+  /// Income for **last week** (Mon→Sun).
+  /// Example: if today is Wed, 16 Oct, last week = Mon 7 Oct → Sun 13 Oct.
+  static Future<double> weeklyIncomeLastWeek() async {
+    final db = await AppDatabase.instance.database;
+
+    final now = DateTime.now();
+    final mondayThisWeek = now.subtract(Duration(days: now.weekday - 1));
+    final start = _fmtDay(mondayThisWeek.subtract(const Duration(days: 7)));
+    final end   = _fmtDay(mondayThisWeek.subtract(const Duration(days: 1))); // Sunday
+
+    final res = await db.rawQuery('''
+      SELECT IFNULL(SUM(amount),0) AS v
+      FROM transactions
+      WHERE type='income' AND date BETWEEN ? AND ?;
+    ''', [start, end]);
+
+    // Income should be positive already; keep as-is.
+    return (res.first['v'] as num?)?.toDouble() ?? 0.0;
+  }
+
+  /// (Kept for compatibility) Income for **this** week (Mon→today).
+  /// Not used by header anymore.
+  static Future<double> weeklyIncomeThisWeek() async {
+    final db = await AppDatabase.instance.database;
+    final now = DateTime.now();
+    final monday = now.subtract(Duration(days: now.weekday - 1));
+    final start = _fmtDay(monday);
+    final end = _fmtDay(now);
+
+    final res = await db.rawQuery('''
+      SELECT IFNULL(SUM(amount),0) AS v
+      FROM transactions
+      WHERE type='income' AND date BETWEEN ? AND ?;
+    ''', [start, end]);
+
+    return (res.first['v'] as num?)?.toDouble() ?? 0.0;
+  }
+
+  /// Expenses for **this** week (Mon→today) — used for "Left to spend".
+  static Future<double> discretionarySpendThisWeek() => getThisWeekExpenses();
+
+  /// NEW: Discretionary weekly budget shown in the header:
+  /// lastWeekIncome − sum(weekly budgets).
+  static Future<double> getDiscretionaryWeeklyBudget() async {
+    final lastWeekIncome = await weeklyIncomeLastWeek();
+    final budgetsSum = await BudgetRepository.getTotalWeeklyBudget();
+    final safeBudgets = budgetsSum.isNaN ? 0.0 : budgetsSum;
+    return lastWeekIncome - safeBudgets;
   }
 }

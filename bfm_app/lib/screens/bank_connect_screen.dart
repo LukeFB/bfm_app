@@ -3,6 +3,7 @@ import 'package:bfm_app/services/akahu_service.dart';
 import 'package:bfm_app/services/budget_analysis_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bfm_app/db/app_database.dart';
 
 class BankConnectScreen extends StatefulWidget {
   const BankConnectScreen({Key? key}) : super(key: key);
@@ -26,6 +27,15 @@ class _BankConnectScreenState extends State<BankConnectScreen> {
       // Insert into DB
       await TransactionRepository.insertFromAkahu(items);
 
+      // Inserting income so I dont look broke during the demo TODO: remove income
+      final db = await AppDatabase.instance.database;
+      await db.rawInsert('''
+        INSERT INTO transactions
+          (amount, description, date, type, category_id, category_name, merchant_name)
+        VALUES
+          (?, ?, date('now','-3 day'), 'income', NULL, 'Income', 'Employer')
+      ''', [300.00, 'Payday (demo)']);
+
       // Detect recurring
       await BudgetAnalysisService.identifyRecurringTransactions();
 
@@ -35,7 +45,7 @@ class _BankConnectScreenState extends State<BankConnectScreen> {
 
       if (!mounted) return;
 
-      // ✅ Send the user straight to the new Budget Build screen
+      // Send the user straight to the new Budget Build screen
       Navigator.pushReplacementNamed(context, '/budget/build');
     } catch (e) {
       debugPrint("Bank connect error: $e");
