@@ -51,7 +51,7 @@ class _LockGateState extends State<LockGate> {
         if (!connected) {
           nextRoute = '/bankconnect';
         } else {
-          // ✅ If bank connected but no budgets saved yet → go to builder
+          // If bank connected but no budgets saved yet go to builder
           final budgets = await BudgetRepository.getAll();
           nextRoute = budgets.isEmpty ? '/budget/build' : '/dashboard';
         }

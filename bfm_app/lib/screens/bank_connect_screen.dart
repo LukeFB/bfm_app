@@ -33,7 +33,7 @@ class _BankConnectScreenState extends State<BankConnectScreen> {
         INSERT INTO transactions
           (amount, description, date, type, category_id, category_name, merchant_name)
         VALUES
-          (?, ?, date('now','-3 day'), 'income', NULL, 'Income', 'Employer')
+          (?, ?, date('now','-7 day'), 'income', NULL, 'Income', 'Employer')
       ''', [300.00, 'Payday (demo)']);
 
       // Detect recurring
