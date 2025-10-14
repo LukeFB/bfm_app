@@ -29,7 +29,7 @@ router = APIRouter(
 
 SECRET_KEY = "super-secret-key"  # Use a secure random key in production
 ALGORITHM = "HS256"
-
+NAME = "BFM Moni Knowledgebase"
 RP_ID = "localhost"
 ORIGIN = "http://localhost:8000"
 
@@ -73,10 +73,10 @@ async def register_options(request: Request):
     if not username:
         raise HTTPException(400, "Username required")
     user_id = secrets.token_bytes(16)
-    USERS[username] = {"id": user_id, "name": username}
+    authdb.set_user(username, user_id)
     options = generate_registration_options(
         rp_id=RP_ID,
-        rp_name="Example App",
+        rp_name=NAME,
         user_id=user_id,
         user_name=username,
         user_display_name=username,
@@ -84,7 +84,7 @@ async def register_options(request: Request):
         attestation=AttestationConveyancePreference.NONE,
     )
     # Store challenge for verification
-    USERS[username]["challenge"] = options.challenge
+    authdb.set_user_challenge(username, options.challenge)
     return JSONResponse(options_to_json_dict(options))
 
 @router.post("/register/verify")
@@ -94,23 +94,25 @@ async def register_verify(request: Request):
     credential = body.get("credential")
     if not username or not credential:
         raise HTTPException(400, "Missing username or credential")
-    user = USERS.get(username)
-    if not user:
+    user = authdb.get_user(username)
+    challenge = authdb.get_user_challenge(username)
+    if not user or not challenge:
         raise HTTPException(400, "User not found")
     try:
         verification = verify_registration_response(
             credential=credential,
-            expected_challenge=user["challenge"],
+            expected_challenge=challenge,
             expected_rp_id=RP_ID,
             expected_origin=ORIGIN,
             require_user_verification=True,
         )
         # Store credential public key for authentication
-        CREDENTIALS[username] = {
-            "credential_id": verification.credential_id,
-            "public_key": verification.credential_public_key,
-            "sign_count": verification.sign_count,
-        }
+        authdb.set_credential(
+            username,
+            verification.credential_id,
+            verification.credential_public_key,
+            verification.sign_count
+        )
         return {"verified": True}
     except Exception as e:
         raise HTTPException(400, f"Registration failed: {e}")
@@ -119,7 +121,7 @@ async def register_verify(request: Request):
 async def authenticate_options(request: Request):
     body = await request.json()
     username = body.get("username")
-    cred = CREDENTIALS.get(username)
+    cred = authdb.get_credential(username)
     if not cred:
         raise HTTPException(400, "No credential for user")
     options = generate_authentication_options(
@@ -132,7 +134,7 @@ async def authenticate_options(request: Request):
         ],
         user_verification=UserVerificationRequirement.PREFERRED,
     )
-    USERS[username]["auth_challenge"] = options.challenge
+    authdb.set_auth_challenge(username, options.challenge)
     return JSONResponse(options_to_json_dict(options))
 
 @router.post("/verify")
@@ -142,14 +144,15 @@ async def authenticate_verify(request: Request):
     credential = body.get("credential")
     if not username or not credential:
         raise HTTPException(400, "Missing username or credential")
-    user = USERS.get(username)
-    cred = CREDENTIALS.get(username)
-    if not user or not cred:
+    user = authdb.get_user(username)
+    cred = authdb.get_credential(username)
+    auth_challenge = authdb.get_auth_challenge(username)
+    if not user or not cred or not auth_challenge:
         raise HTTPException(400, "User or credential not found")
     try:
         verification = verify_authentication_response(
             credential=credential,
-            expected_challenge=user["auth_challenge"],
+            expected_challenge=auth_challenge,
             expected_rp_id=RP_ID,
             expected_origin=ORIGIN,
             credential_public_key=cred["public_key"],
@@ -157,8 +160,13 @@ async def authenticate_verify(request: Request):
             require_user_verification=True,
         )
         # Update sign count
-        cred["sign_count"] = verification.new_sign_count
-                # Create session token
+        authdb.set_credential(
+            username,
+            cred["credential_id"],
+            cred["public_key"],
+            verification.new_sign_count
+        )
+        # Create session token
         token = create_session_token(username)
         response = JSONResponse({"authenticated": True})
         response.set_cookie(

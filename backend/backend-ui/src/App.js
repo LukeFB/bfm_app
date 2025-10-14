@@ -55,6 +55,7 @@ function App() {
       .catch(() => {
         // Optionally handle fetch/network errors here
       });
+    fetchEntries();
   }, []);
 
   // Registration
@@ -129,20 +130,23 @@ function App() {
         background: '#f3f2f1',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'center'
+        justifyContent: 'flex-start',
+        padding: 32,
+        boxSizing: 'border-box'
       }}>
         <div style={{
           display: 'flex',
           gap: 32,
-          background: 'none'
+          background: 'none',
+          height: '90vh',
+          width: '100%'
         }}>
           {/* List Card */}
           <div style={{
             background: '#fff',
             boxShadow: '8px 8px 0 0 rgba(0,0,0,0.25)',
             padding: '32px 24px',
-            minWidth: 340,
-            maxWidth: 400,
+            width: 400,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'stretch'
@@ -188,7 +192,7 @@ function App() {
             }}>
               Knowledgebase Entries
             </div>
-            <ul style={{ padding: 0, margin: 0, listStyle: 'none' }}>
+            <ul style={{ padding: 0, margin: 0, listStyle: 'none', overflowY: 'scroll', scrollbarWidth: 'thin' }}>
               {entries.map(e => (
                 <li key={e.id} style={{
                   background: '#f7f7f7',
@@ -197,7 +201,7 @@ function App() {
                   marginBottom: 10
                 }}>
                   <b>{e.title}</b><br />
-                  <span style={{ color: '#555', fontSize: 14 }}>{e.description}</span>
+                  <span style={{ color: '#555', fontSize: 14, lineBreak: 'anywhere' }}>{e.description}</span>
                 </li>
               ))}
             </ul>
@@ -206,43 +210,85 @@ function App() {
           <div style={{
             background: '#fff',
             boxShadow: '8px 8px 0 0 rgba(0,0,0,0.25)',
-
             padding: '32px 24px',
-            minWidth: 300,
-            maxWidth: 320,
+            minWidth: 500,
             display: 'flex',
             flexDirection: 'column',
-            alignItems: 'stretch'
+            flex: 1,
+            alignItems: 'stretch',
+            justifyContent: 'space-between'
           }}>
-            <input
-              type="text"
-              placeholder="Title"
-              value={newTitle}
-              onChange={e => setNewTitle(e.target.value)}
-              style={{
-                padding: '12px 10px',
-                fontSize: 16,
-                border: `1.5px solid ${BLUE}`,
-                marginBottom: 16,
-                outline: 'none',
-                background: '#f7f7f7'
-              }}
-            />
-            <textarea
-              placeholder="Description"
-              value={newDesc}
-              onChange={e => setNewDesc(e.target.value)}
-              rows={4}
-              style={{
-                padding: '12px 10px',
-                fontSize: 16,
-                border: `1.5px solid ${BLUE}`,
-                marginBottom: 24,
-                outline: 'none',
-                background: '#f7f7f7',
-                resize: 'none'
-              }}
-            />
+            <div style={{display: 'flex',flexDirection:'column'}}>
+              <input
+                type="text"
+                placeholder="Title"
+                value={newTitle}
+                onChange={e => setNewTitle(e.target.value)}
+                style={{
+                  padding: '12px 10px',
+                  fontSize: 16,
+                  border: `1.5px solid ${BLUE}`,
+                  marginBottom: 16,
+                  outline: 'none',
+                  background: '#f7f7f7'
+                }}
+              />
+              <input
+                type="text"
+                placeholder="Type"
+                onChange={e => setNewTitle(e.target.value)}
+                style={{
+                  padding: '12px 10px',
+                  fontSize: 16,
+                  border: `1.5px solid ${BLUE}`,
+                  marginBottom: 16,
+                  outline: 'none',
+                  background: '#f7f7f7'
+                }}
+              />
+              <input
+                type="text"
+                placeholder="Link"
+                onChange={e => setNewTitle(e.target.value)}
+                style={{
+                  padding: '12px 10px',
+                  fontSize: 16,
+                  border: `1.5px solid ${BLUE}`,
+                  marginBottom: 16,
+                  outline: 'none',
+                  background: '#f7f7f7'
+                }}
+              />
+              <textarea
+                placeholder="Description"
+                value={newDesc}
+                onChange={e => setNewDesc(e.target.value)}
+                rows={8}
+                style={{
+                  padding: '12px 10px',
+                  fontSize: 16,
+                  border: `1.5px solid ${BLUE}`,
+                  marginBottom: 24,
+                  outline: 'none',
+                  background: '#f7f7f7',
+                  resize: 'vertical'
+                }}
+              />
+              <textarea
+                placeholder="Conditions"
+                onChange={e => setNewDesc(e.target.value)}
+                rows={8}
+                style={{
+                  padding: '12px 10px',
+                  fontSize: 16,
+                  border: `1.5px solid ${BLUE}`,
+                  marginBottom: 24,
+                  outline: 'none',
+                  background: '#f7f7f7',
+                  resize: 'vertical'
+                }}
+              />
+            </div>
             <button
               onClick={addEntry}
               disabled={!newTitle.trim() || !newDesc.trim()}

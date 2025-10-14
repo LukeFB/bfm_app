@@ -19,6 +19,13 @@ def init_auth_db():
                 sign_count INTEGER NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_challenges (
+                username TEXT PRIMARY KEY,
+                challenge TEXT NOT NULL,
+                auth_challenge TEXT
+            )
+        """)
 init_auth_db()
 
 def set_user(username, user_id):
@@ -82,15 +89,19 @@ def get_user_challenge(username):
         )
         row = cur.fetchone()
         return row[0] if row else None
+    
+def set_auth_challenge(username, auth_challenge):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE user_challenges SET auth_challenge = ? WHERE username = ?",
+            (auth_challenge, username)
+        )
 
-# Replace all uses of USERS and CREDENTIALS in your endpoints with these functions.
-# For example, in /register/options:
-# 
-# 
-# In /register/verify:
-# user = 
-# challenge = get_user_challenge(username)
-# In /auth/options:
-# cred = get_credential(username)
-# In /auth/verify:
-# cred = get_credential(username)
+def get_auth_challenge(username):
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.execute(
+            "SELECT auth_challenge FROM user_challenges WHERE username = ?",
+            (username,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
