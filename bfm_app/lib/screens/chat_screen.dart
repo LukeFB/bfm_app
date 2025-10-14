@@ -44,6 +44,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   final TextEditingController _controller = TextEditingController();
 
+  // Added: scroll controller to keep view pinned to the latest messages.
+  final ScrollController _scroll = ScrollController();
+
   // Services
   late final AiClient _ai;
   late final ChatStorage _store;
@@ -63,6 +66,14 @@ class _ChatScreenState extends State<ChatScreen> {
     _bootstrap();
   }
 
+  // Added: dispose controllers to avoid leaks.
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
   Future<void> _bootstrap() async {
     // Load persisted messages (if any)
     final persisted = await _store.loadMessages();
@@ -70,6 +81,8 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _messages.addAll(persisted);
       });
+      // Added: ensure the list is scrolled to bottom after loading history.
+      _scrollToBottom();
     } else {
       // Seed your existing greeting (same text as before)
       _messages.add(ChatMessage.assistant(
@@ -77,12 +90,22 @@ class _ChatScreenState extends State<ChatScreen> {
       ));
       await _store.saveMessages(_messages);
       setState(() {});
+      // Added: scroll to the bottom after first paint.
+      _scrollToBottom();
     }
 
     // Check if an API key is present (so we can optionally disable send)
     final key = await ApiKeyStore.get();
     setState(() {
       _hasApiKey = (key != null && key.isNotEmpty);
+    });
+  }
+
+  // Added: helper to jump to end safely after a frame.
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
     });
   }
 
@@ -100,6 +123,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _controller.clear();
     await _store.saveMessages(_messages);
     setState(() {});
+    _scrollToBottom(); // Added: keep view pinned to newest message.
 
     try {
       // Build a rolling window of the last N turns for the model
@@ -118,12 +142,16 @@ class _ChatScreenState extends State<ChatScreen> {
       final botMsg = ChatMessage.assistant(replyText);
       _messages.add(botMsg);
       await _store.saveMessages(_messages);
+      setState(() {});
+      _scrollToBottom(); // Added: scroll to bottom when bot replies.
     } catch (e) {
       // Friendly error bubble (keeps your style)
       _messages.add(ChatMessage.assistant(
         "Sorry, I couldn’t reply just now. ${_prettyErr(e)}",
       ));
       await _store.saveMessages(_messages);
+      setState(() {});
+      _scrollToBottom(); // Added: maintain scroll position.
     } finally {
       setState(() {
         _sending = false;
@@ -158,6 +186,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // persist the single greeting message
     await _store.saveMessages(_messages);
+    _scrollToBottom(); // Added: scroll to top/bottom as needed after reset.
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -165,7 +194,6 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
   }
-
 
   String _prettyErr(Object e) {
     final s = e.toString();
@@ -194,6 +222,7 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           Expanded(
             child: ListView.separated(
+              controller: _scroll, // Added: keep a handle for auto-scroll.
               padding: const EdgeInsets.all(16),
               itemCount: _messages.length,
               itemBuilder: (context, index) {
@@ -226,6 +255,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: TextField(
                     controller: _controller,
+                    // Added: allow Enter to send.
+                    onSubmitted: (_) {
+                      if (_hasApiKey && !_sending) _sendMessage();
+                    },
                     // Hint shows a gentle nudge if no key is present
                     decoration: InputDecoration(
                       hintText: _hasApiKey
@@ -245,7 +278,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       : const Icon(Icons.send),
                   // If you prefer to hard-disable without a key, change to:
                   // onPressed: _hasApiKey && !_sending ? _sendMessage : null,
-                  onPressed: _sending ? null : _sendMessage,
+                  // Changed: disable send button when no key is present or when sending.
+                  onPressed: (_hasApiKey && !_sending) ? _sendMessage : null, // Added: guard on API key.
                 ),
               ],
             ),

@@ -1,3 +1,7 @@
+// -----------------------------------------------------------------------------
+// Author: Luke Fraser-Brown
+// -----------------------------------------------------------------------------
+
 import 'dart:async';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
@@ -22,7 +26,7 @@ class AppDatabase {
     // Open the database with version and an onUpgrade callback
     return await openDatabase(
       path,
-      version: 5, 
+      version: 6, 
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },

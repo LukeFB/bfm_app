@@ -25,7 +25,7 @@ class AiClient {
   // TODO: pick your preferred model & tuning
   static const String _model = 'gpt-4o-mini';
   static const double _temperature = 0.7;
-  static const int? _maxTokens = null; // e.g., 512 if you want a cap
+  static const int? _maxTokens = null; // TODO: 512 cap for pilot launch
 
   // TODO: refine with stakeholders as needed (BFM policy)
   static const String _systemPrompt = '''
@@ -58,13 +58,13 @@ Out of scope:
     // Build PRIVATE CONTEXT fresh each turn
     final contextStr = await ContextBuilder.build(
       recentTurns: recentTurns,
-      includeBudgets: true,   // TODO: expose as a Settings toggle if desired
-      includeReferrals: true, // TODO: expose as a Settings toggle if desired
+      includeBudgets: true,   // TODO: expose as a Settings toggle
+      includeReferrals: true, // TODO: expose as a Settings toggle
     );
 
     final messages = <Map<String, String>>[
       {'role': 'system', 'content': _systemPrompt},
-      {'role': 'assistant', 'content': contextStr}, // PRIVATE CONTEXT
+      {'role': 'system', 'content': contextStr}, // PRIVATE CONTEXT
       ...recentTurns,
     ];
 
@@ -75,17 +75,41 @@ Out of scope:
     };
     if (_maxTokens != null) body['max_tokens'] = _maxTokens;
 
-    final res = await http.post(
-      Uri.parse(_openAiUrl),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $apiKey',
-      },
-      body: jsonEncode(body),
-    );
+
+    // retry
+    http.Response res;
+    int attempt = 0;
+    while (true) {
+      attempt++;
+      res = await http
+          .post(
+            Uri.parse(_openAiUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $apiKey',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 25));
+      if (res.statusCode == 429 || res.statusCode >= 500) {
+        if (attempt < 3) {
+          await Future.delayed(Duration(milliseconds: 300 * attempt * attempt));
+          continue;
+        }
+      }
+      break;
+    }
 
     if (res.statusCode != 200) {
-      throw Exception('OpenAI error ${res.statusCode}: ${res.body}');
+      try {
+        final err = jsonDecode(res.body);
+        final msg = (err is Map && err['error'] is Map)
+            ? (err['error']['message']?.toString() ?? res.body)
+            : res.body;
+        throw Exception('OpenAI error ${res.statusCode}: $msg');
+      } catch (_) {
+        throw Exception('OpenAI error ${res.statusCode}: ${res.body}');
+      }
     }
 
     final data = jsonDecode(res.body) as Map<String, dynamic>;
