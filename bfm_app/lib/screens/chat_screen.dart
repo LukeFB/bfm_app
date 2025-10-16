@@ -30,6 +30,8 @@ import 'package:bfm_app/models/chat_message.dart';
 import 'package:bfm_app/services/ai_client.dart';
 import 'package:bfm_app/services/chat_storage.dart';
 import 'package:bfm_app/services/api_key_store.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
+
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -237,9 +239,11 @@ class _ChatScreenState extends State<ChatScreen> {
                         ? BubbleNip.rightBottom
                         : BubbleNip.leftBottom, // tail position
                     color: isUser ? Colors.blue[200]! : bfmBeige,
-                    child: Text(
-                      msg.content, // keep Text (no style change)
-                      style: const TextStyle(fontSize: 14),
+                    child: MarkdownBody(
+                      data: msg.content,
+                      styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+                        p: const TextStyle(fontSize: 14),
+                      ),
                     ),
                   ),
                 );
