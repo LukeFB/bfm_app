@@ -1,10 +1,10 @@
 /// ---------------------------------------------------------------------------
 /// File: lib/screens/chat_screen.dart
-/// Author: Luke Fraser-Brown
+/// Author: Luke Fraser-Brown & Jack Unsworth
 ///
 /// High-level description:
 ///   Chat UI that calls Moni AI directly (no backend) and retains context.
-///   - Keeps your existing Bubble styles, colors, layout, and send button.
+///   - Keeps existing Bubble styles, colors, layout, and send button.
 ///   - Loads/saves history locally so context survives restarts.
 ///   - Sends a rolling window of the last N turns + PRIVATE CONTEXT (budgets,
 ///     referrals, past-summary) assembled in AiClient/ContextBuilder.
@@ -160,7 +160,7 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     }
   }
-
+  // Clear chat method
   Future<void> _clearChat() async {
     final confirm = await showDialog<bool>(
       context: context,
