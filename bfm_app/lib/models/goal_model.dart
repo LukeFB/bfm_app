@@ -3,13 +3,10 @@
 /// Author: Luke Fraser-Brown
 ///
 /// Purpose:
-///   A simple model representing a savings goal. This maps to the `goals`
+///   A simple model representing a savings goal. This maps to the goals
 ///   table and is used by the dashboard's "Savings Goals" widget.
 ///
-/// Notes:
-///   - The model contains small helpers for progress calculation but does not
-///     perform DB updates itself. All updates should happen via the repository/service.
-///   - Keep keys in toMap() aligned with the DB DDL (snake_case).
+/// TODO: map goals to a budget via calculating weekly contribution.
 /// ---------------------------------------------------------------------------
 
 class GoalModel {

@@ -18,7 +18,6 @@
 ///     you only have ~1 month of data.
 /// ---------------------------------------------------------------------------
 
-/// (Optional) If this file exists in your project, keep it compiling with this:
 import 'package:bfm_app/db/app_database.dart';
 
 class DataWindowUtil {

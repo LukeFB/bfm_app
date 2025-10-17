@@ -8,9 +8,6 @@
 ///   - Injects PRIVATE CONTEXT built by ContextBuilder (summary, budgets, referrals).
 ///   - Sends recent user/assistant turns after the context.
 ///
-/// TODO hooks:
-///   - Adjust model/temperature/maxTokens
-///   - Update SYSTEM PROMPT with BFM-approved language
 /// ---------------------------------------------------------------------------
 
 import 'dart:convert';
@@ -22,7 +19,7 @@ import 'package:bfm_app/services/context_builder.dart';
 class AiClient {
   static const String _openAiUrl = 'https://api.openai.com/v1/chat/completions';
 
-  // TODO: pick your preferred model & tuning
+  // TODO: gpt-5-mini
   static const String _model = 'gpt-4o-mini';
   static const double _temperature = 0.7;
   static const int? _maxTokens = null; // TODO: 512 cap for pilot launch
@@ -48,7 +45,7 @@ Out of scope:
 ''';
 
   /// Complete a turn using:
-  ///   SYSTEM → PRIVATE CONTEXT → recentTurns (user/assistant)
+  ///   SYSTEM to PRIVATE CONTEXT to recentTurns (user/assistant)
   Future<String> complete(List<Map<String, String>> recentTurns) async {
     final apiKey = await ApiKeyStore.get();
     if (apiKey == null || apiKey.isEmpty) {

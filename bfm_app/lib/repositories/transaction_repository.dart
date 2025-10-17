@@ -1,17 +1,11 @@
+// Author: Luke Fraser-Brown
+
 import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/models/transaction_model.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:sqflite/sqflite.dart';
 
 class TransactionRepository {
-  static Future<int> insert(TransactionModel txn) async { // unused
-    final db = await AppDatabase.instance.database;
-    return await db.insert(
-      'transactions',
-      txn.toDbMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-  }
 
   static Future<List<TransactionModel>> getRecent(int limit) async {
     final db = await AppDatabase.instance.database;
@@ -46,18 +40,6 @@ class TransactionRepository {
     return await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
   }
 
-  /// Income – Expenses
-  static Future<double> getprofit() async { // unused
-    final db = await AppDatabase.instance.database;
-    final result = await db.rawQuery('''
-      SELECT 
-        (SELECT IFNULL(SUM(amount), 0) FROM transactions WHERE type = 'income') -
-        (SELECT IFNULL(SUM(amount), 0) FROM transactions WHERE type = 'expense')
-        AS balance
-    ''');
-    return (result.first['balance'] as num?)?.toDouble() ?? 0.0;
-  }
-
   /// Totals grouped by category (expenses only)
   static Future<Map<String, double>> getCategoryTotals() async {
     final db = await AppDatabase.instance.database;
@@ -77,7 +59,7 @@ class TransactionRepository {
     return totals;
   }
 
-  /// Expenses for the current week (Mon → today)
+  /// Expenses for the current week (Mon to today)
   static Future<double> getThisWeekExpenses() async {
     final db = await AppDatabase.instance.database;
     final now = DateTime.now();
@@ -153,7 +135,7 @@ class TransactionRepository {
   // inline categorisation helpers
   // ---------------------------------------------------------------------------
 
-  /// Update all *uncategorized* expenses with an exact description match.
+  /// Update all uncategorized expenses with an exact description match.
   static Future<int> updateUncategorizedByDescription(String description, int categoryId) async {
     final db = await AppDatabase.instance.database;
     return await db.update(
@@ -165,7 +147,7 @@ class TransactionRepository {
     );
   }
 
-  /// Fetch all distinct descriptions present in uncategorized expenses (optional).
+  /// Fetch all distinct descriptions present in uncategorized expenses
   static Future<List<String>> getDistinctUncategorizedDescriptions({int limit = 200}) async {
     final db = await AppDatabase.instance.database;
     final res = await db.rawQuery('''
@@ -196,7 +178,7 @@ class TransactionRepository {
   ) async {
     final db = await AppDatabase.instance.database;
 
-    // Get name for backfill (optional but nice for UI)
+    // Get name for backfill
     String? catName;
     final cat = await db.query(
       'categories',
@@ -207,7 +189,7 @@ class TransactionRepository {
     );
     if (cat.isNotEmpty) catName = cat.first['name'] as String?;
 
-    // Pull uncategorized expenses and match by normalized description (Dart-side)
+    // Pull uncategorized expenses and match by normalized description
     final rows = await db.query(
       'transactions',
       columns: ['id', 'description'],

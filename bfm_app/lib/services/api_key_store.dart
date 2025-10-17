@@ -3,7 +3,7 @@
 /// Author: Luke Fraser-Brown
 ///
 /// MVP-only: stores key in SharedPreferences (not secure).
-/// Swap back to flutter_secure_storage when Android build is sorted.
+/// Swap to flutter_secure_storage before production.
 /// ---------------------------------------------------------------------------
 import 'package:shared_preferences/shared_preferences.dart';
 

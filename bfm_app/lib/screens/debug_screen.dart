@@ -1,8 +1,8 @@
+// Author: Luke Fraser-Brown
+/// for debugging
+
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
@@ -317,22 +317,6 @@ class _DebugScreenState extends State<DebugScreen> {
     setState(() => _text = buf.toString());
   }
 
-  Future<void> _copy() async {
-    await Clipboard.setData(ClipboardData(text: _text));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Copied to clipboard')),
-    );
-  }
-
-  Future<void> _export() async {
-    final dir = await getTemporaryDirectory();
-    final path = '${dir.path}/bfm_debug_${DateTime.now().toIso8601String().replaceAll(':', '-')}.txt';
-    final f = File(path);
-    await f.writeAsString(_text);
-    await Share.shareXFiles([XFile(path)], text: 'BFM Debug Dump');
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -340,8 +324,6 @@ class _DebugScreenState extends State<DebugScreen> {
         title: const Text('Debug Data'),
         actions: [
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh), tooltip: 'Refresh'),
-          IconButton(onPressed: _copy, icon: const Icon(Icons.copy), tooltip: 'Copy'),
-          IconButton(onPressed: _export, icon: const Icon(Icons.ios_share), tooltip: 'Export'),
         ],
       ),
       body: SingleChildScrollView(

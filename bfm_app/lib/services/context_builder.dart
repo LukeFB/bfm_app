@@ -29,7 +29,7 @@ class ContextBuilder {
     final buffer = StringBuffer();
     buffer.writeln('PRIVATE CONTEXT: for assistant behaviour only.');
 
-    // ---- Persona / flags (optional)
+    // ---- Persona / flags
     final persona = await _getPersonaTag();
     if (persona != null) {
       buffer.writeln('persona: $persona');

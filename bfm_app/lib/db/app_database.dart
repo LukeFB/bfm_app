@@ -52,7 +52,7 @@ class AppDatabase {
       );
     }
 
-    // Ensure base tables exist (defensive)
+    // Ensure base tables exist
     if (!await hasTable('categories')) await _createCategories(db);
     if (!await hasTable('transactions')) await _createTransactions(db);
     if (!await hasTable('goals')) await _createGoals(db);
@@ -61,7 +61,7 @@ class AppDatabase {
     if (!await hasTable('alerts')) await _createAlerts(db);
     if (!await hasTable('events')) await _createEvents(db);
 
-    // ---- transactions incremental columns (idempotent) ----
+    // ---- transaction columns ----
     if (!await hasCol('transactions', 'akahu_id')) {
       await db.execute('ALTER TABLE transactions ADD COLUMN akahu_id TEXT;');
     }
@@ -81,7 +81,7 @@ class AppDatabase {
       await db.execute('ALTER TABLE transactions ADD COLUMN category_id INTEGER;');
     }
 
-    // ---- categories incremental columns (this fixes your error) ----
+    // ---- category columns ----
     if (!await hasCol('categories', 'akahu_category_id')) {
       await db.execute('ALTER TABLE categories ADD COLUMN akahu_category_id TEXT;');
     }
@@ -95,17 +95,10 @@ class AppDatabase {
       await db.execute('ALTER TABLE categories ADD COLUMN last_used_at TEXT;');
     }
 
-    // Recreate helpful indexes & triggers
+    // Recreate helpful indexes & triggers for category usage tracking
     await _ensureIndexesAndTriggers(db);
 
-    // Ensure "Uncategorized" exists
-    await db.rawInsert('''
-      INSERT INTO categories (name, icon, color, first_seen_at, last_used_at)
-      SELECT 'Uncategorized', '❓', '#CCCCCC', datetime('now'), datetime('now')
-      WHERE NOT EXISTS (SELECT 1 FROM categories WHERE name COLLATE NOCASE = 'uncategorized');
-    ''');
-
-    // Backfill usage_count from existing transactions (once)
+    // Backfill usage_count from existing transactions
     await db.rawUpdate('''
       UPDATE categories
       SET usage_count = (
@@ -125,11 +118,6 @@ class AppDatabase {
     await _createEvents(db);
     await _ensureIndexesAndTriggers(db);
 
-    // Seed "Uncategorized"
-    await db.rawInsert('''
-      INSERT INTO categories (name, icon, color, first_seen_at, last_used_at)
-      VALUES ('Uncategorized', '❓', '#CCCCCC', datetime('now'), datetime('now'));
-    ''');
   }
 
   // --- DDL helpers ---

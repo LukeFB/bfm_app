@@ -1,3 +1,5 @@
+// Author: Luke Fraser-Brown
+
 import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/models/recurring_transaction_model.dart';
 import 'package:sqflite/sqflite.dart';

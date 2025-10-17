@@ -3,7 +3,7 @@
 // Author: Jack Unsworth, Luke Fraser-Brown
 // -----------------------------------------------------------------------------
 
-import 'package:bfm_app/db/app_database.dart';
+
 import 'package:sqflite/sqflite.dart';
 
 class PromptModel {
@@ -12,8 +12,8 @@ class PromptModel {
   PromptModel(this._db);
 
   /// Builds the full private context string for the AI assistant.
-  /// includeBudgets → embed a brief budget summary
-  /// includeReferrals → embed local referral list
+  /// Embed a brief budget summary
+  /// TODO: Embed referral list
   Future<String> buildPrompt({
     bool includeBudgets = true,
     bool includeReferrals = true,
@@ -38,8 +38,8 @@ class PromptModel {
   // ---------------------------------------------------------------------------
 
   Future<String> _buildBudgetContext() async {
-    // Added: explicit columns + limit for token control and resilience to schema drift.
-    const int _kMaxBudgets = 12; // Added: cap items to avoid large prompts.
+    // explicit columns + limit for token control and resilience to schema drift.
+    const int _kMaxBudgets = 12; // cap items to avoid large prompts.
     final budgets = await _db.query(
       'budgets',
       columns: ['id', 'category_id', 'weekly_limit', 'period_start', 'period_end', 'created_at'],
@@ -54,7 +54,7 @@ class PromptModel {
     final buffer = StringBuffer();
     buffer.writeln("Current weekly budgets:\n");
 
-    // Added: simple date formatter to keep outputs compact and consistent.
+    // simple date formatter to keep outputs compact and consistent.
     String _fmtDate(dynamic v) {
       if (v == null) return '';
       final s = v.toString();
@@ -66,7 +66,7 @@ class PromptModel {
       final categoryIdRaw = b['category_id'];
       final weeklyLimit = b['weekly_limit'];
 
-      // Added: robust category_id parsing to handle int/string variants.
+      // category_id parsing to handle int/string variants.
       final int? categoryId = (categoryIdRaw is int)
           ? categoryIdRaw
           : int.tryParse(categoryIdRaw?.toString() ?? '');
@@ -91,7 +91,7 @@ class PromptModel {
   Future<String?> _getCategoryName(dynamic categoryId) async {
     if (categoryId == null) return null;
 
-    // Added: normalize to integer for reliable lookups.
+    // normalize to integer for reliable lookups.
     final int? id = (categoryId is int) ? categoryId : int.tryParse(categoryId.toString());
     if (id == null) return null;
 
@@ -115,10 +115,9 @@ class PromptModel {
 
   Future<String> _buildReferralContext() async {
 
-    return "No referral resources yet\n"; // TODO referrals
+    return "No referral resources yet\n"; // TODO recieve referral list from backend
 
-    // Added: explicit columns + limit to protect tokens and tolerate schema changes.
-  //  const int _kMaxReferrals = 25; // Added: cap items for prompt size.
+    // explicit columns + limit to protect tokens and tolerate schema changes.
   //  final referrals = await _db.query(
   //    'referrals',
   //    columns: ['title', 'description', 'link', 'category', 'source', 'created_at'],

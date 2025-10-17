@@ -2,9 +2,8 @@
 /// File: alert_model.dart
 /// Author: Luke Fraser-Brown
 ///
-/// Minimal model for one-off alerts. Alerts may be system-generated
-/// (recurring bills) or admin-created. Keep Alerts simple to allow
-/// agenda-like UI rendering.
+/// Minimal model for alerts. Alerts may be
+/// recurring bills or potentially admin created.
 /// ---------------------------------------------------------------------------
 
 class AlertModel {

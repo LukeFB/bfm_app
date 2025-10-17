@@ -15,7 +15,7 @@
 ///
 /// Notes:
 ///   - Uses repositories for table clears to preserve existing behaviour.
-///   - Leaves categories intact (no destructive schema changes).
+///   - Leaves categories intact
 /// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
@@ -43,8 +43,6 @@ class BankService {
     await prefs.remove('last_sync_at');
     await prefs.remove('akahu_app_token');
     await prefs.remove('akahu_user_token');
-
-    // TODO: If you maintain any other per-connection state, clear it here.
 
     // TODO: disconnect akahu clear tokens
   }

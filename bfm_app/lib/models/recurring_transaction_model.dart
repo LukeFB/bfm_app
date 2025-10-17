@@ -1,22 +1,23 @@
 /// ---------------------------------------------------------------------------
 /// File: recurring_transaction_model.dart
-/// Author: [Your Name]
+/// Author: Luke Fraser-Brown
 ///
 /// Purpose:
-///   Model representing a recurring / expected payment. This feeds Alerts and
-///   the "upcoming bills" UI. The model is intentionally minimal — date math
-///   utilities live in services or small util helpers.
+///   Model representing a recurring / expected payment. This feeds Alerts for
+///   upcoming bills in UI.
 ///
 /// Fields:
 ///   id, category_id, amount, frequency ('weekly'|'monthly'), next_due_date,
 ///   description, created_at, updated_at
+/// TODO: currently only have access to one month akahu transactions so monthly 
+/// transaction detection out of scope righ now.
 /// ---------------------------------------------------------------------------
 
 class RecurringTransactionModel {
   final int? id;
   final int categoryId;
   final double amount;
-  final String frequency; // 'weekly' | 'monthly' (extendable)
+  final String frequency; // weekly
   final String nextDueDate; // YYYY-MM-DD
   final String? description;
   final String? createdAt;
@@ -71,6 +72,6 @@ class RecurringTransactionModel {
     }
   }
 
-  /// Convenience: true if due within `days` (inclusive).
+  /// For convenience, check if due within [days] days.
   bool isDueWithin(int days, [DateTime? now]) => daysUntilDue(now) <= days;
 }

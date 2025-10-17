@@ -17,17 +17,11 @@
 import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
-import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/models/goal_model.dart';
 
 class DashboardService {
-  /// Safely fetches the total weekly **budgets sum** (not income).
-  static Future<double> getTotalWeeklyBudgetSafe() async {
-    final total = await BudgetRepository.getTotalWeeklyBudget();
-    return total.isNaN ? 0.0 : total;
-  }
 
-  /// Expenses for the **current** week (Mon→today).
+  /// Expenses for the current week (Mon to today).
   static Future<double> getThisWeekExpenses() async {
     final db = await AppDatabase.instance.database;
     final now = DateTime.now();
@@ -81,13 +75,13 @@ class DashboardService {
   }
 
   // ---------------------------------------------------------------------------
-  // NEW: income & header helpers
+  // income & header helpers
   // ---------------------------------------------------------------------------
 
   static String _fmtDay(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 
-  /// Income for **last week** (Mon→Sun).
+  /// Income for last week (Mon→Sun).
   /// Example: if today is Wed, 16 Oct, last week = Mon 7 Oct → Sun 13 Oct.
   static Future<double> weeklyIncomeLastWeek() async {
     final db = await AppDatabase.instance.database;
@@ -107,8 +101,8 @@ class DashboardService {
     return (res.first['v'] as num?)?.toDouble() ?? 0.0;
   }
 
-  /// (Kept for compatibility) Income for **this** week (Mon→today).
-  /// Not used by header anymore.
+  /// Income for this week (Mon to today).
+  /// Not used by header anymore as dont know what day user gets income.
   static Future<double> weeklyIncomeThisWeek() async {
     final db = await AppDatabase.instance.database;
     final now = DateTime.now();
@@ -125,10 +119,10 @@ class DashboardService {
     return (res.first['v'] as num?)?.toDouble() ?? 0.0;
   }
 
-  /// Expenses for **this** week (Mon→today) — used for "Left to spend".
+  /// Expenses for this week — used for "Left to spend".
   static Future<double> discretionarySpendThisWeek() => getThisWeekExpenses();
 
-  /// NEW: Discretionary weekly budget shown in the header:
+  /// Discretionary weekly budget shown in the header:
   /// lastWeekIncome − sum(weekly budgets).
   static Future<double> getDiscretionaryWeeklyBudget() async {
     final lastWeekIncome = await weeklyIncomeLastWeek();

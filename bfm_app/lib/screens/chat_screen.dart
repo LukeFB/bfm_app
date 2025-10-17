@@ -3,8 +3,7 @@
 /// Author: Luke Fraser-Brown
 ///
 /// High-level description:
-///   Chat UI that calls Moni AI directly (no backend) and retains context.
-///   - Keeps your existing Bubble styles, colors, layout, and send button.
+///   Chat UI that calls Moni AI directly and retains context.
 ///   - Loads/saves history locally so context survives restarts.
 ///   - Sends a rolling window of the last N turns + PRIVATE CONTEXT (budgets,
 ///     referrals, past-summary) assembled in AiClient/ContextBuilder.
@@ -17,15 +16,13 @@
 ///
 /// Notes:
 ///   - If no API key is set, the input still renders; sending will show a
-///     friendly error. You can also disable the send if you prefer.
-///   - Does not remove or restyle your existing widgets.
+///     friendly error. 
 /// ---------------------------------------------------------------------------
 
 import 'package:bubble/bubble.dart';
 import 'package:flutter/material.dart';
 import 'package:bfm_app/screens/dashboard_screen.dart';
 
-// Added imports
 import 'package:bfm_app/models/chat_message.dart';
 import 'package:bfm_app/services/ai_client.dart';
 import 'package:bfm_app/services/chat_storage.dart';
@@ -44,7 +41,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   final TextEditingController _controller = TextEditingController();
 
-  // Added: scroll controller to keep view pinned to the latest messages.
+  // scroll controller to keep view pinned to the latest messages.
   final ScrollController _scroll = ScrollController();
 
   // Services
@@ -66,7 +63,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _bootstrap();
   }
 
-  // Added: dispose controllers to avoid leaks.
+  // dispose controllers to avoid leaks.
   @override
   void dispose() {
     _controller.dispose();
@@ -81,16 +78,16 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _messages.addAll(persisted);
       });
-      // Added: ensure the list is scrolled to bottom after loading history.
+      // ensure the list is scrolled to bottom after loading history.
       _scrollToBottom();
     } else {
-      // Seed your existing greeting (same text as before)
+      // Seed welcome greeting
       _messages.add(ChatMessage.assistant(
         "Kia ora! How can I help with your budget today?",
       ));
       await _store.saveMessages(_messages);
       setState(() {});
-      // Added: scroll to the bottom after first paint.
+      // scroll to the bottom after first paint.
       _scrollToBottom();
     }
 
@@ -101,7 +98,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  // Added: helper to jump to end safely after a frame.
+  // helper to jump to end safely after a frame.
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
@@ -123,7 +120,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _controller.clear();
     await _store.saveMessages(_messages);
     setState(() {});
-    _scrollToBottom(); // Added: keep view pinned to newest message.
+    _scrollToBottom(); // keep view pinned to newest message.
 
     try {
       // Build a rolling window of the last N turns for the model
@@ -143,7 +140,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.add(botMsg);
       await _store.saveMessages(_messages);
       setState(() {});
-      _scrollToBottom(); // Added: scroll to bottom when bot replies.
+      _scrollToBottom(); // scroll to bottom when bot replies.
     } catch (e) {
       // Friendly error bubble (keeps your style)
       _messages.add(ChatMessage.assistant(
@@ -151,7 +148,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ));
       await _store.saveMessages(_messages);
       setState(() {});
-      _scrollToBottom(); // Added: maintain scroll position.
+      _scrollToBottom(); // maintain scroll position.
     } finally {
       setState(() {
         _sending = false;
@@ -174,7 +171,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (confirm != true) return;
 
     // wipe persisted history
-    await _store.clear(); // make sure ChatStorage has a clear() method (we added earlier)
+    await _store.clear();
 
     // reset UI to the default greeting
     _controller.clear();
@@ -186,7 +183,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // persist the single greeting message
     await _store.saveMessages(_messages);
-    _scrollToBottom(); // Added: scroll to top/bottom as needed after reset.
+    _scrollToBottom(); // scroll to top/bottom as needed after reset.
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -238,7 +235,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         : BubbleNip.leftBottom, // tail position
                     color: isUser ? Colors.blue[200]! : bfmBeige,
                     child: Text(
-                      msg.content, // keep Text (no style change)
+                      msg.content,
                       style: const TextStyle(fontSize: 14),
                     ),
                   ),
@@ -255,7 +252,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: TextField(
                     controller: _controller,
-                    // Added: allow Enter to send.
+                    // allow Enter to send. TODO: not working
                     onSubmitted: (_) {
                       if (_hasApiKey && !_sending) _sendMessage();
                     },
@@ -276,9 +273,6 @@ class _ChatScreenState extends State<ChatScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.send),
-                  // If you prefer to hard-disable without a key, change to:
-                  // onPressed: _hasApiKey && !_sending ? _sendMessage : null,
-                  // Changed: disable send button when no key is present or when sending.
                   onPressed: (_hasApiKey && !_sending) ? _sendMessage : null, // Added: guard on API key.
                 ),
               ],

@@ -28,62 +28,8 @@ import 'package:bfm_app/utils/analysis_utils.dart';
 import 'package:bfm_app/models/recurring_transaction_model.dart';
 
 class BudgetAnalysisService {
-  // -------------------- basic helpers (unchanged) --------------------
 
-  static Future<double> getWeeklyIncome() async { // unused
-    final db = await AppDatabase.instance.database;
-    final now = DateTime.now();
-    final monday = now.subtract(Duration(days: now.weekday - 1));
-    String fmt(DateTime d) =>
-        "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
-    final start = fmt(monday);
-    final end = fmt(now);
-
-    final res = await db.rawQuery('''
-      SELECT SUM(amount) as total_income
-      FROM transactions
-      WHERE type = 'income'
-        AND date BETWEEN ? AND ?;
-    ''', [start, end]);
-
-    return (res.first['total_income'] as num?)?.toDouble() ?? 0.0;
-  }
-
-  static Future<Map<String, double>> getWeeklySpendingByCategory() async { // unused
-    final db = await AppDatabase.instance.database;
-    final now = DateTime.now();
-    final monday = now.subtract(Duration(days: now.weekday - 1));
-    String fmt(DateTime d) =>
-        "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
-    final start = fmt(monday);
-    final end = fmt(now);
-
-    final result = await db.rawQuery('''
-      SELECT 
-        COALESCE(c.name, 'Uncategorized') as category_name,
-        SUM(t.amount) as total_spent
-      FROM transactions t
-      LEFT JOIN categories c ON t.category_id = c.id
-      WHERE t.type = 'expense'
-        AND t.date BETWEEN ? AND ?
-      GROUP BY category_name;
-    ''', [start, end]);
-
-    return {
-      for (var row in result)
-        (row['category_name'] as String): (row['total_spent'] as num? ?? 0).toDouble().abs()
-    };
-  }
-
-  static Future<double> getRemainingWeeklyBudget() async { // unused
-    double totalBudget = await BudgetRepository.getTotalWeeklyBudget();
-    if (totalBudget.isNaN) totalBudget = 0.0;
-    double spent = await TransactionRepository.getThisWeekExpenses();
-    final remaining = totalBudget - spent;
-    return totalBudget > 0 ? remaining : 0.0;
-  }
-
-  // -------------------- recurring detection (unchanged) --------------------
+  // -------------------- recurring detection --------------------
 
   static Future<void> identifyRecurringTransactions() async {
     final allTxns = await TransactionRepository.getAll();
@@ -175,14 +121,14 @@ class BudgetAnalysisService {
     }
   }
 
-  // -------------------- SUGGESTIONS (split Uncategorized) --------------------
+  // -------------------- SUGGESTIONS --------------------
 
   static Future<List<BudgetSuggestionModel>> getCategoryWeeklyBudgetSuggestions({
     double minWeekly = 5.0,
   }) async {
     final db = await AppDatabase.instance.database;
 
-    // Actual data window → normalize to $/week
+    // normalize to $/week
     final range = await AnalysisUtils.getGlobalDateRange();
     final start = (range['first'] ?? _today());
     final end   = (range['last']  ?? _today());
@@ -192,7 +138,7 @@ class BudgetAnalysisService {
     final recurring = await RecurringRepository.getAll();
     final recurringCatIds = recurring.map((r) => r.categoryId).toSet();
 
-    // 1) Normal categories (excluding Uncategorized)
+    // Normal categories (excluding Uncategorized)
     final catRows = await db.rawQuery('''
       SELECT 
         t.category_id AS category_id,
@@ -232,7 +178,7 @@ class BudgetAnalysisService {
       ));
     }
 
-    // 2) "Uncategorized by description" groups
+    // Uncategorized by description groups
     final uncatRows = await db.rawQuery('''
       SELECT 
         t.description AS description,
@@ -270,7 +216,7 @@ class BudgetAnalysisService {
       ));
     }
 
-    // 3) Order: UNCATEGORIZED GROUPS → recurring → usage_count → weekly_suggested
+    // Order: UNCATEGORIZED GROUPS then recurring setected then usage_count then weekly_suggested
     out.sort((a, b) {
       if (a.isUncategorizedGroup != b.isUncategorizedGroup) {
         // put uncategorized groups first

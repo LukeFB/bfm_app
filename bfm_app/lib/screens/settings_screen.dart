@@ -74,7 +74,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         children: [
-          // --- NEW: API Key section (keeps your existing tiles/buttons intact)
+          // --- API Key section ---
           Padding(
             padding: const EdgeInsets.all(16),
             child: Card(
@@ -121,14 +121,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
 
-          // --- YOUR EXISTING ITEMS (unchanged) ---
+          // --- Disconnect Bank ---
           ListTile(
             leading: const Icon(Icons.link_off, color: Colors.red),
             title: const Text('Disconnect Bank'),
             subtitle:
                 const Text('Remove bank account and all transactions data'),
             onTap: () async {
-              // Confirm the action (optional):
+              // Confirm the action:
               final confirm = await showDialog<bool>(
                 context: context,
                 builder: (ctx) => AlertDialog(
@@ -154,7 +154,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // Clear all transaction and recurring transaction data from the database
               await BankService.disconnect();
 
-              // (If you stored the bank access token or other info, also clear it here)
               // Navigate back to BankConnectScreen (reset navigation stack)
               if (!context.mounted) return;
               Navigator.pushNamedAndRemoveUntil(

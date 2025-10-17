@@ -2,29 +2,19 @@
 /// File: category_model.dart
 /// Author: Luke Fraser-Brown
 ///
-
-/// ---------------------------------------------------------------------------
-/// File: category_model.dart
-/// Author: Luke Fraser-Brown
-///
 /// Purpose:
 ///   Domain model for expense/income categories (Food, Rent, Bills, etc).
-///   Maps to `categories` table and may be populated from Akahu enrichment
+///   Maps to categories table and may be populated from Akahu enrichment
 ///   categories when available.
-///
-/// Notes:
-///   - Keep visual hints (icon, color) in the model so UI components can
-///     render self-contained category chips/cards.
-///   - `akahuCategoryId` is optional: store it only if you want to reconcile
-///     or periodically refresh Akahu's category labels.
 /// ---------------------------------------------------------------------------
 
 class CategoryModel {
   final int? id;
   final String name;
+  // Optional
   final String? icon; // emoji or resource name
   final String? color; // hex color as string (e.g. "#FFEEAA")
-  final String? akahuCategoryId; // external mapping (optional)
+  final String? akahuCategoryId; // external mapping
 
   // Optional bookkeeping
   final int? usageCount;

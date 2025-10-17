@@ -1,6 +1,5 @@
 import 'package:bfm_app/screens/dashboard_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:bfm_app/db/app_database.dart';
 
 import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/models/goal_model.dart';

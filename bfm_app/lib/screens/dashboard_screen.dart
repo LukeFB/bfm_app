@@ -10,7 +10,6 @@
 /// (uncategorised counts as discretionary).
 /// ---------------------------------------------------------------------------
 
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:bfm_app/models/dash_data.dart';
 import 'package:bfm_app/services/dashboard_service.dart';
@@ -24,7 +23,7 @@ import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/transaction_model.dart';
 
-const Color bfmBlue = Color(0xFF005494);
+const Color bfmBlue = Color(0xFF005494); // TODO: make a themes file
 const Color bfmOrange = Color(0xFFFF6934);
 const Color bfmBeige = Color(0xFFF5F5E1);
 
@@ -45,10 +44,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<DashData> _load() async {
-    // 0: budgets total, 1: discretionary spend, 2: income this week,
-    // 3: primary goal,   4: alerts,               5: recent tx
     final results = await Future.wait([
-      DashboardService.getDiscretionaryWeeklyBudget(), // uses last week's income
+    DashboardService.getDiscretionaryWeeklyBudget(), // uses last week's income
     DashboardService.discretionarySpendThisWeek(),   // Mon to today expenses
     DashboardService.getPrimaryGoal(),
     DashboardService.getAlerts(),
@@ -65,7 +62,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return DashData(
       leftToSpendThisWeek: leftToSpend,
-      totalWeeklyBudget: discWeeklyBudget, // now shows income - budgets
+      totalWeeklyBudget: discWeeklyBudget, // income - budgets
       primaryGoal: goal,
       alerts: alerts,
       recent: recent,
@@ -254,7 +251,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                     // ---------- FINANCIAL TIP ----------
                     const DashboardCard(
-                      title: "Financial Tip", // TODO: connect to api
+                      title: "Financial Tip", // TODO: connect to backend api
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [

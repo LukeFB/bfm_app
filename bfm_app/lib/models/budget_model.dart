@@ -7,11 +7,6 @@
 ///
 /// DB mapping:
 ///   id, category_id, weekly_limit, period_start, period_end, created_at, updated_at
-///
-/// Guidance:
-///   - `period_start` is stored as YYYY-MM-DD representing the week start.
-///   - Aggregation over budgets (e.g. total weekly budget) should be performed
-///     in a service/repository layer to allow caching and unit tests.
 /// ---------------------------------------------------------------------------
 
 class BudgetModel {

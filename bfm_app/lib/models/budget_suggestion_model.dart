@@ -1,11 +1,11 @@
 /// ---------------------------------------------------------------------------
-/// File: lib/models/budget_suggestion_model.dart
+/// File: budget_suggestion_model.dart
 /// Author: Luke Fraser-Brown
 ///
 /// Purpose:
 ///   Lightweight view-model used by the Budget Build screen. Represents either
-///   (a) a normal category suggestion, or (b) an "uncategorized-by-description"
-///   suggestion that the user can categorize inline.
+///   (a) a normal category suggestion, or (b) an uncategorized listed by description
+///   suggestion that the user can categorize.
 ///
 /// Fields:
 ///   - categoryId         (null for uncategorized-by-description rows)
@@ -26,7 +26,7 @@ class BudgetSuggestionModel {
   final int txCount;
   final bool hasRecurring;
 
-  // "Uncategorized by description"
+  // Uncategorized sort by description
   final bool isUncategorizedGroup;
   final String? description;
 

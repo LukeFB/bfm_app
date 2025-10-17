@@ -1,5 +1,6 @@
+// Author: Luke Fraser-Brown
+
 import 'package:flutter/material.dart';
-import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/models/transaction_model.dart';
 
@@ -131,24 +132,6 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
             ],
           ),
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text("Cancel")),
-          ElevatedButton(
-            onPressed: () async {
-              final txn = TransactionModel(
-                description: descController.text,
-                amount: double.tryParse(amountController.text) ?? 0,
-                date: dateController.text,
-                type: type,
-                categoryId: selectedCategoryId,
-              );
-              await TransactionRepository.insert(txn);
-              _refreshTransactions();
-              Navigator.of(context).pop(true);
-            },
-            child: const Text("Save"),
-          ),
-        ],
       ),
     );
   }
