@@ -1,8 +1,7 @@
 // Author: Luke Fraser-Brown
 
-import 'package:bfm_app/repositories/transaction_repository.dart';
-import 'package:bfm_app/services/akahu_service.dart';
-import 'package:bfm_app/services/budget_analysis_service.dart';
+import 'package:bfm_app/services/secure_credential_store.dart';
+import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -23,26 +22,20 @@ class _BankConnectScreenState extends State<BankConnectScreen> {
 
     try {
       // Fetch from Akahu
-      final items = await AkahuService.fetchTransactions(appToken, userToken);
+      if (appToken.isEmpty || userToken.isEmpty) {
+        throw Exception('Please enter both tokens.');
+      }
 
-      // Insert into DB
-      await TransactionRepository.insertFromAkahu(items);
-
-      // Inserting income so I dont look broke during the demo TODO: remove income
-      // final db = await AppDatabase.instance.database;
-      // await db.rawInsert('''
-      //   INSERT INTO transactions
-      //     (amount, description, date, type, category_id, category_name, merchant_name)
-      //   VALUES
-      //     (?, ?, date('now','-7 day'), 'income', NULL, 'Income', 'Employer')
-      // ''', [300.00, 'Payday (demo)']);
-
-      // Detect recurring
-      await BudgetAnalysisService.identifyRecurringTransactions();
+      await SecureCredentialStore()
+          .saveAkahuTokens(appToken: appToken, userToken: userToken);
 
       // Mark connected
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('bank_connected', true);
+      await prefs.remove('last_sync_at');
+
+      // Trigger initial sync pipeline
+      await TransactionSyncService().syncNow();
 
       if (!mounted) return;
 

@@ -80,6 +80,10 @@ class AppDatabase {
     if (!await hasCol('transactions', 'category_id')) {
       await db.execute('ALTER TABLE transactions ADD COLUMN category_id INTEGER;');
     }
+    if (!await hasCol('transactions', 'akahu_hash')) {
+      await db.execute('ALTER TABLE transactions ADD COLUMN akahu_hash TEXT;');
+    }
+    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_transactions_akahu_hash ON transactions(akahu_hash) WHERE akahu_hash IS NOT NULL;');
 
     // ---- category columns ----
     if (!await hasCol('categories', 'akahu_category_id')) {
@@ -153,12 +157,14 @@ class AppDatabase {
         connection_id TEXT,
         merchant_name TEXT,
         category_name TEXT,
+        akahu_hash TEXT,
         FOREIGN KEY(category_id) REFERENCES categories(id)
       );
     ''');
     await db.execute('CREATE INDEX IF NOT EXISTS ix_transactions_date ON transactions(date DESC);');
     await db.execute('CREATE INDEX IF NOT EXISTS ix_transactions_category_id ON transactions(category_id);');
     await db.execute('CREATE INDEX IF NOT EXISTS ix_transactions_type ON transactions(type);');
+    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_transactions_akahu_hash ON transactions(akahu_hash) WHERE akahu_hash IS NOT NULL;');
   }
 
   Future<void> _createGoals(Database db) async {
@@ -270,7 +276,9 @@ class AppDatabase {
   }
 
   Future close() async {
-    final db = await instance.database;
-    db.close();
+    final db = _database;
+    if (db == null) return;
+    await db.close();
+    _database = null;
   }
 }

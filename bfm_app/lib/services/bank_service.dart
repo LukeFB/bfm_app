@@ -22,6 +22,7 @@ import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
+import 'package:bfm_app/services/secure_credential_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class BankService {
@@ -43,6 +44,8 @@ class BankService {
     await prefs.remove('last_sync_at');
     await prefs.remove('akahu_app_token');
     await prefs.remove('akahu_user_token');
+
+    await SecureCredentialStore().clearAkahuTokens();
 
     // TODO: disconnect akahu clear tokens
   }

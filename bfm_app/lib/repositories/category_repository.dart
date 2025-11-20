@@ -77,6 +77,28 @@ class CategoryRepository {
     return id;
   }
 
+  static Future<Map<int, String>> getNamesByIds(Iterable<int> ids) async {
+    final unique = ids.toSet();
+    if (unique.isEmpty) return {};
+    final db = await AppDatabase.instance.database;
+    final placeholders = List.filled(unique.length, '?').join(',');
+    final rows = await db.query(
+      'categories',
+      columns: ['id', 'name'],
+      where: 'id IN ($placeholders)',
+      whereArgs: unique.toList(),
+    );
+    final map = <int, String>{};
+    for (final row in rows) {
+      final id = row['id'] as int?;
+      final name = row['name'] as String?;
+      if (id != null && name != null) {
+        map[id] = name;
+      }
+    }
+    return map;
+  }
+
   /// Categories ordered by popularity, then name.
   static Future<List<Map<String, dynamic>>> getAllOrderedByUsage({int? limit}) async {
     final db = await AppDatabase.instance.database;

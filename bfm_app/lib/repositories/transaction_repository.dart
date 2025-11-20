@@ -90,32 +90,20 @@ class TransactionRepository {
   /// - Ensures categories exist (by enriched name) and assigns category_id
   /// - Triggers maintain categories.usage_count
   static Future<void> insertFromAkahu(List<Map<String, dynamic>> items) async {
+    await upsertFromAkahu(items);
+  }
+
+  static Future<void> upsertFromAkahu(List<Map<String, dynamic>> items) async {
+    if (items.isEmpty) return;
     final db = await AppDatabase.instance.database;
     final batch = db.batch();
 
-    for (var item in items) {
+    for (final item in items) {
       final txn = TransactionModel.fromAkahu(item);
-
-      int? categoryId;
-      final catName = txn.categoryName?.trim();
-      if (catName != null && catName.isNotEmpty) {
-        final akahuCategoryId = (item['category'] is Map<String, dynamic>)
-            ? ((item['category'] as Map<String, dynamic>)['_id'] ??
-                (item['category'] as Map<String, dynamic>)['id']) as String?
-            : null;
-
-        categoryId = await CategoryRepository.ensureByName(
-          catName,
-          akahuCategoryId: akahuCategoryId,
-        );
-      } else {
-        categoryId = await CategoryRepository.ensureByName('Uncategorized');
-      }
-
+      final categoryId = await _resolveCategoryId(item, txn);
       final map = txn.toDbMap();
       map['category_id'] = categoryId;
-      map['category_name'] = catName ?? 'Uncategorized';
-
+      map['category_name'] = txn.categoryName ?? 'Uncategorized';
       batch.insert(
         'transactions',
         map,
@@ -124,6 +112,28 @@ class TransactionRepository {
     }
 
     await batch.commit(noResult: true);
+  }
+
+  static Future<int> _resolveCategoryId(
+    Map<String, dynamic> raw,
+    TransactionModel txn,
+  ) async {
+    final catName = txn.categoryName?.trim();
+    if (catName == null || catName.isEmpty) {
+      return CategoryRepository.ensureByName('Uncategorized');
+    }
+
+    final rawCategory = raw['category'] as Map<String, dynamic>?;
+    String? akahuCategoryId;
+    if (rawCategory != null) {
+      akahuCategoryId =
+          (rawCategory['_id'] ?? rawCategory['id'] ?? rawCategory['akahu_id'])
+              as String?;
+    }
+    return CategoryRepository.ensureByName(
+      catName,
+      akahuCategoryId: akahuCategoryId,
+    );
   }
 
   static Future<void> clearAll() async {
