@@ -13,6 +13,7 @@
 import 'package:flutter/material.dart';
 import 'package:bfm_app/models/dash_data.dart';
 import 'package:bfm_app/services/dashboard_service.dart';
+import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:bfm_app/utils/date_utils.dart';
 import 'package:bfm_app/widgets/dashboard_card.dart';
 import 'package:bfm_app/widgets/bottom_bar_button.dart';
@@ -44,6 +45,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<DashData> _load() async {
+    await TransactionSyncService().syncIfStale();
     final results = await Future.wait([
     DashboardService.getDiscretionaryWeeklyBudget(), // uses last week's income
     DashboardService.discretionarySpendThisWeek(),   // Mon to today expenses
@@ -73,6 +75,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState(() {
       _future = _load();
     });
+  }
+
+  Future<void> _openRoute(String route) async {
+    await Navigator.pushNamed(context, route);
+    if (!mounted) return;
+    _refresh();
   }
 
   /// Friendly, dynamic header based on how much is left this week.
@@ -133,6 +141,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Row(
+                      children: [
+                        const Spacer(),
+                        IconButton(
+                          tooltip: 'Settings',
+                          icon: const Icon(Icons.settings_outlined),
+                          onPressed: () => _openRoute('/settings'),
+                        ),
+                      ],
+                    ),
                     // ---------- HEADER ----------
                     Text(
                       _headerMessage(data.leftToSpendThisWeek, data.totalWeeklyBudget),
@@ -161,11 +179,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ],
                     ),
 
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      icon: const Icon(Icons.account_balance_wallet_outlined),
+                      onPressed: () => _openRoute('/budget/edit'),
+                      label: const Text('Review / Edit weekly budget'),
+                    ),
+
                     const SizedBox(height: 24),
 
                     // ---------- GOALS ----------
                     DashboardCard(
                       title: "Savings Goals",
+                      trailing: IconButton(
+                        icon: const Icon(Icons.chevron_right),
+                        tooltip: 'Open goals',
+                        onPressed: () => _openRoute('/goals'),
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -203,6 +233,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     // ---------- RECENT ACTIVITY ----------
                     DashboardCard(
                       title: "Recent Activity",
+                      trailing: IconButton(
+                        icon: const Icon(Icons.chevron_right),
+                        tooltip: 'View all transactions',
+                        onPressed: () => _openRoute('/transaction'),
+                      ),
                       child: Column(
                         children: data.recent.map((t) {
                           final date = DateUtilsBFM.weekdayLabel(t.date);
@@ -294,57 +329,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
             children: [
               Expanded(
                 child: BottomBarButton(
-                  icon: Icons.add,
-                  label: "Transaction",
-                  onTap: () async {
-                    await Navigator.pushNamed(context, '/transaction');
-                    if (!mounted) return;
-                    _refresh();
-                  },
-                ),
-              ),
-              Expanded(
-                child: BottomBarButton(
                   icon: Icons.insights,
                   label: "Insights",
-                  onTap: () async {
-                    await Navigator.pushNamed(context, '/insights');
-                    if (!mounted) return;
-                    _refresh();
-                  },
+                  onTap: () => _openRoute('/insights'),
                 ),
               ),
               Expanded(
                 child: BottomBarButton(
-                  icon: Icons.flag,
-                  label: "Goals",
-                  onTap: () async {
-                    await Navigator.pushNamed(context, '/goals');
-                    if (!mounted) return;
-                    _refresh();
-                  },
+                  icon: Icons.account_balance_wallet,
+                  label: "Budget",
+                  onTap: () => _openRoute('/budget/edit'),
                 ),
               ),
               Expanded(
                 child: BottomBarButton(
                   icon: Icons.chat_bubble,
                   label: "Moni AI",
-                  onTap: () async {
-                    await Navigator.pushNamed(context, '/chat');
-                    if (!mounted) return;
-                    _refresh();
-                  },
-                ),
-              ),
-              Expanded(
-                child: BottomBarButton(
-                  icon: Icons.settings,
-                  label: "settings",
-                  onTap: () async {
-                    await Navigator.pushNamed(context, '/settings');
-                    if (!mounted) return;
-                    _refresh();
-                  },
+                  onTap: () => _openRoute('/chat'),
                 ),
               ),
             ],

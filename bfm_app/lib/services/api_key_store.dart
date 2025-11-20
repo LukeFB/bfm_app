@@ -5,23 +5,20 @@
 /// MVP-only: stores key in SharedPreferences (not secure).
 /// Swap to flutter_secure_storage before production.
 /// ---------------------------------------------------------------------------
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bfm_app/services/secure_credential_store.dart';
 
 class ApiKeyStore {
-  static const _k = 'bfm_openai_api_key_v1';
+  static final SecureCredentialStore _store = SecureCredentialStore();
 
   static Future<String?> get() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_k);
+    return _store.readOpenAiKey();
   }
 
   static Future<void> set(String key) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_k, key);
+    await _store.saveOpenAiKey(key);
   }
 
   static Future<void> clear() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_k);
+    await _store.clearOpenAiKey();
   }
 }

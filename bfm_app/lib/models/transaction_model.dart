@@ -16,6 +16,8 @@
 
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
+
 class TransactionModel {
   final int? id;
 
@@ -24,6 +26,7 @@ class TransactionModel {
   final String? akahuId;
   final String? accountId;
   final String? connectionId;
+  final String? akahuHash;
 
   // Core fields mapped to local DB column names
   final int? categoryId;
@@ -45,6 +48,7 @@ class TransactionModel {
     this.akahuId,
     this.accountId,
     this.connectionId,
+    this.akahuHash,
     this.categoryId,
     this.categoryName,
     required this.amount,
@@ -66,6 +70,7 @@ class TransactionModel {
       akahuId: (map['akahu_id'] as String?) ?? (map['_id'] as String?), // tolerate variants
       accountId: map['account_id'] as String?,
       connectionId: map['connection_id'] as String?,
+      akahuHash: map['akahu_hash'] as String?,
       categoryId: map['category_id'] is int ? map['category_id'] as int : (map['category_id'] as int?),
       categoryName: map['category_name'] as String?,
       amount: (map['amount'] as num).toDouble(),
@@ -90,6 +95,7 @@ class TransactionModel {
     if (akahuId != null) m['akahu_id'] = akahuId;
     if (accountId != null) m['account_id'] = accountId;
     if (connectionId != null) m['connection_id'] = connectionId;
+    if (akahuHash != null) m['akahu_hash'] = akahuHash;
     if (merchantName != null) m['merchant_name'] = merchantName;
     return m;
   }
@@ -127,12 +133,24 @@ class TransactionModel {
     String? catName;
     if (categoryObj != null) {
       catName = categoryObj['name'] as String?;
+    } else {
+      final groups = a['groups'] as Map<String, dynamic>?;
+      if (groups != null && groups['personal_finance'] is Map<String, dynamic>) {
+        catName =
+            (groups['personal_finance'] as Map<String, dynamic>)['name'] as String?;
+      }
     }
+    if (catName == null || catName.trim().isEmpty) {
+      catName = null;
+    }
+
+    final akahuHash = _resolveHash(a);
 
     return TransactionModel(
       akahuId: a['_id'] as String?,
       accountId: a['_account'] as String?,
       connectionId: a['_connection'] as String?,
+      akahuHash: akahuHash,
       categoryName: catName,
       amount: (a['amount'] as num).toDouble(),
       description: (a['description'] ?? '') as String,
@@ -141,6 +159,19 @@ class TransactionModel {
       balance: a['balance'] is num ? (a['balance'] as num).toDouble() : null,
       merchantName: merchant == null ? null : (merchant['name'] as String?),
     );
+  }
+
+  static String _resolveHash(Map<String, dynamic> a) {
+    final provided = (a['hash'] as String?)?.trim();
+    if (provided != null && provided.isNotEmpty) {
+      return provided;
+    }
+    final account = (a['_account'] ?? '').toString();
+    final date = (a['date'] ?? a['created_at'] ?? '').toString();
+    final amount = (a['amount'] ?? '').toString();
+    final description = (a['description'] ?? '').toString().trim().toLowerCase();
+    final payload = '$account|$date|$amount|$description';
+    return sha1.convert(utf8.encode(payload)).toString();
   }
 
   // ---------------------------
