@@ -11,54 +11,77 @@
 
 class GoalModel {
   final int? id;
-  final String title;
-  final double targetAmount;
-  final double currentAmount;
-  final String? dueDate; // YYYY-MM-DD or null
-  final String status; // e.g. 'active', 'complete'
+  final String name;
+  final double amount;
+  final double weeklyContribution;
+  final double savedAmount;
 
   const GoalModel({
     this.id,
-    required this.title,
-    required this.targetAmount,
-    required this.currentAmount,
-    this.dueDate,
-    required this.status,
+    required this.name,
+    required this.amount,
+    required this.weeklyContribution,
+    this.savedAmount = 0,
   });
 
   factory GoalModel.fromMap(Map<String, dynamic> map) {
     return GoalModel(
       id: map['id'] as int?,
-      title: (map['title'] ?? '') as String,
-      targetAmount: (map['target_amount'] as num?)?.toDouble() ?? 0.0,
-      currentAmount: (map['current_amount'] as num?)?.toDouble() ?? 0.0,
-      dueDate: map['due_date'] as String?,
-      status: (map['status'] as String?) ?? 'active',
+      name: (map['name'] ??
+              map['title'] ?? // fallback for legacy rows
+              '') as String,
+      amount: (map['amount'] ??
+              map['target_amount'] ??
+              0) is num
+          ? ((map['amount'] ?? map['target_amount']) as num).toDouble()
+          : 0.0,
+      weeklyContribution: (map['weekly_contribution'] ??
+              map['current_amount'] ??
+              0) is num
+          ? ((map['weekly_contribution'] ?? map['current_amount']) as num)
+              .toDouble()
+          : 0.0,
+      savedAmount: (map['saved_amount'] as num?)?.toDouble() ?? 0.0,
     );
   }
 
   Map<String, dynamic> toMap({bool includeId = false}) {
     final m = <String, dynamic>{
-      'title': title,
-      'target_amount': targetAmount,
-      'current_amount': currentAmount,
-      'due_date': dueDate,
-      'status': status,
+      'name': name,
+      'amount': amount,
+      'weekly_contribution': weeklyContribution,
+      'saved_amount': savedAmount,
     };
     if (includeId && id != null) m['id'] = id;
     return m;
   }
 
-  /// Progress fraction between 0.0 and 1.0
-  double progress() {
-    if (targetAmount <= 0) return 0.0;
-    final p = (currentAmount / targetAmount);
-    if (p.isNaN || p.isInfinite) return 0.0;
-    return p.clamp(0.0, 1.0);
+  GoalModel copyWith({
+    int? id,
+    String? name,
+    double? amount,
+    double? weeklyContribution,
+    double? savedAmount,
+  }) {
+    return GoalModel(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      amount: amount ?? this.amount,
+      weeklyContribution: weeklyContribution ?? this.weeklyContribution,
+      savedAmount: savedAmount ?? this.savedAmount,
+    );
   }
 
-  /// Friendly percent label used in UI.
-  String percentLabel() => "${(progress() * 100).toStringAsFixed(0)}% of \$${targetAmount.toStringAsFixed(0)} saved";
+  double get progressFraction {
+    if (amount <= 0) return 0.0;
+    final fraction = savedAmount / amount;
+    if (fraction.isNaN || fraction.isInfinite) return 0.0;
+    return fraction.clamp(0.0, 1.0);
+  }
 
-  bool get isComplete => progress() >= 1.0;
+  String progressLabel() => amount <= 0
+      ? "\$${savedAmount.toStringAsFixed(0)} saved"
+      : "\$${savedAmount.toStringAsFixed(0)} of \$${amount.toStringAsFixed(0)}";
+
+  bool get isComplete => amount > 0 && savedAmount >= amount;
 }

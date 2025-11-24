@@ -86,6 +86,50 @@ class TransactionRepository {
     return value.abs();
   }
 
+  static Future<Map<int?, double>> sumExpensesByCategoryBetween(
+      DateTime start, DateTime end) async {
+    final db = await AppDatabase.instance.database;
+    final rows = await db.rawQuery('''
+      SELECT category_id, ABS(SUM(amount)) AS spent
+      FROM transactions
+      WHERE type = 'expense'
+        AND date BETWEEN ? AND ?
+      GROUP BY category_id
+    ''', [_iso(start), _iso(end)]);
+    final map = <int?, double>{};
+    for (final row in rows) {
+      final catId = row['category_id'] as int?;
+      final spent = (row['spent'] as num?)?.toDouble() ?? 0.0;
+      map[catId] = spent;
+    }
+    return map;
+  }
+
+  static Future<double> sumIncomeBetween(
+      DateTime start, DateTime end) async {
+    final db = await AppDatabase.instance.database;
+    final rows = await db.rawQuery('''
+      SELECT SUM(amount) AS income
+      FROM transactions
+      WHERE type = 'income'
+        AND date BETWEEN ? AND ?
+    ''', [_iso(start), _iso(end)]);
+    final value = rows.isNotEmpty ? rows.first['income'] : null;
+    return (value is num) ? value.toDouble() : 0.0;
+  }
+
+  static Future<List<TransactionModel>> getBetween(
+      DateTime start, DateTime end) async {
+    final db = await AppDatabase.instance.database;
+    final rows = await db.query(
+      'transactions',
+      where: 'date BETWEEN ? AND ?',
+      whereArgs: [_iso(start), _iso(end)],
+      orderBy: 'date DESC',
+    );
+    return rows.map((e) => TransactionModel.fromMap(e)).toList();
+  }
+
   /// Insert transactions from Akahu API payload
   /// - Ensures categories exist (by enriched name) and assigns category_id
   /// - Triggers maintain categories.usage_count
@@ -112,6 +156,15 @@ class TransactionRepository {
     }
 
     await batch.commit(noResult: true);
+  }
+
+  static Future<int> insertManual(TransactionModel model) async {
+    final db = await AppDatabase.instance.database;
+    return await db.insert(
+      'transactions',
+      model.toDbMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   static Future<int> _resolveCategoryId(
@@ -231,4 +284,7 @@ class TransactionRepository {
     }
     await batch.commit(noResult: true);
   }
+
+  static String _iso(DateTime d) =>
+      "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 }

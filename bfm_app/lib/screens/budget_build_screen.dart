@@ -55,7 +55,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     final previousAmounts = <int?, String>{
       for (final entry in _amountCtrls.entries) entry.key: entry.value.text,
     };
-
     setState(() => _loading = true);
 
     final list = await BudgetAnalysisService.getCategoryWeeklyBudgetSuggestions(
@@ -67,7 +66,8 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     if (widget.editMode) {
       final budgets = await BudgetRepository.getAll();
       existingBudgets = {
-        for (final b in budgets) b.categoryId: b,
+        for (final b in budgets.where((b) => b.categoryId != null))
+          b.categoryId!: b,
       };
       if (existingBudgets.isNotEmpty) {
         existingBudgetNames =
@@ -543,6 +543,25 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                     ],
                   ),
                 ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: Card(
+                    child: ListTile(
+                      title: const Text('Savings goals'),
+                      subtitle: const Text(
+                        'Weekly contributions live on the Goals screen.',
+                      ),
+                      trailing: TextButton(
+                        onPressed: () async {
+                          await Navigator.pushNamed(context, '/goals');
+                          if (!mounted) return;
+                          await _load();
+                        },
+                        child: const Text('Open goals'),
+                      ),
+                    ),
+                  ),
+                ),
 
                 const Divider(height: 1),
 
@@ -751,6 +770,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     }
     return count;
   }
+
 }
 
 class _Pill extends StatelessWidget {

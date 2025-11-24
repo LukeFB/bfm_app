@@ -11,7 +11,9 @@
 
 class BudgetModel {
   final int? id;
-  final int categoryId;
+  final int? categoryId;
+  final int? goalId;
+  final String? label;
   final double weeklyLimit;
   final String periodStart; // YYYY-MM-DD (week start)
   final String? periodEnd; // optional
@@ -20,7 +22,9 @@ class BudgetModel {
 
   const BudgetModel({
     this.id,
-    required this.categoryId,
+    this.categoryId,
+    this.goalId,
+    this.label,
     required this.weeklyLimit,
     required this.periodStart,
     this.periodEnd,
@@ -31,7 +35,9 @@ class BudgetModel {
   factory BudgetModel.fromMap(Map<String, dynamic> m) {
     return BudgetModel(
       id: m['id'] as int?,
-      categoryId: m['category_id'] as int,
+      categoryId: m['category_id'] as int?,
+      goalId: m['goal_id'] as int?,
+      label: m['label'] as String?,
       weeklyLimit: (m['weekly_limit'] as num).toDouble(),
       periodStart: (m['period_start'] as String),
       periodEnd: m['period_end'] as String?,
@@ -43,6 +49,8 @@ class BudgetModel {
   Map<String, dynamic> toMap({bool includeId = false}) {
     final m = <String, dynamic>{
       'category_id': categoryId,
+      'goal_id': goalId,
+      'label': label,
       'weekly_limit': weeklyLimit,
       'period_start': periodStart,
       'period_end': periodEnd,
@@ -52,4 +60,6 @@ class BudgetModel {
     if (includeId && id != null) m['id'] = id;
     return m;
   }
+
+  bool get isGoalBudget => goalId != null;
 }

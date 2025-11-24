@@ -26,7 +26,7 @@ class AppDatabase {
     // Open the database with version and an onUpgrade callback
     return await openDatabase(
       path,
-      version: 6, 
+      version: 10, 
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },
@@ -60,6 +60,31 @@ class AppDatabase {
     if (!await hasTable('recurring_transactions')) await _createRecurring(db);
     if (!await hasTable('alerts')) await _createAlerts(db);
     if (!await hasTable('events')) await _createEvents(db);
+    if (!await hasTable('goal_progress_log')) await _createGoalProgressLog(db);
+    if (!await hasTable('weekly_reports')) await _createWeeklyReports(db);
+
+    // Goals schema migration (name, amount, weekly_contribution, saved_amount)
+    final hasGoalName = await hasCol('goals', 'name');
+    final hasGoalAmount = await hasCol('goals', 'amount');
+    final hasGoalWeekly = await hasCol('goals', 'weekly_contribution');
+    if (!(hasGoalName && hasGoalAmount && hasGoalWeekly)) {
+      await _recreateGoalsTable(db);
+    }
+    if (!await hasCol('goals', 'saved_amount')) {
+      await db.execute(
+          'ALTER TABLE goals ADD COLUMN saved_amount REAL NOT NULL DEFAULT 0;');
+    }
+
+    // Budgets schema migration (nullable category_id + goal linkage)
+    final hasGoalIdOnBudgets = await hasCol('budgets', 'goal_id');
+    if (!hasGoalIdOnBudgets) {
+      await _recreateBudgetsTable(db);
+    }
+    if (!await hasCol('budgets', 'label')) {
+      await db.execute('ALTER TABLE budgets ADD COLUMN label TEXT;');
+    }
+
+    await _createGoalProgressLog(db);
 
     // ---- transaction columns ----
     if (!await hasCol('transactions', 'akahu_id')) {
@@ -120,6 +145,8 @@ class AppDatabase {
     await _createRecurring(db);
     await _createAlerts(db);
     await _createEvents(db);
+    await _createGoalProgressLog(db);
+    await _createWeeklyReports(db);
     await _ensureIndexesAndTriggers(db);
 
   }
@@ -171,29 +198,104 @@ class AppDatabase {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS goals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL,
-        target_amount REAL NOT NULL,
-        current_amount REAL DEFAULT 0,
-        due_date TEXT,
-        status TEXT DEFAULT 'active'
+        name TEXT NOT NULL,
+        amount REAL NOT NULL,
+        weekly_contribution REAL NOT NULL DEFAULT 0,
+        saved_amount REAL NOT NULL DEFAULT 0
       );
     ''');
+  }
+
+  Future<void> _recreateGoalsTable(Database db) async {
+    await db.execute('ALTER TABLE goals RENAME TO goals_old;');
+    await _createGoals(db);
+    await db.execute(r'''
+      INSERT INTO goals (id, name, amount, weekly_contribution, saved_amount)
+      SELECT
+        id,
+        COALESCE(title, 'Goal'),
+        COALESCE(target_amount, 0),
+        0.0,
+        0.0
+      FROM goals_old;
+    ''');
+    await db.execute('DROP TABLE goals_old;');
   }
 
   Future<void> _createBudgets(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS budgets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        category_id INTEGER NOT NULL,
+        category_id INTEGER,
+        goal_id INTEGER,
+        label TEXT,
         weekly_limit REAL NOT NULL,
         period_start TEXT NOT NULL,
         period_end TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(category_id) REFERENCES categories(id)
+        FOREIGN KEY(category_id) REFERENCES categories(id),
+        FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE
       );
     ''');
     await db.execute('CREATE INDEX IF NOT EXISTS ix_budgets_category_id ON budgets(category_id);');
+    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_budgets_goal_id ON budgets(goal_id) WHERE goal_id IS NOT NULL;');
+  }
+
+  Future<void> _recreateBudgetsTable(Database db) async {
+    await db.execute('ALTER TABLE budgets RENAME TO budgets_old;');
+    await _createBudgets(db);
+    await db.execute(r'''
+      INSERT INTO budgets (
+        id,
+        category_id,
+        label,
+        weekly_limit,
+        period_start,
+        period_end,
+        created_at,
+        updated_at
+      )
+      SELECT
+        id,
+        category_id,
+        NULL,
+        weekly_limit,
+        period_start,
+        period_end,
+        created_at,
+        updated_at
+      FROM budgets_old;
+    ''');
+    await db.execute('DROP TABLE budgets_old;');
+  }
+
+  Future<void> _createGoalProgressLog(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS goal_progress_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        goal_id INTEGER NOT NULL,
+        week_start TEXT NOT NULL,
+        status TEXT NOT NULL,
+        amount REAL NOT NULL,
+        note TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+        UNIQUE(goal_id, week_start)
+      );
+    ''');
+  }
+
+  Future<void> _createWeeklyReports(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS weekly_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        week_start TEXT NOT NULL UNIQUE,
+        week_end TEXT NOT NULL,
+        data TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    ''');
   }
 
   Future<void> _createRecurring(Database db) async {

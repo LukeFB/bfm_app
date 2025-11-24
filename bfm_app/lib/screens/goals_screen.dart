@@ -1,8 +1,11 @@
-import 'package:bfm_app/screens/dashboard_screen.dart';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'package:bfm_app/repositories/goal_repository.dart';
+import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/models/goal_model.dart';
+import 'package:bfm_app/models/transaction_model.dart';
 
 class GoalsScreen extends StatefulWidget {
   const GoalsScreen({Key? key}) : super(key: key);
@@ -45,24 +48,39 @@ class _GoalsScreenState extends State<GoalsScreen> {
             itemCount: goals.length,
             itemBuilder: (context, index) {
               final goal = goals[index];
-              double progress = goal.currentAmount / goal.targetAmount;
-
+              final goalName = goal.name.trim().isEmpty ? 'Goal' : goal.name;
               return Card(
                 margin: const EdgeInsets.all(8),
                 child: ListTile(
-                  title: Text(goal.title),
+                  title: Text(goalName,
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
                   subtitle: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      Text("Goal amount: \$${goal.amount.toStringAsFixed(2)}"),
+                      Text(
+                        "Weekly contribution: \$${goal.weeklyContribution.toStringAsFixed(2)}/wk",
+                      ),
+                      const SizedBox(height: 8),
                       LinearProgressIndicator(
-                        value: progress,
-                        minHeight: 8,
-                        backgroundColor: Colors.grey[300],
-                        color: bfmBlue,
+                        value: goal.progressFraction,
+                        minHeight: 6,
+                        backgroundColor: Colors.grey.shade300,
+                        color: Theme.of(context).colorScheme.primary,
                       ),
                       const SizedBox(height: 4),
                       Text(
-                          "\$${goal.currentAmount} / \$${goal.targetAmount}  (Due: ${goal.dueDate ?? 'N/A'})"),
+                        goal.progressLabel(),
+                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () => _showContributeDialog(goal),
+                          icon: const Icon(Icons.savings_outlined, size: 16),
+                          label: const Text("Contribute"),
+                        ),
+                      ),
                     ],
                   ),
                   trailing: PopupMenuButton<String>(
@@ -93,10 +111,9 @@ class _GoalsScreenState extends State<GoalsScreen> {
 
   // --- Add Goal Dialog ---
   void _showAddGoalDialog() {
-    final titleController = TextEditingController();
-    final targetController = TextEditingController();
-    final currentController = TextEditingController();
-    final dueDateController = TextEditingController();
+    final nameController = TextEditingController();
+    final amountController = TextEditingController();
+    final weeklyController = TextEditingController();
 
     showDialog(
       context: context,
@@ -106,24 +123,19 @@ class _GoalsScreenState extends State<GoalsScreen> {
           child: Column(
             children: [
               TextField(
-                controller: titleController,
-                decoration: const InputDecoration(labelText: "Title"),
+                controller: nameController,
+                decoration: const InputDecoration(labelText: "Name"),
               ),
               TextField(
-                controller: targetController,
+                controller: amountController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Target Amount"),
+                decoration: const InputDecoration(labelText: "Goal Amount"),
               ),
               TextField(
-                controller: currentController,
+                controller: weeklyController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Current Amount"),
-              ),
-              TextField(
-                controller: dueDateController,
-                decoration: const InputDecoration(
-                  labelText: "Due Date (YYYY-MM-DD)",
-                ),
+                decoration:
+                    const InputDecoration(labelText: "Weekly Contribution"),
               ),
             ],
           ),
@@ -133,11 +145,10 @@ class _GoalsScreenState extends State<GoalsScreen> {
           ElevatedButton(
             onPressed: () async {
               final newGoal = GoalModel(
-                title: titleController.text,
-                targetAmount: double.tryParse(targetController.text) ?? 0,
-                currentAmount: double.tryParse(currentController.text) ?? 0,
-                dueDate: dueDateController.text.isNotEmpty ? dueDateController.text : null,
-                status: 'active'
+                name: nameController.text.trim(),
+                amount: double.tryParse(amountController.text.trim()) ?? 0,
+                weeklyContribution:
+                    double.tryParse(weeklyController.text.trim()) ?? 0,
               );
               await GoalRepository.insert(newGoal);
               _refreshGoals();
@@ -152,10 +163,11 @@ class _GoalsScreenState extends State<GoalsScreen> {
 
   // --- Edit Goal Dialog ---
   void _showEditGoalDialog(GoalModel goal) {
-    final titleController = TextEditingController(text: goal.title);
-    final targetController = TextEditingController(text: goal.targetAmount.toString());
-    final currentController = TextEditingController(text: goal.currentAmount.toString());
-    final dueDateController = TextEditingController(text: goal.dueDate ?? '');
+    final nameController = TextEditingController(text: goal.name);
+    final amountController =
+        TextEditingController(text: goal.amount.toStringAsFixed(2));
+    final weeklyController = TextEditingController(
+        text: goal.weeklyContribution.toStringAsFixed(2));
 
     showDialog(
       context: context,
@@ -165,24 +177,19 @@ class _GoalsScreenState extends State<GoalsScreen> {
           child: Column(
             children: [
               TextField(
-                controller: titleController,
-                decoration: const InputDecoration(labelText: "Title"),
+                controller: nameController,
+                decoration: const InputDecoration(labelText: "Name"),
               ),
               TextField(
-                controller: targetController,
+                controller: amountController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Target Amount"),
+                decoration: const InputDecoration(labelText: "Goal Amount"),
               ),
               TextField(
-                controller: currentController,
+                controller: weeklyController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Current Amount"),
-              ),
-              TextField(
-                controller: dueDateController,
-                decoration: const InputDecoration(
-                  labelText: "Due Date (YYYY-MM-DD)",
-                ),
+                decoration:
+                    const InputDecoration(labelText: "Weekly Contribution"),
               ),
             ],
           ),
@@ -191,12 +198,15 @@ class _GoalsScreenState extends State<GoalsScreen> {
           TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text("Cancel")),
           ElevatedButton(
             onPressed: () async {
-              await GoalRepository.update(goal.id!, {
-                "title": titleController.text,
-                "target_amount": double.tryParse(targetController.text) ?? goal.targetAmount,
-                "current_amount": double.tryParse(currentController.text) ?? goal.currentAmount,
-                "due_date": dueDateController.text.isNotEmpty ? dueDateController.text : null,
-              });
+              final updated = goal.copyWith(
+                name: nameController.text.trim(),
+                amount: double.tryParse(amountController.text.trim()) ??
+                    goal.amount,
+                weeklyContribution:
+                    double.tryParse(weeklyController.text.trim()) ??
+                        goal.weeklyContribution,
+              );
+              await GoalRepository.update(updated);
               _refreshGoals();
               Navigator.of(context).pop(true);
             },
@@ -211,5 +221,67 @@ class _GoalsScreenState extends State<GoalsScreen> {
   Future<void> _deleteGoal(int id) async {
     await GoalRepository.delete(id);
     _refreshGoals();
+  }
+
+  void _showContributeDialog(GoalModel goal) {
+    final defaultAmount = goal.weeklyContribution > 0
+        ? goal.weeklyContribution
+        : math.min(25, (goal.amount - goal.savedAmount).clamp(0, goal.amount));
+    final amountController =
+        TextEditingController(text: defaultAmount.toStringAsFixed(2));
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Contribute to ${goal.name}"),
+        content: TextField(
+          controller: amountController,
+          keyboardType:
+              const TextInputType.numberWithOptions(decimal: true, signed: false),
+          decoration: const InputDecoration(
+            labelText: "Amount",
+            prefixText: "\$",
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text("Cancel")),
+          FilledButton(
+            onPressed: () async {
+              final amount =
+                  double.tryParse(amountController.text.trim()) ?? 0.0;
+              if (amount <= 0) return;
+              final applied =
+                  await GoalRepository.addManualContribution(goal, amount);
+              if (applied > 0) {
+                final today = DateTime.now();
+                final dateStr =
+                    "${today.year.toString().padLeft(4, '0')}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}";
+                await TransactionRepository.insertManual(
+                  TransactionModel(
+                    amount: -applied,
+                    description: "Goal contribution: ${goal.name}",
+                    date: dateStr,
+                    type: 'expense',
+                    categoryName: 'Goal contribution',
+                  ),
+                );
+                _refreshGoals();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                        content: Text(
+                            "Contributed \$${applied.toStringAsFixed(2)} to ${goal.name}")),
+                  );
+                }
+              }
+              if (context.mounted) Navigator.of(context).pop();
+            },
+            child: const Text("Contribute"),
+          ),
+        ],
+      ),
+    );
   }
 }

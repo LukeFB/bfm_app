@@ -125,13 +125,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
             final leftToSpendStr = "\$${data.leftToSpendThisWeek.toStringAsFixed(1)}";
             final weeklyBudgetStr = "Weekly budget: \$${data.totalWeeklyBudget.toStringAsFixed(0)}";
 
-            final goalTitle = data.primaryGoal?.title ?? "Textbooks";
-            final goalTarget = data.primaryGoal?.targetAmount ?? 200.0;
-            final goalCurrent = data.primaryGoal?.currentAmount ?? (200.0 * 0.4);
-            final goalProgress =
-                goalTarget == 0 ? 0.0 : (goalCurrent / goalTarget).clamp(0.0, 1.0);
-            final goalPercentLabel =
-                "${(goalProgress * 100).toStringAsFixed(0)}% of \$${goalTarget.toStringAsFixed(0)} saved";
+            final primaryGoal = data.primaryGoal;
+            final goalName = (primaryGoal == null ||
+                    primaryGoal.name.trim().isEmpty)
+                ? "Savings goal"
+                : primaryGoal.name;
+            final goalAmount = primaryGoal?.amount ?? 0.0;
+            final savedAmount = primaryGoal?.savedAmount ?? 0.0;
+            final goalProgress = primaryGoal?.progressFraction ?? 0.0;
 
             return RefreshIndicator(
               onRefresh: _refresh,
@@ -199,15 +200,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(goalTitle, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          Text(goalName,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold)),
                           const SizedBox(height: 8),
-                          LinearProgressIndicator(
-                            value: goalProgress,
-                            color: bfmBlue,
-                            backgroundColor: Colors.grey,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(goalPercentLabel),
+                          if (goalAmount > 0)
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                LinearProgressIndicator(
+                                  value: goalProgress,
+                                  color: bfmBlue,
+                                  backgroundColor: Colors.grey.shade300,
+                                  minHeight: 8,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  "\$${savedAmount.toStringAsFixed(0)} / \$${goalAmount.toStringAsFixed(0)} saved",
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                              ],
+                            )
+                          else
+                            const Text("Set your first goal amount to start tracking progress."),
                         ],
                       ),
                     ),
