@@ -89,7 +89,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return "Let’s set up your budget and make a plan 🚀";
     }
     if (left < 0) {
-      return "A tiny bit over — no stress. Fresh week, fresh start 💙";
+      return "Slightly over — no stress. Fresh week, fresh start";
     }
     final ratio = left / total; // 0.0 to 1.0
     if (ratio >= 0.75) return "Crushing it — plenty left this week 💪";
@@ -181,14 +181,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
 
                     const SizedBox(height: 16),
-                    FilledButton.icon(
-                      icon: const Icon(Icons.account_balance_wallet_outlined),
-                      onPressed: () => _openRoute('/budget/edit'),
-                      label: const Text('Review / Edit weekly budget'),
-                    ),
-
-                    const SizedBox(height: 24),
-
                     // ---------- GOALS ----------
                     DashboardCard(
                       title: "Savings Goals",
@@ -225,7 +217,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ],
                             )
                           else
-                            const Text("Set your first goal amount to start tracking progress."),
+                            const Text("Click the arrow to set your first goal."),
                         ],
                       ),
                     ),

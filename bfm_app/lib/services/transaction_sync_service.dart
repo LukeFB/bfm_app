@@ -2,7 +2,6 @@ import 'dart:developer';
 
 import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/services/akahu_service.dart';
-import 'package:bfm_app/services/budget_analysis_service.dart';
 import 'package:bfm_app/services/secure_credential_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -35,7 +34,6 @@ class TransactionSyncService {
     }
 
     await TransactionRepository.upsertFromAkahu(payloads);
-    await BudgetAnalysisService.identifyRecurringTransactions();
     await _markSynced();
   }
 

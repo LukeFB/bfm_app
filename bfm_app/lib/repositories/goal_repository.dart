@@ -1,5 +1,7 @@
 // Author: Luke Fraser-Brown
 
+import 'dart:math' as math;
+
 import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/goal_progress_log.dart';
@@ -92,26 +94,46 @@ class GoalRepository {
     if (goal.id == null) {
       throw ArgumentError('Goal must have an id');
     }
-    final contribution = amount.isNaN ? 0.0 : amount.abs();
-    if (contribution <= 0) return 0.0;
-    double remaining = goal.amount - goal.savedAmount;
-    if (remaining < 0) remaining = 0;
-    final applied = remaining <= 0
-        ? 0.0
-        : contribution > remaining
-            ? remaining
-            : contribution;
-    if (applied <= 0) return 0.0;
     final db = await AppDatabase.instance.database;
-    await db.rawUpdate(
-      '''
-      UPDATE goals
-      SET saved_amount = saved_amount + ?
-      WHERE id = ?
-      ''',
-      [applied, goal.id],
-    );
-    return applied;
+    return await db.transaction((txn) async {
+      final rows = await txn.query(
+        'goals',
+        columns: ['amount', 'saved_amount'],
+        where: 'id = ?',
+        whereArgs: [goal.id],
+        limit: 1,
+      );
+      if (rows.isEmpty) return 0.0;
+      final total = (rows.first['amount'] as num?)?.toDouble() ?? goal.amount;
+      final saved =
+          (rows.first['saved_amount'] as num?)?.toDouble() ?? goal.savedAmount;
+      final contribution = amount.isNaN ? 0.0 : amount.abs();
+      if (contribution <= 0) return 0.0;
+      final remaining = math.max(total - saved, 0.0);
+      final applied = math.min(contribution, remaining);
+      if (applied <= 0) return 0.0;
+
+      await txn.rawUpdate(
+        '''
+        UPDATE goals
+        SET saved_amount = saved_amount + ?
+        WHERE id = ?
+        ''',
+        [applied, goal.id],
+      );
+
+      final weekKey = _mondayIso(DateTime.now());
+      await _upsertGoalProgressAmount(
+        txn,
+        goal.id!,
+        weekKey,
+        applied,
+        status: 'manual',
+        note: 'Manual contribution',
+      );
+
+      return applied;
+    });
   }
 
   static String _mondayIso(DateTime reference) {
@@ -149,30 +171,20 @@ class GoalRepository {
     final db = await AppDatabase.instance.database;
     final weekKey = _isoDate(weekStart);
     return await db.transaction((txn) async {
-      final existing = await txn.query(
-        'goal_progress_log',
-        where: 'goal_id = ? AND week_start = ?',
-        whereArgs: [goalId, weekKey],
-        limit: 1,
-      );
-      if (existing.isNotEmpty) {
-        return GoalProgressLog.fromMap(existing.first);
-      }
+      final existing = await _fetchGoalProgressRow(txn, goalId, weekKey);
 
       double creditedAmount = 0.0;
       if (credited && amount > 0) {
         final remaining = goal.amount - goal.savedAmount;
         final cappedRemaining = remaining <= 0 ? 0.0 : remaining;
-        if (cappedRemaining <= 0) {
-          creditedAmount = 0.0;
-        } else {
-          creditedAmount = amount;
+        final alreadyCredited =
+            (existing?['amount'] as num?)?.toDouble() ?? 0.0;
+        if (cappedRemaining > 0 && alreadyCredited < amount) {
+          creditedAmount = amount - alreadyCredited;
           if (creditedAmount > cappedRemaining) {
             creditedAmount = cappedRemaining;
           }
-          if (creditedAmount < 0) {
-            creditedAmount = 0.0;
-          }
+          if (creditedAmount < 0) creditedAmount = 0.0;
         }
         if (creditedAmount > 0) {
           await txn.rawUpdate(
@@ -183,37 +195,99 @@ class GoalRepository {
             ''',
             [creditedAmount, goalId],
           );
+          await _upsertGoalProgressAmount(
+            txn,
+            goalId,
+            weekKey,
+            creditedAmount,
+            status: 'credited',
+            note: note,
+          );
         }
       }
 
-      final status = credited && creditedAmount > 0 ? 'credited' : 'skipped';
-      final id = await txn.insert(
-        'goal_progress_log',
-        {
+      if (existing == null && creditedAmount == 0.0) {
+        await txn.insert('goal_progress_log', {
           'goal_id': goalId,
           'week_start': weekKey,
-          'status': status,
-          'amount': creditedAmount,
+          'status': credited ? 'skipped' : 'pending',
+          'amount': 0.0,
           'note': note,
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
+          'created_at': DateTime.now().toIso8601String(),
+        });
+      }
 
-      final row = id > 0
-          ? await txn.query(
-              'goal_progress_log',
-              where: 'id = ?',
-              whereArgs: [id],
-              limit: 1,
-            )
-          : await txn.query(
-              'goal_progress_log',
-              where: 'goal_id = ? AND week_start = ?',
-              whereArgs: [goalId, weekKey],
-              limit: 1,
-            );
-
-      return GoalProgressLog.fromMap(row.first);
+      final row = await _fetchGoalProgressRow(txn, goalId, weekKey);
+      return GoalProgressLog.fromMap(row!);
     });
+  }
+
+  static Future<Map<int, double>> weeklyContributionTotals(
+      DateTime weekStart) async {
+    final db = await AppDatabase.instance.database;
+    final weekKey = _mondayIso(weekStart);
+    final rows = await db.rawQuery(
+      '''
+      SELECT goal_id, SUM(amount) AS total
+      FROM goal_progress_log
+      WHERE week_start = ?
+      GROUP BY goal_id
+      ''',
+      [weekKey],
+    );
+    final Map<int, double> result = {};
+    for (final row in rows) {
+      final goalId = row['goal_id'] as int?;
+      if (goalId == null) continue;
+      result[goalId] = (row['total'] as num?)?.toDouble() ?? 0.0;
+    }
+    return result;
+  }
+
+  static Future<Map<String, dynamic>?> _fetchGoalProgressRow(
+      DatabaseExecutor db, int goalId, String weekKey) async {
+    final rows = await db.query(
+      'goal_progress_log',
+      where: 'goal_id = ? AND week_start = ?',
+      whereArgs: [goalId, weekKey],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  static Future<void> _upsertGoalProgressAmount(
+    DatabaseExecutor db,
+    int goalId,
+    String weekKey,
+    double delta, {
+    String status = 'manual',
+    String? note,
+  }) async {
+    if (delta <= 0) return;
+    final existing = await _fetchGoalProgressRow(db, goalId, weekKey);
+    final now = DateTime.now().toIso8601String();
+    if (existing == null) {
+      await db.insert('goal_progress_log', {
+        'goal_id': goalId,
+        'week_start': weekKey,
+        'status': status,
+        'amount': delta,
+        'note': note,
+        'created_at': now,
+      });
+    } else {
+      final current = (existing['amount'] as num?)?.toDouble() ?? 0.0;
+      final update = <String, Object?>{
+        'amount': current + delta,
+      };
+      if (status.isNotEmpty) update['status'] = status;
+      if (note != null) update['note'] = note;
+      await db.update(
+        'goal_progress_log',
+        update,
+        where: 'goal_id = ? AND week_start = ?',
+        whereArgs: [goalId, weekKey],
+      );
+    }
   }
 }

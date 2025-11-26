@@ -47,14 +47,6 @@ class BudgetAnalysisService {
       groups.putIfAbsent(label, () => []).add(t);
     }
 
-    final existing = await RecurringRepository.getAll();
-    final existingKeys = existing
-        .map((r) {
-          final lbl = _normalizeText((r.description ?? ''));
-          return "$lbl-${r.amount.round()}-${r.frequency}";
-        })
-        .toSet();
-
     for (var entry in groups.entries) {
       final label = entry.key;
       final txns = entry.value;
@@ -101,9 +93,6 @@ class BudgetAnalysisService {
             : DateTime(lastDate.year, lastDate.month + 1, lastDate.day);
 
         final avgAmount = cluster.map((t) => t.amount).reduce((a, b) => a + b) / cluster.length;
-
-        final key = "${_normalizeText(label)}-${avgAmount.round()}-$frequency";
-        if (existingKeys.contains(key)) continue;
 
         final nextDueStr =
             "${nextDue.year.toString().padLeft(4, '0')}-${nextDue.month.toString().padLeft(2, '0')}-${nextDue.day.toString().padLeft(2, '0')}";

@@ -10,57 +10,76 @@ import 'package:bfm_app/repositories/transaction_repository.dart';
 
 class InsightsService {
   static Future<WeeklyInsightsReport> generateWeeklyReport() async {
-    final period = _lastCompletedWeek();
+    final period = _currentWeekPeriod();
+    final lastWeek = _previousWeekPeriod(period.start);
     final budgets = await BudgetRepository.getAll();
-
-    final categoryBudgets = <int, double>{};
-    for (final budget in budgets) {
-      if (budget.categoryId == null) continue;
-      categoryBudgets[budget.categoryId!] =
-          (categoryBudgets[budget.categoryId!] ?? 0) + budget.weeklyLimit;
-    }
+    final totalBudget =
+        budgets.fold<double>(0, (sum, budget) => sum + budget.weeklyLimit);
 
     final spendMapAll =
         await TransactionRepository.sumExpensesByCategoryBetween(
       period.start,
       period.end,
     );
-    final spendMap = Map<int?, double>.from(spendMapAll);
-    final categoryIds = {
-      ...categoryBudgets.keys,
-      ...spendMapAll.keys.whereType<int>(),
-    };
-    final categoryNames =
-        await CategoryRepository.getNamesByIds(categoryIds);
-    final totalIncome =
-        await TransactionRepository.sumIncomeBetween(period.start, period.end);
+    final totalSpentAll =
+        spendMapAll.values.fold<double>(0, (sum, value) => sum + value.abs());
+    final currentWeekIncome = await TransactionRepository.sumIncomeBetween(
+      period.start,
+      period.end,
+    );
+    final lastWeekIncome = await TransactionRepository.sumIncomeBetween(
+      lastWeek.start,
+      lastWeek.end,
+    );
+
+    final budgetCategoryIds = budgets
+        .where((b) => b.categoryId != null)
+        .map((b) => b.categoryId!)
+        .toSet();
+    final budgetCategoryNames =
+        await CategoryRepository.getNamesByIds(budgetCategoryIds);
+    final allCategoryNames =
+        await CategoryRepository.getNamesByIds(spendMapAll.keys.whereType<int>());
+    final goalSpendMap =
+        await GoalRepository.weeklyContributionTotals(period.start);
 
     final List<CategoryWeeklySummary> categories = [];
-    double totalBudget = 0;
-    double totalSpent = 0;
+    double budgetSpend = 0;
 
-    categoryBudgets.forEach((categoryId, budget) {
-      final spent = spendMap.remove(categoryId) ?? 0.0;
-      final label = categoryNames[categoryId] ?? 'Category';
-      categories.add(CategoryWeeklySummary(
-        label: label,
-        budget: budget,
-        spent: spent,
-      ));
-      totalBudget += budget;
-      totalSpent += spent;
-    });
+    for (final budget in budgets) {
+      String label;
+      double spent = 0;
+
+      if (budget.categoryId != null) {
+        label = budgetCategoryNames[budget.categoryId!] ?? 'Category';
+        spent = spendMapAll[budget.categoryId]?.abs() ?? 0.0;
+      } else if (budget.goalId != null) {
+        final rawLabel = (budget.label ?? 'Goal').trim();
+        label = rawLabel.isEmpty ? 'Goal' : rawLabel;
+        spent = goalSpendMap[budget.goalId!] ?? 0.0;
+      } else {
+        label = 'Budget';
+      }
+
+      categories.add(
+        CategoryWeeklySummary(
+          label: label,
+          budget: budget.weeklyLimit,
+          spent: spent,
+        ),
+      );
+      budgetSpend += spent;
+    }
 
     categories.sort((a, b) => b.spent.compareTo(a.spent));
 
     final topCategories = _mapTopCategories(
       spendMapAll,
-      categoryNames,
+      allCategoryNames,
     );
 
-    final metBudget =
-        totalBudget > 0 ? (totalSpent <= (totalBudget + 0.01)) : false;
-    final hasLeftover = (totalIncome - totalSpent) > 0.01;
+    final metBudget = totalBudget > 0 ? budgetSpend <= totalBudget : false;
+    final hasLeftover = (currentWeekIncome - totalSpentAll) > 0.01;
 
     final goalOutcomes = await _evaluateGoalProgress(
       weekStart: period.start,
@@ -73,8 +92,8 @@ class InsightsService {
       categories: categories,
       topCategories: topCategories,
       totalBudget: totalBudget,
-      totalSpent: totalSpent,
-      totalIncome: totalIncome,
+      totalSpent: totalSpentAll,
+      totalIncome: lastWeekIncome,
       metBudget: metBudget,
       goalOutcomes: goalOutcomes,
     );
@@ -82,12 +101,16 @@ class InsightsService {
     return report;
   }
 
-  static _WeekPeriod _lastCompletedWeek() {
+  static _WeekPeriod _currentWeekPeriod() {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final mondayThisWeek = today.subtract(Duration(days: today.weekday - 1));
-    final start = mondayThisWeek.subtract(const Duration(days: 7));
-    final end = mondayThisWeek.subtract(const Duration(days: 1));
+    final start = today.subtract(Duration(days: today.weekday - 1));
+    return _WeekPeriod(start: start, end: today);
+  }
+
+  static _WeekPeriod _previousWeekPeriod(DateTime currentWeekStart) {
+    final end = currentWeekStart.subtract(const Duration(days: 1));
+    final start = end.subtract(const Duration(days: 6));
     return _WeekPeriod(start: start, end: end);
   }
 

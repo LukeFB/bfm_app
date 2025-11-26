@@ -42,7 +42,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   final Map<int, BudgetSuggestionModel> _manualSuggestions = {};
   final Map<int?, bool> _selected = {}; // by categoryId (null allowed for map keys)
   final Map<int?, TextEditingController> _amountCtrls = {};
-  Set<int> _existingBudgetCategoryIds = {};
 
   @override
   void initState() {
@@ -57,6 +56,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     };
     setState(() => _loading = true);
 
+    await BudgetAnalysisService.identifyRecurringTransactions();
     final list = await BudgetAnalysisService.getCategoryWeeklyBudgetSuggestions(
       minWeekly: 5.0,
     );
@@ -158,8 +158,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       ..addAll(remainingManual);
 
     setState(() {
-      _existingBudgetCategoryIds =
-          widget.editMode ? existingBudgets.keys.toSet() : {};
       _baseSuggestions = list;
       _suggestions = [
         ..._manualSuggestions.values,
@@ -513,7 +511,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                     children: [
                       Text(
                         widget.editMode
-                            ? 'Existing budget categories are pre-selected. Look for the “New” tag to spot fresh suggestions.'
+                            ? 'Existing budget categories are pre-selected. Adjust the weekly amounts below.'
                             : 'Uncategorized items are shown first. Ordered by recurring, popularity, and weekly spend. Small items (< \$5/wk) are hidden.',
                         style: const TextStyle(fontSize: 13, color: Colors.grey),
                       ),
@@ -533,12 +531,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                             child: const Text('Clear All'),
                           ),
                         ],
-                      ),
-                      const SizedBox(height: 12),
-                      _SummaryCard(
-                        selectedCount: _selectedCount(),
-                        total: _selectedTotal(),
-                        editing: widget.editMode,
                       ),
                     ],
                   ),
@@ -624,10 +616,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                       } else {
                         final selected = _selected[s.categoryId] ?? false;
                         final ctrl = _amountCtrls[s.categoryId]!;
-                        final bool isExistingBudget = s.categoryId != null &&
-                            _existingBudgetCategoryIds.contains(s.categoryId);
-                        final bool showNewBadge = widget.editMode && !isExistingBudget;
-
                         children.addAll([
                           ListTile(
                             contentPadding:
@@ -647,12 +635,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                                 ),
                                 if (s.hasRecurring)
                                   const _Pill(label: 'Recurring', icon: Icons.repeat),
-                                if (showNewBadge)
-                                  const _Pill(
-                                    label: 'New',
-                                    icon: Icons.fiber_new,
-                                    tint: Colors.orange,
-                                  ),
                               ],
                             ),
                             subtitle: Padding(
@@ -776,12 +758,11 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
 class _Pill extends StatelessWidget {
   final String label;
   final IconData? icon;
-  final Color? tint;
-  const _Pill({required this.label, this.icon, this.tint});
+  const _Pill({required this.label, this.icon});
 
   @override
   Widget build(BuildContext context) {
-    final Color base = tint ?? Colors.green.shade700;
+    final Color base = Colors.green.shade700;
     final Color border = base.withOpacity(0.4);
     final Color background = base.withOpacity(0.12);
     return Container(
@@ -895,14 +876,12 @@ class _SummaryCard extends StatelessWidget {
     final theme = Theme.of(context);
     final hasSelection = selectedCount > 0;
     final title = hasSelection
-        ? editing
-            ? '$selectedCount budget${selectedCount == 1 ? '' : 's'} active'
-            : '$selectedCount ${selectedCount == 1 ? 'category' : 'categories'} selected'
-        : (editing ? 'No active budgets selected' : 'No categories selected yet');
+        ? '$selectedCount ${editing ? 'budget' : 'category'}${selectedCount == 1 ? '' : 's'} selected'
+        : (editing ? 'No budgets selected yet' : 'No categories selected yet');
     final subtitle = hasSelection
         ? 'Weekly total \$${total.toStringAsFixed(2)}'
         : (editing
-            ? 'Toggle off categories to remove them from your plan.'
+            ? 'Toggle items to include them in your weekly plan.'
             : 'Pick a few categories to start planning.');
 
     return Card(

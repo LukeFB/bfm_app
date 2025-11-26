@@ -171,11 +171,13 @@ class _BudgetRingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final budget = report.totalBudget;
-    final spent = report.totalSpent;
-    final savedPortion =
-        budget <= 0 ? 0.0 : (budget - spent).clamp(0.0, budget);
-    final leftoverCash = report.savingsDelta;
+    final income = report.totalIncome;
+    final totalSpent = report.totalSpent;
+    final budgetTotal = report.totalBudget;
+    final budgetSpend =
+        report.categories.fold<double>(0, (sum, entry) => sum + entry.spent);
+    final remainingBudget = budgetTotal - budgetSpend;
+    final leftoverCash = income - totalSpent;
     final leftoverPositive = leftoverCash >= 0;
     final segments = _buildSegments(report);
 
@@ -235,7 +237,7 @@ class _BudgetRingCard extends StatelessWidget {
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          seg.label,
+                          "${seg.label} (\$${seg.value.toStringAsFixed(0)})",
                           style: const TextStyle(fontSize: 12),
                         ),
                       ],
@@ -253,17 +255,18 @@ class _BudgetRingCard extends StatelessWidget {
                 const SizedBox(height: 6),
                 _StatRow(
                   label: "Budgeted",
-                  value: "\$${budget.toStringAsFixed(2)}",
+                  value: "\$${budgetTotal.toStringAsFixed(2)}",
                 ),
                 _StatRow(
                   label: "Spent",
-                  value: "\$${spent.toStringAsFixed(2)}",
+                  value: "\$${totalSpent.toStringAsFixed(2)}",
                   valueColor: Colors.deepOrangeAccent,
                 ),
                 _StatRow(
                   label: "Remaining budget",
-                  value: "\$${savedPortion.toStringAsFixed(2)}",
-                  valueColor: Colors.teal,
+                  value: "\$${remainingBudget.toStringAsFixed(2)}",
+                  valueColor:
+                      remainingBudget >= 0 ? Colors.teal : Colors.redAccent,
                 ),
                 const SizedBox(height: 8),
                 _StatRow(
@@ -282,28 +285,56 @@ class _BudgetRingCard extends StatelessWidget {
 
   List<_RingSegment> _buildSegments(WeeklyInsightsReport report) {
     final palette = _ringPalette;
-    final categories =
-        report.categories.where((c) => c.budget > 0).toList(growable: false);
-    if (categories.isEmpty) {
-      return [
-        _RingSegment(
-          value: report.totalBudget <= 0 ? 1 : report.totalBudget,
-          label: "Budget",
-          color: Colors.deepOrangeAccent,
-        ),
-      ];
-    }
     final segments = <_RingSegment>[];
-    for (var i = 0; i < categories.length; i++) {
-      final cat = categories[i];
+    double budgetSpent = 0;
+    var colorIndex = 0;
+
+    for (final cat in report.categories) {
+      final value = cat.spent.abs();
+      if (value <= 0) continue;
       segments.add(
         _RingSegment(
-          value: cat.budget,
+          value: value,
           label: cat.label,
-          color: palette[i % palette.length],
+          color: palette[colorIndex % palette.length],
+        ),
+      );
+      budgetSpent += value;
+      colorIndex++;
+    }
+
+    final otherSpend = math.max(report.totalSpent - budgetSpent, 0.0);
+    if (otherSpend > 0) {
+      segments.add(
+        _RingSegment(
+          value: otherSpend,
+          label: 'Other spend',
+          color: Colors.blueGrey.shade400,
         ),
       );
     }
+
+    final leftover = math.max(report.totalIncome - report.totalSpent, 0.0);
+    if (leftover > 0) {
+      segments.add(
+        _RingSegment(
+          value: leftover,
+          label: 'Leftover',
+          color: Colors.grey.shade300,
+        ),
+      );
+    }
+
+    if (segments.isEmpty) {
+      segments.add(
+        _RingSegment(
+          value: report.totalIncome > 0 ? report.totalIncome : 1,
+          label: 'No spend yet',
+          color: Colors.grey.shade300,
+        ),
+      );
+    }
+
     return segments;
   }
 }
@@ -427,7 +458,7 @@ class _TopCategoryChart extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Top spending", style: TextStyle(fontWeight: FontWeight.w600)),
+            const Text("Top spending this week", style: TextStyle(fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
             if (display.isEmpty)
               const Text("No category data yet.")
