@@ -3,6 +3,7 @@
 // Author: Jack Unsworth, Luke Fraser-Brown
 // -----------------------------------------------------------------------------
 
+import 'dart:convert';
 
 import 'package:sqflite/sqflite.dart';
 
@@ -12,11 +13,14 @@ class PromptModel {
   PromptModel(this._db);
 
   /// Builds the full private context string for the AI assistant.
-  /// Embed a brief budget summary
-  /// TODO: Embed referral list
+  /// Embed summaries for budgets, goals, referrals, reports, and events.
   Future<String> buildPrompt({
     bool includeBudgets = true,
     bool includeReferrals = true,
+    bool includeGoals = true,
+    bool includeReports = true,
+    bool includeEvents = true,
+    bool includeAlerts = true,
   }) async {
     final buffer = StringBuffer();
     buffer.writeln("### USER CONTEXT ###\n");
@@ -25,8 +29,24 @@ class PromptModel {
       buffer.writeln(await _buildBudgetContext());
     }
 
+    if (includeGoals) {
+      buffer.writeln(await _buildGoalContext());
+    }
+
     if (includeReferrals) {
       buffer.writeln(await _buildReferralContext());
+    }
+
+    if (includeEvents) {
+      buffer.writeln(await _buildEventsContext());
+    }
+
+    if (includeReports) {
+      buffer.writeln(await _buildWeeklyReportContext());
+    }
+
+    if (includeAlerts) {
+      buffer.writeln(await _buildAlertContext());
     }
 
     buffer.writeln("End of context.\n");
@@ -42,7 +62,14 @@ class PromptModel {
     const int _kMaxBudgets = 12; // cap items to avoid large prompts.
     final budgets = await _db.query(
       'budgets',
-      columns: ['id', 'category_id', 'weekly_limit', 'period_start', 'period_end', 'created_at'],
+      columns: [
+        'id',
+        'category_id',
+        'weekly_limit',
+        'period_start',
+        'period_end',
+        'created_at',
+      ],
       orderBy: 'created_at DESC',
       limit: _kMaxBudgets,
     );
@@ -92,7 +119,9 @@ class PromptModel {
     if (categoryId == null) return null;
 
     // normalize to integer for reliable lookups.
-    final int? id = (categoryId is int) ? categoryId : int.tryParse(categoryId.toString());
+    final int? id = (categoryId is int)
+        ? categoryId
+        : int.tryParse(categoryId.toString());
     if (id == null) return null;
 
     final results = await _db.query(
@@ -113,39 +142,214 @@ class PromptModel {
   //  Referral context
   // ---------------------------------------------------------------------------
 
+  Future<String> _buildGoalContext() async {
+    const int _kMaxGoals = 6;
+    final goals = await _db.query(
+      'goals',
+      columns: ['name', 'amount', 'saved_amount', 'weekly_contribution'],
+      orderBy: 'amount DESC',
+      limit: _kMaxGoals,
+    );
+
+    if (goals.isEmpty) {
+      return "No savings goals stored locally.\n";
+    }
+
+    final buffer = StringBuffer("Savings goals progress:\n");
+    for (final g in goals) {
+      final name = (g['name'] ?? 'Goal').toString();
+      final target = (g['amount'] as num?)?.toDouble() ?? 0.0;
+      final saved = (g['saved_amount'] as num?)?.toDouble() ?? 0.0;
+      final weekly = (g['weekly_contribution'] as num?)?.toDouble() ?? 0.0;
+      final pct = target == 0
+          ? 0
+          : (saved / target * 100).clamp(0, 999).toDouble();
+      final remaining = (target - saved).clamp(0, 999999);
+      buffer.writeln(
+        "- $name: \$${saved.toStringAsFixed(0)} saved "
+        "of \$${target.toStringAsFixed(0)} "
+        "(~${pct.toStringAsFixed(0)}%, weekly plan \$${weekly.toStringAsFixed(0)}, "
+        "\$${remaining.toStringAsFixed(0)} remaining)",
+      );
+    }
+    buffer.writeln();
+    return buffer.toString();
+  }
+
   Future<String> _buildReferralContext() async {
+    const int _kMaxReferrals = 12;
+    final referrals = await _db.query(
+      'referrals',
+      columns: [
+        'organisation_name',
+        'services',
+        'phone',
+        'email',
+        'website',
+        'region',
+        'demographics',
+        'availability',
+        'is_active',
+      ],
+      where: 'is_active = 1',
+      orderBy: 'updated_at DESC',
+      limit: _kMaxReferrals,
+    );
 
-    return "No referral resources yet\n"; // TODO recieve referral list from backend
+    if (referrals.isEmpty) {
+      return "No referral resources stored locally.\n";
+    }
 
-    // explicit columns + limit to protect tokens and tolerate schema changes.
-  //  final referrals = await _db.query(
-  //    'referrals',
-  //    columns: ['title', 'description', 'link', 'category', 'source', 'created_at'],
-  //    orderBy: 'created_at DESC',
-  //    limit: _kMaxReferrals,
-  //  );
+    final buffer = StringBuffer("Available referral resources:\n");
+    for (final r in referrals) {
+      final name = (r['organisation_name'] ?? 'Community service')
+          .toString()
+          .trim();
+      final services = (r['services'] ?? '').toString().trim();
+      final region = (r['region'] ?? '').toString().trim();
+      final audience = (r['demographics'] ?? '').toString().trim();
+      final availability = (r['availability'] ?? '').toString().trim();
 
-  //  if (referrals.isEmpty) {
-  //    return "No referral resources stored locally.\n";
-  //  }
+      final contactParts = <String>[];
+      if ((r['phone'] ?? '').toString().trim().isNotEmpty) {
+        contactParts.add('phone ${r['phone']}');
+      }
+      if ((r['email'] ?? '').toString().trim().isNotEmpty) {
+        contactParts.add(r['email'].toString().trim());
+      }
+      if ((r['website'] ?? '').toString().trim().isNotEmpty) {
+        contactParts.add(r['website'].toString().trim());
+      }
+      final contactLine = contactParts.isEmpty
+          ? ''
+          : ' Contact: ${contactParts.join(', ')}';
 
-  //  final buffer = StringBuffer();
-  //  buffer.writeln("Available referral resources:\n");
-//
-  //  for (final r in referrals) {
-  //    final title = r['title'] is String ? r['title'] as String : 'Untitled';
-  //    final desc = r['description'] is String ? r['description'] as String : '';
-  //    final link = r['link'] is String ? r['link'] as String : '';
-  //    final category = r['category'] is String ? r['category'] as String : '';
-  //    final source = r['source'] is String ? r['source'] as String : 'BFM';
-//
-    //  final cat = category.isNotEmpty ? category : 'General';
-  //    final linkPart = link.isNotEmpty ? ' [$link]' : '';
-//
-  //    buffer.writeln("- $title ($cat) — $desc$linkPart (Source: $source)");
-  //  }
-//
-  //  buffer.writeln();
-  //  return buffer.toString();
+      final descriptors = <String>[];
+      if (services.isNotEmpty) descriptors.add(services);
+      if (availability.isNotEmpty) descriptors.add('Hours: $availability');
+      if (audience.isNotEmpty) descriptors.add('For: $audience');
+      if (region.isNotEmpty) descriptors.add('Region: $region');
+
+      buffer.writeln(
+        "- $name${descriptors.isEmpty ? '' : ' — ${descriptors.join(' | ')}'}$contactLine",
+      );
+    }
+    buffer.writeln();
+    return buffer.toString();
+  }
+
+  Future<String> _buildEventsContext() async {
+    final nowIso = DateTime.now().toIso8601String();
+    final events = await _db.query(
+      'events',
+      columns: ['title', 'end_date'],
+      where: 'end_date IS NOT NULL AND end_date >= ?',
+      whereArgs: [nowIso],
+      orderBy: 'end_date ASC',
+      limit: 5,
+    );
+
+    if (events.isEmpty) {
+      return "No upcoming campus events recorded.\n";
+    }
+
+    String fmt(dynamic value) {
+      if (value == null) return '';
+      final date = DateTime.tryParse(value.toString());
+      if (date == null) return value.toString();
+      return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
+    }
+
+    final buffer = StringBuffer("Upcoming events:\n");
+    for (final e in events) {
+      final title = (e['title'] ?? 'Event').toString();
+      final end = fmt(e['end_date']);
+      buffer.writeln("- $title${end.isNotEmpty ? ' (ends $end)' : ''}");
+    }
+    buffer.writeln();
+    return buffer.toString();
+  }
+
+  Future<String> _buildWeeklyReportContext() async {
+    final reports = await _db.query(
+      'weekly_reports',
+      columns: ['week_start', 'week_end', 'data'],
+      orderBy: 'week_start DESC',
+      limit: 1,
+    );
+
+    if (reports.isEmpty) {
+      return "No weekly insights reports available yet.\n";
+    }
+
+    final row = reports.first;
+    final weekStart = row['week_start']?.toString() ?? '';
+    final weekEnd = row['week_end']?.toString() ?? '';
+    Map<String, dynamic> parsed = const {};
+    final rawData = row['data']?.toString();
+    if (rawData != null && rawData.isNotEmpty) {
+      try {
+        parsed = jsonDecode(rawData) as Map<String, dynamic>;
+      } catch (_) {
+        parsed = const {};
+      }
+    }
+
+    final totalBudget = (parsed['totalBudget'] as num?)?.toDouble();
+    final totalSpent = (parsed['totalSpent'] as num?)?.toDouble();
+    final metBudget = parsed['metBudget'] as bool? ?? false;
+    final categories =
+        (parsed['topCategories'] ?? parsed['categories']) as List<dynamic>? ??
+        const [];
+
+    String catSummary() {
+      if (categories.isEmpty) return '';
+      final top = categories
+          .take(3)
+          .map((item) {
+            if (item is Map) {
+              final label = item['label'] ?? 'Category';
+              final spent = (item['spent'] as num?)?.toDouble() ?? 0.0;
+              return "$label \$${spent.toStringAsFixed(0)}";
+            }
+            return item.toString();
+          })
+          .join(', ');
+      return top.isEmpty ? '' : "Top spend areas: $top.";
+    }
+
+    final buffer = StringBuffer(
+      "Most recent weekly report ($weekStart → $weekEnd):\n",
+    );
+    if (totalBudget != null && totalSpent != null) {
+      buffer.writeln(
+        "- Budgeted \$${totalBudget.toStringAsFixed(0)}, spent \$${totalSpent.toStringAsFixed(0)}"
+        " (${metBudget ? 'on track' : 'over plan'}).",
+      );
+    }
+    final cathint = catSummary();
+    if (cathint.isNotEmpty) buffer.writeln("- $cathint");
+    buffer.writeln();
+    return buffer.toString();
+  }
+
+  Future<String> _buildAlertContext() async {
+    final alerts = await _db.query(
+      'alerts',
+      columns: ['text', 'icon'],
+      orderBy: 'id DESC',
+      limit: 4,
+    );
+    if (alerts.isEmpty) {
+      return "";
+    }
+    final buffer = StringBuffer("Active alerts:\n");
+    for (final alert in alerts) {
+      final icon = (alert['icon'] ?? '⚠️').toString();
+      final text = (alert['text'] ?? '').toString();
+      buffer.writeln("- $icon $text");
+    }
+    buffer.writeln();
+    return buffer.toString();
   }
 }

@@ -18,7 +18,9 @@
 /// - recent: Recent transactions for quick activity display.
 /// ---------------------------------------------------------------------------
 
+import 'package:bfm_app/models/event_model.dart';
 import 'package:bfm_app/models/goal_model.dart';
+import 'package:bfm_app/models/tip_model.dart';
 import 'package:bfm_app/models/transaction_model.dart';
 
 class DashData {
@@ -27,6 +29,8 @@ class DashData {
   final GoalModel? primaryGoal;
   final List<String> alerts;
   final List<TransactionModel> recent;
+  final TipModel? featuredTip;
+  final List<EventModel> events;
 
   const DashData({
     required this.leftToSpendThisWeek,
@@ -34,5 +38,7 @@ class DashData {
     required this.primaryGoal,
     required this.alerts,
     required this.recent,
+    required this.featuredTip,
+    required this.events,
   });
 }

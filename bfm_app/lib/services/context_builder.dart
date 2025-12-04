@@ -25,6 +25,10 @@ class ContextBuilder {
     required List<Map<String, String>> recentTurns,
     bool includeBudgets = true,
     bool includeReferrals = true,
+    bool includeGoals = true,
+    bool includeReports = true,
+    bool includeEvents = true,
+    bool includeAlerts = true,
   }) async {
     final buffer = StringBuffer();
     buffer.writeln('PRIVATE CONTEXT: for assistant behaviour only.');
@@ -48,6 +52,10 @@ class ContextBuilder {
     final dbContext = await promptModel.buildPrompt(
       includeBudgets: includeBudgets,
       includeReferrals: includeReferrals,
+      includeGoals: includeGoals,
+      includeReports: includeReports,
+      includeEvents: includeEvents,
+      includeAlerts: includeAlerts,
     );
 
     buffer.writeln('\nDB CONTEXT:');

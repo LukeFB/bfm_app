@@ -8,29 +8,49 @@
 
 class EventModel {
   final int? id;
-  final String text;
-  final String? icon;
+  final int? backendId;
+  final String title;
+  final DateTime? endDate;
+  final DateTime? updatedAt;
 
   const EventModel({
     this.id,
-    required this.text,
-    this.icon,
+    this.backendId,
+    required this.title,
+    this.endDate,
+    this.updatedAt,
   });
 
   factory EventModel.fromMap(Map<String, dynamic> m) {
+    DateTime? parse(dynamic value) {
+      if (value == null) return null;
+      try {
+        return DateTime.parse(value as String);
+      } catch (_) {
+        return null;
+      }
+    }
+
     return EventModel(
       id: m['id'] as int?,
-      text: (m['text'] ?? '') as String,
-      icon: m['icon'] as String?,
+      backendId: m['backend_id'] as int?,
+      title: (m['title'] ?? '') as String,
+      endDate: parse(m['end_date']),
+      updatedAt: parse(m['updated_at']),
     );
   }
 
   Map<String, dynamic> toMap({bool includeId = false}) {
-    final m = <String, dynamic>{
-      'text': text,
-      'icon': icon,
+    final map = <String, dynamic>{
+      'backend_id': backendId,
+      'title': title,
+      'start_date': (endDate ?? DateTime.now()).toIso8601String(),
+      'end_date': endDate?.toIso8601String(),
+      'updated_at': updatedAt?.toIso8601String(),
     };
-    if (includeId && id != null) m['id'] = id;
-    return m;
+    if (includeId && id != null) {
+      map['id'] = id;
+    }
+    return map;
   }
 }

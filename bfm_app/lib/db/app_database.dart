@@ -26,7 +26,7 @@ class AppDatabase {
     // Open the database with version and an onUpgrade callback
     return await openDatabase(
       path,
-      version: 10, 
+      version: 13,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },
@@ -59,7 +59,16 @@ class AppDatabase {
     if (!await hasTable('budgets')) await _createBudgets(db);
     if (!await hasTable('recurring_transactions')) await _createRecurring(db);
     if (!await hasTable('alerts')) await _createAlerts(db);
-    if (!await hasTable('events')) await _createEvents(db);
+    if (!await hasTable('events')) {
+      await _createEvents(db);
+    } else {
+      final hasTitleOnEvents = await hasCol('events', 'title');
+      if (!hasTitleOnEvents) {
+        await _recreateEventsTable(db);
+      }
+    }
+    if (!await hasTable('referrals')) await _createReferrals(db);
+    if (!await hasTable('tips')) await _createTips(db);
     if (!await hasTable('goal_progress_log')) await _createGoalProgressLog(db);
     if (!await hasTable('weekly_reports')) await _createWeeklyReports(db);
 
@@ -72,7 +81,8 @@ class AppDatabase {
     }
     if (!await hasCol('goals', 'saved_amount')) {
       await db.execute(
-          'ALTER TABLE goals ADD COLUMN saved_amount REAL NOT NULL DEFAULT 0;');
+        'ALTER TABLE goals ADD COLUMN saved_amount REAL NOT NULL DEFAULT 0;',
+      );
     }
 
     // Budgets schema migration (nullable category_id + goal linkage)
@@ -94,28 +104,42 @@ class AppDatabase {
       await db.execute('ALTER TABLE transactions ADD COLUMN account_id TEXT;');
     }
     if (!await hasCol('transactions', 'connection_id')) {
-      await db.execute('ALTER TABLE transactions ADD COLUMN connection_id TEXT;');
+      await db.execute(
+        'ALTER TABLE transactions ADD COLUMN connection_id TEXT;',
+      );
     }
     if (!await hasCol('transactions', 'merchant_name')) {
-      await db.execute('ALTER TABLE transactions ADD COLUMN merchant_name TEXT;');
+      await db.execute(
+        'ALTER TABLE transactions ADD COLUMN merchant_name TEXT;',
+      );
     }
     if (!await hasCol('transactions', 'category_name')) {
-      await db.execute('ALTER TABLE transactions ADD COLUMN category_name TEXT;');
+      await db.execute(
+        'ALTER TABLE transactions ADD COLUMN category_name TEXT;',
+      );
     }
     if (!await hasCol('transactions', 'category_id')) {
-      await db.execute('ALTER TABLE transactions ADD COLUMN category_id INTEGER;');
+      await db.execute(
+        'ALTER TABLE transactions ADD COLUMN category_id INTEGER;',
+      );
     }
     if (!await hasCol('transactions', 'akahu_hash')) {
       await db.execute('ALTER TABLE transactions ADD COLUMN akahu_hash TEXT;');
     }
-    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_transactions_akahu_hash ON transactions(akahu_hash) WHERE akahu_hash IS NOT NULL;');
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS ux_transactions_akahu_hash ON transactions(akahu_hash) WHERE akahu_hash IS NOT NULL;',
+    );
 
     // ---- category columns ----
     if (!await hasCol('categories', 'akahu_category_id')) {
-      await db.execute('ALTER TABLE categories ADD COLUMN akahu_category_id TEXT;');
+      await db.execute(
+        'ALTER TABLE categories ADD COLUMN akahu_category_id TEXT;',
+      );
     }
     if (!await hasCol('categories', 'usage_count')) {
-      await db.execute('ALTER TABLE categories ADD COLUMN usage_count INTEGER NOT NULL DEFAULT 0;');
+      await db.execute(
+        'ALTER TABLE categories ADD COLUMN usage_count INTEGER NOT NULL DEFAULT 0;',
+      );
     }
     if (!await hasCol('categories', 'first_seen_at')) {
       await db.execute('ALTER TABLE categories ADD COLUMN first_seen_at TEXT;');
@@ -145,10 +169,11 @@ class AppDatabase {
     await _createRecurring(db);
     await _createAlerts(db);
     await _createEvents(db);
+    await _createReferrals(db);
+    await _createTips(db);
     await _createGoalProgressLog(db);
     await _createWeeklyReports(db);
     await _ensureIndexesAndTriggers(db);
-
   }
 
   // --- DDL helpers ---
@@ -166,8 +191,12 @@ class AppDatabase {
         last_used_at TEXT
       );
     ''');
-    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_name ON categories(name COLLATE NOCASE);');
-    await db.execute('CREATE INDEX IF NOT EXISTS ix_categories_usage ON categories(usage_count DESC);');
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_name ON categories(name COLLATE NOCASE);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_categories_usage ON categories(usage_count DESC);',
+    );
   }
 
   Future<void> _createTransactions(Database db) async {
@@ -188,10 +217,18 @@ class AppDatabase {
         FOREIGN KEY(category_id) REFERENCES categories(id)
       );
     ''');
-    await db.execute('CREATE INDEX IF NOT EXISTS ix_transactions_date ON transactions(date DESC);');
-    await db.execute('CREATE INDEX IF NOT EXISTS ix_transactions_category_id ON transactions(category_id);');
-    await db.execute('CREATE INDEX IF NOT EXISTS ix_transactions_type ON transactions(type);');
-    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_transactions_akahu_hash ON transactions(akahu_hash) WHERE akahu_hash IS NOT NULL;');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_transactions_date ON transactions(date DESC);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_transactions_category_id ON transactions(category_id);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_transactions_type ON transactions(type);',
+    );
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS ux_transactions_akahu_hash ON transactions(akahu_hash) WHERE akahu_hash IS NOT NULL;',
+    );
   }
 
   Future<void> _createGoals(Database db) async {
@@ -238,8 +275,12 @@ class AppDatabase {
         FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE
       );
     ''');
-    await db.execute('CREATE INDEX IF NOT EXISTS ix_budgets_category_id ON budgets(category_id);');
-    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_budgets_goal_id ON budgets(goal_id) WHERE goal_id IS NOT NULL;');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_budgets_category_id ON budgets(category_id);',
+    );
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS ux_budgets_goal_id ON budgets(goal_id) WHERE goal_id IS NOT NULL;',
+    );
   }
 
   Future<void> _recreateBudgetsTable(Database db) async {
@@ -328,10 +369,114 @@ class AppDatabase {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        text TEXT NOT NULL,
-        icon TEXT
+        backend_id INTEGER,
+        title TEXT NOT NULL,
+        description TEXT,
+        location TEXT,
+        region TEXT,
+        start_date TEXT NOT NULL,
+        end_date TEXT,
+        registration_url TEXT,
+        icon TEXT,
+        audience TEXT,
+        is_virtual INTEGER NOT NULL DEFAULT 0,
+        is_published INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     ''');
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS ux_events_backend ON events(backend_id) WHERE backend_id IS NOT NULL;',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_events_start_date ON events(start_date);',
+    );
+  }
+
+  Future<void> _recreateEventsTable(Database db) async {
+    await db.execute('ALTER TABLE events RENAME TO events_old;');
+    await _createEvents(db);
+    await db.execute('''
+      INSERT INTO events (
+        backend_id,
+        title,
+        description,
+        start_date,
+        icon,
+        is_virtual,
+        is_published,
+        updated_at,
+        synced_at
+      )
+      SELECT
+        NULL,
+        text,
+        NULL,
+        datetime('now'),
+        icon,
+        0,
+        1,
+        datetime('now'),
+        datetime('now')
+      FROM events_old;
+    ''');
+    await db.execute('DROP TABLE events_old;');
+  }
+
+  Future<void> _createReferrals(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        backend_id INTEGER,
+        organisation_name TEXT,
+        category TEXT,
+        website TEXT,
+        phone TEXT,
+        services TEXT,
+        demographics TEXT,
+        availability TEXT,
+        email TEXT,
+        address TEXT,
+        region TEXT,
+        notes TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    ''');
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS ux_referrals_backend ON referrals(backend_id) WHERE backend_id IS NOT NULL;',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_referrals_updated ON referrals(updated_at DESC);',
+    );
+  }
+
+  Future<void> _createTips(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS tips (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        backend_id INTEGER,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        category TEXT,
+        audience TEXT,
+        cta_label TEXT,
+        cta_url TEXT,
+        priority INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        publish_at TEXT,
+        expires_at TEXT,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    ''');
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS ux_tips_backend ON tips(backend_id) WHERE backend_id IS NOT NULL;',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_tips_priority ON tips(priority DESC, updated_at DESC);',
+    );
   }
 
   Future<void> _ensureIndexesAndTriggers(Database db) async {

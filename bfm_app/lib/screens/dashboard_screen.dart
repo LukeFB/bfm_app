@@ -10,6 +10,7 @@
 /// (uncategorised counts as discretionary).
 /// ---------------------------------------------------------------------------
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:bfm_app/models/dash_data.dart';
 import 'package:bfm_app/services/dashboard_service.dart';
@@ -21,8 +22,11 @@ import 'package:bfm_app/widgets/activity_item.dart';
 
 import 'package:bfm_app/repositories/transaction_repository.dart';
 
+import 'package:bfm_app/models/event_model.dart';
 import 'package:bfm_app/models/goal_model.dart';
+import 'package:bfm_app/models/tip_model.dart';
 import 'package:bfm_app/models/transaction_model.dart';
+import 'package:bfm_app/services/content_sync_service.dart';
 
 const Color bfmBlue = Color(0xFF005494); // TODO: make a themes file
 const Color bfmOrange = Color(0xFFFF6934);
@@ -46,19 +50,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<DashData> _load() async {
     await TransactionSyncService().syncIfStale();
+    try {
+      await ContentSyncService().syncDashboardContent();
+    } catch (err) {
+      debugPrint('Content sync skipped: $err');
+    }
     final results = await Future.wait([
-    DashboardService.getDiscretionaryWeeklyBudget(), // uses last week's income
-    DashboardService.discretionarySpendThisWeek(),   // Mon to today expenses
-    DashboardService.getPrimaryGoal(),
-    DashboardService.getAlerts(),
-    TransactionRepository.getRecent(5),
+      DashboardService.getDiscretionaryWeeklyBudget(), // uses last week's income
+      DashboardService.discretionarySpendThisWeek(), // Mon to today expenses
+      DashboardService.getPrimaryGoal(),
+      DashboardService.getAlerts(),
+      TransactionRepository.getRecent(5),
+      DashboardService.getFeaturedTip(),
+      DashboardService.getUpcomingEvents(limit: 3),
     ]);
 
     final discWeeklyBudget = results[0] as double;
-    final spentThisWeek  = results[1] as double;
+    final spentThisWeek = results[1] as double;
     final goal = results[2] as GoalModel?;
     final alerts = results[3] as List<String>;
     final recent = results[4] as List<TransactionModel>;
+    final tip = results[5] as TipModel?;
+    final events = results[6] as List<EventModel>;
 
     final leftToSpend = discWeeklyBudget - spentThisWeek;
 
@@ -68,6 +81,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       primaryGoal: goal,
       alerts: alerts,
       recent: recent,
+      featuredTip: tip,
+      events: events,
     );
   }
 
@@ -99,6 +114,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return "Almost tapped out — press pause on extras if you can ⏸️";
   }
 
+  String _formatShortDate(DateTime date) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final month = months[date.month - 1];
+    return '$month ${date.day}';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -122,17 +156,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
             }
 
             final data = snap.data!;
-            final leftToSpendStr = "\$${data.leftToSpendThisWeek.toStringAsFixed(1)}";
-            final weeklyBudgetStr = "Weekly budget: \$${data.totalWeeklyBudget.toStringAsFixed(0)}";
+            final leftToSpendStr =
+                "\$${data.leftToSpendThisWeek.toStringAsFixed(1)}";
+            final weeklyBudgetStr =
+                "Weekly budget: \$${data.totalWeeklyBudget.toStringAsFixed(0)}";
 
             final primaryGoal = data.primaryGoal;
-            final goalName = (primaryGoal == null ||
-                    primaryGoal.name.trim().isEmpty)
+            final goalName =
+                (primaryGoal == null || primaryGoal.name.trim().isEmpty)
                 ? "Savings goal"
                 : primaryGoal.name;
             final goalAmount = primaryGoal?.amount ?? 0.0;
             final savedAmount = primaryGoal?.savedAmount ?? 0.0;
             final goalProgress = primaryGoal?.progressFraction ?? 0.0;
+            final featuredTip = data.featuredTip;
+            final upcomingEvents = data.events;
 
             return RefreshIndicator(
               onRefresh: _refresh,
@@ -154,7 +192,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                     // ---------- HEADER ----------
                     Text(
-                      _headerMessage(data.leftToSpendThisWeek, data.totalWeeklyBudget),
+                      _headerMessage(
+                        data.leftToSpendThisWeek,
+                        data.totalWeeklyBudget,
+                      ),
                       style: const TextStyle(
                         fontSize: 12,
                         fontFamily: "Roboto",
@@ -192,9 +233,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(goalName,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold)),
+                          Text(
+                            goalName,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
                           const SizedBox(height: 8),
                           if (goalAmount > 0)
                             Column(
@@ -217,7 +259,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ],
                             )
                           else
-                            const Text("Click the arrow to set your first goal."),
+                            const Text(
+                              "Click the arrow to set your first goal.",
+                            ),
                         ],
                       ),
                     ),
@@ -230,10 +274,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: data.alerts
-                            .map((msg) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 8.0),
-                                  child: Text(msg),
-                                ))
+                            .map(
+                              (msg) => Padding(
+                                padding: const EdgeInsets.only(bottom: 8.0),
+                                child: Text(msg),
+                              ),
+                            )
                             .toList(),
                       ),
                     ),
@@ -255,7 +301,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ? -t.amount.abs()
                               : t.amount.abs();
                           return ActivityItem(
-                            label: t.description.isEmpty ? "Transaction" : t.description,
+                            label: t.description.isEmpty
+                                ? "Transaction"
+                                : t.description,
                             amount: amt,
                             date: date,
                           );
@@ -272,7 +320,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Center(
-                            child: Text( // TODO: dynamic
+                            child: Text(
+                              // TODO: dynamic
                               "🔥3",
                               style: TextStyle(
                                 fontSize: 40,
@@ -295,32 +344,79 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     const SizedBox(height: 24),
 
                     // ---------- FINANCIAL TIP ----------
-                    const DashboardCard(
-                      title: "Financial Tip", // TODO: connect to backend api
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "💡 Cook in bulk: Preparing meals ahead can save up to \$30 per week.",
-                            style: TextStyle(fontSize: 14),
-                          ),
-                        ],
-                      ),
+                    DashboardCard(
+                      title: "Financial Tip",
+                      child: featuredTip == null
+                          ? const Text(
+                              "No curated tips yet — connect to Wi-Fi to grab the latest advice.",
+                            )
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  featuredTip.title,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  featuredTip.expiresAt != null
+                                      ? 'Ends ${_formatShortDate(featuredTip.expiresAt!)}'
+                                      : 'No finish date set',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                              ],
+                            ),
                     ),
 
                     const SizedBox(height: 24),
 
                     // ---------- EVENTS ----------
-                    const DashboardCard(
-                      title: "Upcoming Events", // TODO: connect to backend
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text("🎓 Orientation – Free sausage sizzle - in 2 days"),
-                          SizedBox(height: 8),
-                          Text("🥪 Food bank visit - Free food in room 1 - in 5 days"),
-                        ],
-                      ),
+                    DashboardCard(
+                      title: "Upcoming Events",
+                      child: upcomingEvents.isEmpty
+                          ? const Text(
+                              "No upcoming campus events right now. Check back soon!",
+                            )
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                for (
+                                  int i = 0;
+                                  i < upcomingEvents.length;
+                                  i++
+                                ) ...[
+                                  Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        upcomingEvents[i].title,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        upcomingEvents[i].endDate != null
+                                            ? 'Ends ${_formatShortDate(upcomingEvents[i].endDate!)}'
+                                            : 'No finish date set',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.black54,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (i != upcomingEvents.length - 1)
+                                    const SizedBox(height: 12),
+                                ],
+                              ],
+                            ),
                     ),
                   ],
                 ),

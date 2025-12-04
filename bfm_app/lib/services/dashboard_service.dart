@@ -15,12 +15,15 @@
 /// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
-import 'package:bfm_app/repositories/budget_repository.dart';
-import 'package:bfm_app/repositories/goal_repository.dart';
+import 'package:bfm_app/models/event_model.dart';
 import 'package:bfm_app/models/goal_model.dart';
+import 'package:bfm_app/models/tip_model.dart';
+import 'package:bfm_app/repositories/budget_repository.dart';
+import 'package:bfm_app/repositories/event_repository.dart';
+import 'package:bfm_app/repositories/goal_repository.dart';
+import 'package:bfm_app/repositories/tip_repository.dart';
 
 class DashboardService {
-
   /// Expenses for the current week (Mon to today).
   static Future<double> getThisWeekExpenses() async {
     final db = await AppDatabase.instance.database;
@@ -31,11 +34,14 @@ class DashboardService {
     final start = _fmt(monday);
     final end = _fmt(now);
 
-    final res = await db.rawQuery('''
+    final res = await db.rawQuery(
+      '''
       SELECT IFNULL(SUM(ABS(amount)),0) AS v
       FROM transactions
       WHERE type='expense' AND date BETWEEN ? AND ?;
-    ''', [start, end]);
+    ''',
+      [start, end],
+    );
 
     return (res.first['v'] as num?)?.toDouble() ?? 0.0;
   }
@@ -64,11 +70,17 @@ class DashboardService {
       if (dueStr == null || dueStr.trim().isEmpty) continue;
 
       DateTime? due;
-      try { due = DateTime.parse(dueStr); } catch (_) { continue; }
+      try {
+        due = DateTime.parse(dueStr);
+      } catch (_) {
+        continue;
+      }
 
       final days = due.difference(today).inDays;
       if (days >= 0 && due.isBefore(soon)) {
-        alerts.add("⚠️ $desc (\$${amt.toStringAsFixed(0)}) due in $days day${days == 1 ? '' : 's'}");
+        alerts.add(
+          "⚠️ $desc (\$${amt.toStringAsFixed(0)}) due in $days day${days == 1 ? '' : 's'}",
+        );
       }
     }
     return alerts;
@@ -89,13 +101,18 @@ class DashboardService {
     final now = DateTime.now();
     final mondayThisWeek = now.subtract(Duration(days: now.weekday - 1));
     final start = _fmtDay(mondayThisWeek.subtract(const Duration(days: 7)));
-    final end   = _fmtDay(mondayThisWeek.subtract(const Duration(days: 1))); // Sunday
+    final end = _fmtDay(
+      mondayThisWeek.subtract(const Duration(days: 1)),
+    ); // Sunday
 
-    final res = await db.rawQuery('''
+    final res = await db.rawQuery(
+      '''
       SELECT IFNULL(SUM(amount),0) AS v
       FROM transactions
       WHERE type='income' AND date BETWEEN ? AND ?;
-    ''', [start, end]);
+    ''',
+      [start, end],
+    );
 
     // Income should be positive already; keep as-is.
     return (res.first['v'] as num?)?.toDouble() ?? 0.0;
@@ -110,11 +127,14 @@ class DashboardService {
     final start = _fmtDay(monday);
     final end = _fmtDay(now);
 
-    final res = await db.rawQuery('''
+    final res = await db.rawQuery(
+      '''
       SELECT IFNULL(SUM(amount),0) AS v
       FROM transactions
       WHERE type='income' AND date BETWEEN ? AND ?;
-    ''', [start, end]);
+    ''',
+      [start, end],
+    );
 
     return (res.first['v'] as num?)?.toDouble() ?? 0.0;
   }
@@ -129,5 +149,13 @@ class DashboardService {
     final budgetsSum = await BudgetRepository.getTotalWeeklyBudget();
     final safeBudgets = budgetsSum.isNaN ? 0.0 : budgetsSum;
     return lastWeekIncome - safeBudgets;
+  }
+
+  static Future<TipModel?> getFeaturedTip() {
+    return TipRepository.getFeatured();
+  }
+
+  static Future<List<EventModel>> getUpcomingEvents({int limit = 5}) {
+    return EventRepository.getUpcoming(limit: limit);
   }
 }
