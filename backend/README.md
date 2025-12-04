@@ -1,3 +1,5 @@
+pip install fastapi "uvicorn[standard]" "python-jose[cryptography]" webauthn
+
 uvicorn main:app --reload
 
 dev
