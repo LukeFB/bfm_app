@@ -17,6 +17,7 @@ import 'package:bfm_app/screens/enter_pin_screen.dart';
 import 'package:bfm_app/screens/set_pin_screen.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/services/pin_store.dart';
+import 'package:bfm_app/utils/app_route_observer.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -369,6 +370,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      navigatorObservers: [appRouteObserver],
       title: 'BFM App',
       theme: ThemeData(
         primaryColor: const Color(0xFF005494),

@@ -12,6 +12,8 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
+import 'package:bfm_app/utils/app_route_observer.dart';
 import 'package:bfm_app/models/dash_data.dart';
 import 'package:bfm_app/services/dashboard_service.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
@@ -39,13 +41,34 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   late Future<DashData> _future;
 
   @override
   void initState() {
     super.initState();
     _future = _load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != null) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  @override
+  void didPopNext() {
+    // Refresh when returning from another screen (e.g., budget edit) so totals update.
+    _refresh();
   }
 
   Future<DashData> _load() async {

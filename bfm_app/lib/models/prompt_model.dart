@@ -177,7 +177,6 @@ class PromptModel {
   }
 
   Future<String> _buildReferralContext() async {
-    const int _kMaxReferrals = 12;
     final referrals = await _db.query(
       'referrals',
       columns: [
@@ -193,7 +192,6 @@ class PromptModel {
       ],
       where: 'is_active = 1',
       orderBy: 'updated_at DESC',
-      limit: _kMaxReferrals,
     );
 
     if (referrals.isEmpty) {
@@ -298,24 +296,47 @@ class PromptModel {
     final totalBudget = (parsed['totalBudget'] as num?)?.toDouble();
     final totalSpent = (parsed['totalSpent'] as num?)?.toDouble();
     final metBudget = parsed['metBudget'] as bool? ?? false;
-    final categories =
-        (parsed['topCategories'] ?? parsed['categories']) as List<dynamic>? ??
-        const [];
+    List<Map<String, dynamic>> parseCatList(dynamic raw) {
+      return (raw as List?)
+              ?.map((item) => (item is Map)
+                  ? item.cast<String, dynamic>()
+                  : <String, dynamic>{})
+              .where((m) => m.isNotEmpty)
+              .toList() ??
+          const <Map<String, dynamic>>[];
+    }
 
-    String catSummary() {
-      if (categories.isEmpty) return '';
-      final top = categories
-          .take(3)
-          .map((item) {
-            if (item is Map) {
-              final label = item['label'] ?? 'Category';
-              final spent = (item['spent'] as num?)?.toDouble() ?? 0.0;
-              return "$label \$${spent.toStringAsFixed(0)}";
-            }
-            return item.toString();
-          })
-          .join(', ');
-      return top.isEmpty ? '' : "Top spend areas: $top.";
+    final categories = parseCatList(parsed['categories']);
+    final topCategories = parseCatList(parsed['topCategories']);
+
+    String catSpendSummary() {
+      final list = categories.isNotEmpty ? categories : topCategories;
+      if (list.isEmpty) return '';
+
+      const cap = 8; // keep prompt lean while including more than top 3
+      final buffer = StringBuffer("Category spend vs budget:\n");
+      final trimmed = list.take(cap);
+      for (final item in trimmed) {
+        final label = (item['label'] ?? 'Category').toString();
+        final spent = (item['spent'] as num?)?.toDouble() ?? 0.0;
+        final budget = (item['budget'] as num?)?.toDouble() ?? 0.0;
+        final variance = budget - spent;
+        final varianceText = variance == 0
+            ? 'on budget'
+            : variance > 0
+                ? 'under by \$${variance.abs().toStringAsFixed(0)}'
+                : 'over by \$${variance.abs().toStringAsFixed(0)}';
+        final budgetText = budget > 0
+            ? "budget \$${budget.toStringAsFixed(0)}"
+            : "no set budget";
+        buffer.writeln(
+          "- $label: spent \$${spent.toStringAsFixed(0)} vs $budgetText ($varianceText)",
+        );
+      }
+      if (list.length > cap) {
+        buffer.writeln("- ... ${list.length - cap} more categories");
+      }
+      return buffer.toString();
     }
 
     final buffer = StringBuffer(
@@ -327,8 +348,8 @@ class PromptModel {
         " (${metBudget ? 'on track' : 'over plan'}).",
       );
     }
-    final cathint = catSummary();
-    if (cathint.isNotEmpty) buffer.writeln("- $cathint");
+    final catDetails = catSpendSummary();
+    if (catDetails.isNotEmpty) buffer.writeln(catDetails);
     buffer.writeln();
     return buffer.toString();
   }

@@ -25,8 +25,20 @@ class BudgetRepository {
 
   static Future<double> getTotalWeeklyBudget() async {
     final db = await AppDatabase.instance.database;
-    final result =
-        await db.rawQuery('SELECT SUM(weekly_limit) as total FROM budgets');
+    // Always use the most recent budget set (by period_start) so
+    // historical rows don’t keep inflating the “weekly budget” on home.
+    final latestPeriod = await db.rawQuery(
+      'SELECT MAX(period_start) AS latest FROM budgets',
+    );
+    final period = latestPeriod.first['latest'] as String?;
+    if (period == null || period.isEmpty) {
+      return 0.0;
+    }
+
+    final result = await db.rawQuery(
+      'SELECT SUM(weekly_limit) AS total FROM budgets WHERE period_start = ?',
+      [period],
+    );
     return (result.first['total'] as num?)?.toDouble() ?? 0.0;
   }
 }
