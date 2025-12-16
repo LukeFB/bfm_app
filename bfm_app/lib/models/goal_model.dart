@@ -1,14 +1,25 @@
 /// ---------------------------------------------------------------------------
-/// File: goal_model.dart
+/// File: lib/models/goal_model.dart
 /// Author: Luke Fraser-Brown
 ///
-/// Purpose:
-///   A simple model representing a savings goal. This maps to the goals
-///   table and is used by the dashboard's "Savings Goals" widget.
+/// Called by:
+///   - Goal repository, dashboard, and goals screen components.
 ///
-/// TODO: map goals to a budget via calculating weekly contribution.
+/// Purpose:
+///   - Typed view over the goals table including legacy column fallbacks so we
+///     can display and update savings progress reliably.
+///
+/// Inputs:
+///   - SQLite rows (with possible legacy fields) or JSON from sync.
+///
+/// Outputs:
+///   - Dart object plus helper maps/labels for the UI.
+///
+/// Notes:
+///   - TODO: map goals to a budget via calculating weekly contribution.
 /// ---------------------------------------------------------------------------
 
+/// Represents a savings goal with progress tracking.
 class GoalModel {
   final int? id;
   final String name;
@@ -24,6 +35,7 @@ class GoalModel {
     this.savedAmount = 0,
   });
 
+  /// Creates a goal from DB/JSON maps. Handles legacy columns gracefully.
   factory GoalModel.fromMap(Map<String, dynamic> map) {
     return GoalModel(
       id: map['id'] as int?,
@@ -45,6 +57,7 @@ class GoalModel {
     );
   }
 
+  /// Serialises for inserts/updates, optionally including the primary key.
   Map<String, dynamic> toMap({bool includeId = false}) {
     final m = <String, dynamic>{
       'name': name,
@@ -56,6 +69,7 @@ class GoalModel {
     return m;
   }
 
+  /// Immutably copies the model with overrides, used by editing flows.
   GoalModel copyWith({
     int? id,
     String? name,
@@ -72,6 +86,7 @@ class GoalModel {
     );
   }
 
+  /// Returns a 0–1 fraction showing how far along the goal is.
   double get progressFraction {
     if (amount <= 0) return 0.0;
     final fraction = savedAmount / amount;
@@ -79,9 +94,11 @@ class GoalModel {
     return fraction.clamp(0.0, 1.0);
   }
 
+  /// User-facing string summarising saved vs total.
   String progressLabel() => amount <= 0
       ? "\$${savedAmount.toStringAsFixed(0)} saved"
       : "\$${savedAmount.toStringAsFixed(0)} of \$${amount.toStringAsFixed(0)}";
 
+  /// True once the saved amount meets/exceeds the target.
   bool get isComplete => amount > 0 && savedAmount >= amount;
 }

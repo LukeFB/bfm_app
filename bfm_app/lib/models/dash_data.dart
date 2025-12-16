@@ -1,21 +1,16 @@
 /// ---------------------------------------------------------------------------
-/// File: dash_data.dart
+/// File: lib/models/dash_data.dart
 /// Author: Luke Fraser-Brown
 ///
-/// Simple container model that groups together the core data needed
-/// to render the dashboard screen. This is essentially a view model
-/// that sits between raw DB queries and the UI layer.
+/// Purpose:
+///   View model bundling everything the dashboard needs into one object.
 ///
-/// DashData holds all dashboard-relevant information in one place.
-/// This object is constructed in the service
-/// layer (`DashboardService`) and consumed directly by the UI.
+/// Called by:
+///   `dashboard_service.dart` (builder) and `dashboard_screen.dart` (consumer).
 ///
-/// Fields:
-/// - leftToSpendThisWeek: Amount remaining for the current week.
-/// - totalWeeklyBudget: User’s planned weekly budget (sum of all categories).
-/// - primaryGoal: The highest-priority savings goal, or null if none.
-/// - alerts: List of time-sensitive notifications (e.g. bills due soon).
-/// - recent: Recent transactions for quick activity display.
+/// Inputs / Outputs:
+///   Holds derived doubles, selected models, and string alerts ready for the
+///   UI — no extra queries needed once this is constructed.
 /// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/models/event_model.dart';
@@ -23,6 +18,7 @@ import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/tip_model.dart';
 import 'package:bfm_app/models/transaction_model.dart';
 
+/// Immutable snapshot of dashboard values for a render.
 class DashData {
   final double leftToSpendThisWeek;
   final double totalWeeklyBudget;
@@ -32,6 +28,7 @@ class DashData {
   final TipModel? featuredTip;
   final List<EventModel> events;
 
+  /// Requires every piece of dashboard data up front to keep the UI simple.
   const DashData({
     required this.leftToSpendThisWeek,
     required this.totalWeeklyBudget,

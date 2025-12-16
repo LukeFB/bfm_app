@@ -1,3 +1,25 @@
+/// ---------------------------------------------------------------------------
+/// File: lib/main.dart
+/// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - Flutter runtime right after the engine spins up this binary.
+///
+/// Purpose:
+///   - Boots Flutter bindings, configures sqflite FFI on desktop, warms up the
+///     AppDatabase singleton, then launches `MyApp` inside a ProviderScope.
+///
+/// Inputs:
+///   - `defaultTargetPlatform` and sqflite factories to know which database
+///     driver to use, plus our AppDatabase singleton.
+///
+/// Outputs:
+///   - A fully initialised widget tree with dependency injection wired and
+///     ready for `LockGate` to gate access.
+///
+/// Notes:
+///   - Keep this lean; heavy logic belongs in services or the database layer.
+/// ---------------------------------------------------------------------------
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
@@ -7,7 +29,8 @@ import 'package:bfm_app/app.dart';
 
 import 'package:flutter/foundation.dart';
 
-
+/// Boots bindings, configures sqflite for desktop, ensures the DB exists, and
+/// finally calls `runApp`. Keep async work before `runApp` to avoid blank frames.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if ([ // Enable sqflite ffi for desktop dev 

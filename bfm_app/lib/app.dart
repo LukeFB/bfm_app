@@ -1,8 +1,34 @@
+/// ---------------------------------------------------------------------------
+/// File: lib/app.dart
+/// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - `lib/main.dart` via `runApp(const MyApp())` during app bootstrap.
+///
+/// Purpose:
+///   - Hosts `MyApp`, the shared Material shell that wires named routes.
+///   - Provides `LockGate`, the biometric/PIN guard that decides when a user
+///     gets routed into the rest of the app.
+///
+/// Inputs:
+///   - `LocalAuthentication`, `SharedPreferences`, and `PinStore` state at
+///     runtime plus repository reads for saved budgets.
+///
+/// Outputs:
+///   - Pushes a named route based on auth, exposing dashboard/budget/chat/etc.
+///   - Emits top-level widgets used by every other screen once unlocked.
+///
+/// Notes:
+///   - Keep asynchronous auth work guarded with `_navigating` so we only route
+///     once per unlock attempt.
+///   - This file owns user entry and should stay side-effect free outside UI
+///     and routing so tests can stub the dependencies.
+/// ---------------------------------------------------------------------------
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:local_auth/error_codes.dart' as auth_error;
 import 'package:local_auth/local_auth.dart'; // Auth
-        
+
 import 'package:bfm_app/screens/dashboard_screen.dart';
 import 'package:bfm_app/screens/transactions_screen.dart';
 import 'package:bfm_app/screens/goals_screen.dart';
@@ -21,15 +47,20 @@ import 'package:bfm_app/utils/app_route_observer.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Root gate widget that blocks the navigation stack until a user completes
+/// biometrics or PIN auth. Owned by `MyApp` and pushed right after launch.
 class LockGate extends StatefulWidget {
   const LockGate({Key? key}) : super(key: key);
 
+  /// Creates the mutable state that carries all auth + routing logic.
   @override
   State<LockGate> createState() => _LockGateState();
 }
 
+/// Internal lifecycle states so we can drive the UI copy and spinners.
 enum _LockStatus { initializing, idle, authenticating, routing }
 
+/// Handles auth orchestration plus the conditional routing side effects.
 class _LockGateState extends State<LockGate> {
   final LocalAuthentication _localAuth = LocalAuthentication();
   final PinStore _pinStore = PinStore();
@@ -41,12 +72,17 @@ class _LockGateState extends State<LockGate> {
   bool _navigating = false;
   String? _errorMessage;
 
+  /// Kicks off detection for biometrics + stored PIN as soon as the widget
+  /// mounts so the splash state can show a spinner instead of stale data.
   @override
   void initState() {
     super.initState();
     _bootstrap();
   }
 
+  /// Collects device/security capabilities and caches them on state so we know
+  /// whether to offer biometrics, device PIN, or fall back to our in-app PIN.
+  /// Also auto-starts a device auth attempt if supported to keep UX friction low.
   Future<void> _bootstrap() async {
     setState(() {
       _status = _LockStatus.initializing;
@@ -78,6 +114,9 @@ class _LockGateState extends State<LockGate> {
     }
   }
 
+  /// Asks LocalAuthentication to verify the user. If `autoTriggered` is false,
+  /// the UI explicitly showed a button tap so we reset error messaging.
+  /// Successful auth flows straight into `_routeAfterAuth`.
   Future<void> _handleDeviceAuth({bool autoTriggered = false}) async {
     if (!_deviceSecurityAvailable) {
       return;
@@ -129,6 +168,9 @@ class _LockGateState extends State<LockGate> {
     }
   }
 
+  /// Looks at persisted state (bank connection flag + budgets) to decide which
+  /// named route to push after auth. Guarded by `_navigating` so multiple async
+  /// calls cannot accidentally stack navigations.
   Future<void> _routeAfterAuth() async {
     if (_navigating) {
       return;
@@ -164,6 +206,8 @@ class _LockGateState extends State<LockGate> {
     }
   }
 
+  /// Opens the PIN entry modal flow and only re-runs routing when a user
+  /// successfully authenticates. Keeps the navigation result typed as bool.
   Future<void> _launchPinEntry() async {
     final result = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
@@ -177,6 +221,8 @@ class _LockGateState extends State<LockGate> {
     }
   }
 
+  /// Opens the PIN setup modal flow. If the user creates a PIN we flag the
+  /// state immediately and re-route so the rest of the app can open.
   Future<void> _launchPinSetup() async {
     final result = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
@@ -191,6 +237,8 @@ class _LockGateState extends State<LockGate> {
     }
   }
 
+  /// Converts the LocalAuth error codes into human copy so the screen can
+  /// explain what went wrong and how to retry.
   String _friendlyAuthError(PlatformException error) {
     switch (error.code) {
       case auth_error.notAvailable:
@@ -207,9 +255,12 @@ class _LockGateState extends State<LockGate> {
     }
   }
 
+  /// Helper that keeps spinner logic in one place so the widget tree reads well.
   bool get _showProgress =>
       _status == _LockStatus.initializing || _status == _LockStatus.authenticating;
 
+  /// Renders the secure login shell with action cards, error copy, and spinners.
+  /// Keeps button enabled/disabled state aligned with our private state flags.
   @override
   Widget build(BuildContext context) {
     final canShowActions =
@@ -300,11 +351,14 @@ class _LockGateState extends State<LockGate> {
   }
 }
 
+/// Column wrapper so the action cards stay spaced consistently regardless of
+/// how many auth options the device exposes.
 class _ActionColumn extends StatelessWidget {
   const _ActionColumn({required this.children});
 
   final List<Widget> children;
 
+  /// Builds the stack of action cards, padding each item to keep buttons legible.
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -320,6 +374,8 @@ class _ActionColumn extends StatelessWidget {
   }
 }
 
+/// Shared card used for both biometrics/device PIN and app PIN actions. Keeps
+/// layout consistent and makes the logic above easier to read.
 class _LockGateActionCard extends StatelessWidget {
   const _LockGateActionCard({
     required this.title,
@@ -333,6 +389,7 @@ class _LockGateActionCard extends StatelessWidget {
   final String buttonLabel;
   final VoidCallback? onPressed;
 
+  /// Builds the CTA card with iconography and button behavior provided above.
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -363,9 +420,13 @@ class _LockGateActionCard extends StatelessWidget {
   }
 }
 
+/// Root MaterialApp shell wired up by `main.dart`. Handles theming, route
+/// wiring, and navigator observers for analytics.
 class MyApp extends StatelessWidget {
   const MyApp({Key? key}) : super(key: key);
 
+  /// Creates the MaterialApp with all named routes so every screen can navigate
+  /// by string. Keep this minimal—expensive work should stay in services.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(

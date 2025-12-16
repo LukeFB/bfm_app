@@ -1,17 +1,17 @@
 /// ---------------------------------------------------------------------------
-/// File: bottom_bar_button.dart
+/// File: lib/widgets/bottom_bar_button.dart
 /// Author: Luke Fraser-Brown
-/// Description:
-///   A reusable widget for the bottom navigation bar. Provides an
-///   icon + label combination that is fully async-aware.
 ///
-/// Why:
-///   Using GestureDetector instead of ElevatedButton keeps the look
-///   clean and matches the design spec (white icon + label on dark bar).
+/// Called by:
+///   - Dashboard bottom navigation bar.
+///
+/// Purpose:
+///   - Simple icon + label button styled for the dark bottom bar.
 /// ---------------------------------------------------------------------------
 
 import 'package:flutter/material.dart';
 
+/// Icon + label button used in the dashboard bottom navigation row.
 class BottomBarButton extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -24,6 +24,7 @@ class BottomBarButton extends StatelessWidget {
     required this.onTap,
   });
 
+  /// Wraps the icon/label in a gesture detector so taps feel snappy.
   @override
   Widget build(BuildContext context) {
     return GestureDetector(

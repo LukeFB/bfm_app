@@ -1,4 +1,19 @@
-// Author: Luke Fraser-Brown
+/// ---------------------------------------------------------------------------
+/// File: lib/repositories/goal_repository.dart
+/// Author: Luke Fraser-Brown
+///
+/// Purpose:
+///   Encapsulates all SQLite interactions for goals, their mirrored budgets,
+///   and weekly progress logs.
+///
+/// Called by:
+///   `goals_screen.dart`, `dashboard_service.dart`, and `insights_service.dart`
+///   whenever goals need to be persisted or summarised.
+///
+/// Inputs / Outputs:
+///   Accepts `GoalModel` instances and raw ids. Returns primary keys, lists of
+///   models, progress logs, or aggregate maps suitable for analytics.
+/// ---------------------------------------------------------------------------
 
 import 'dart:math' as math;
 
@@ -7,7 +22,10 @@ import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/goal_progress_log.dart';
 import 'package:sqflite/sqflite.dart';
 
+/// Handles CRUD + progress tracking for goals.
 class GoalRepository {
+  /// Inserts the goal, then ensures there is a matching budget row so the
+  /// budget builder reflects the weekly contribution. Returns the new id.
   static Future<int> insert(GoalModel goal) async {
     final db = await AppDatabase.instance.database;
     return await db.transaction((txn) async {
@@ -19,6 +37,8 @@ class GoalRepository {
     });
   }
 
+  /// Returns all goals sorted latest-first so the UI can show newest entries on
+  /// top without extra work.
   static Future<List<GoalModel>> getAll() async {
     final db = await AppDatabase.instance.database;
     final result = await db.query(
@@ -28,6 +48,8 @@ class GoalRepository {
     return result.map((e) => GoalModel.fromMap(e)).toList();
   }
 
+  /// Updates the goal row (requires an id) and resyncs the mirrored budget so
+  /// weekly contribution changes flow through.
   static Future<void> update(GoalModel goal) async {
     if (goal.id == null) {
       throw ArgumentError('Cannot update goal without an id');
@@ -40,6 +62,8 @@ class GoalRepository {
     });
   }
 
+  /// Deletes the goal plus any linked budgets inside a single transaction so
+  /// we never leave orphaned budget rows behind.
   static Future<void> delete(int id) async {
     final db = await AppDatabase.instance.database;
     await db.transaction((txn) async {
@@ -48,6 +72,8 @@ class GoalRepository {
     });
   }
 
+  /// Ensures there is exactly one budget row per goal with a non-zero weekly
+  /// contribution. Removes the budget when the contribution is zero/invalid.
   static Future<void> _syncGoalBudget(
       DatabaseExecutor db, GoalModel goal) async {
     if (goal.id == null) return;
@@ -89,6 +115,11 @@ class GoalRepository {
     }
   }
 
+  /// Applies a manual contribution to a goal:
+  /// - Caps the applied value to the remaining goal amount.
+  /// - Updates saved_amount.
+  /// - Inserts a progress-log entry tagged as manual.
+  /// Returns the applied amount so callers can show confirmation.
   static Future<double> addManualContribution(
       GoalModel goal, double amount) async {
     if (goal.id == null) {
@@ -136,14 +167,17 @@ class GoalRepository {
     });
   }
 
+  /// Returns the YYYY-MM-DD string for the Monday of `reference`.
   static String _mondayIso(DateTime reference) {
     final monday = reference.subtract(Duration(days: reference.weekday - 1));
     return "${monday.year.toString().padLeft(4, '0')}-${monday.month.toString().padLeft(2, '0')}-${monday.day.toString().padLeft(2, '0')}";
   }
 
+  /// Formats a DateTime as YYYY-MM-DD.
   static String _isoDate(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 
+  /// Fetches a single progress log row for a given goal + week if it exists.
   static Future<GoalProgressLog?> getProgressLogForWeek(
       int goalId, DateTime weekStart) async {
     final db = await AppDatabase.instance.database;
@@ -157,6 +191,10 @@ class GoalRepository {
     return GoalProgressLog.fromMap(rows.first);
   }
 
+  /// Records the weekly outcome for a goal.
+  /// - Optionally credits a positive amount (capped to remaining goal balance).
+  /// - Writes or updates the log row with a status + note.
+  /// Returns the resulting log so UI can render status immediately.
   static Future<GoalProgressLog> recordWeeklyOutcome({
     required GoalModel goal,
     required DateTime weekStart,
@@ -222,6 +260,8 @@ class GoalRepository {
     });
   }
 
+  /// Aggregates contribution totals for every goal for a specific week.
+  /// Useful for dashboards that need quick per-goal bars without extra SQL.
   static Future<Map<int, double>> weeklyContributionTotals(
       DateTime weekStart) async {
     final db = await AppDatabase.instance.database;
@@ -244,6 +284,7 @@ class GoalRepository {
     return result;
   }
 
+  /// Internal helper to fetch a single log row for update/insert decisions.
   static Future<Map<String, dynamic>?> _fetchGoalProgressRow(
       DatabaseExecutor db, int goalId, String weekKey) async {
     final rows = await db.query(
@@ -255,6 +296,8 @@ class GoalRepository {
     return rows.isEmpty ? null : rows.first;
   }
 
+  /// Inserts or updates a progress log row by adding `delta` to the stored
+  /// amount. Keeps status/note in sync so downstream views stay accurate.
   static Future<void> _upsertGoalProgressAmount(
     DatabaseExecutor db,
     int goalId,

@@ -1,8 +1,25 @@
+/// ---------------------------------------------------------------------------
+/// File: lib/screens/set_pin_screen.dart
+/// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - `/setpin` route when the user chooses to create an app PIN.
+///
+/// Purpose:
+///   - Lets the user create or update their app PIN and saves it securely.
+///
+/// Inputs:
+///   - `PinStore` instance, user-entered PIN + confirmation.
+///
+/// Outputs:
+///   - `Navigator.pop(true)` on success; inline errors otherwise.
+/// ---------------------------------------------------------------------------
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/pin_store.dart';
 
+/// Screen for configuring the fallback app PIN.
 class SetPinScreen extends StatefulWidget {
   const SetPinScreen({super.key, required this.pinStore});
 
@@ -12,6 +29,7 @@ class SetPinScreen extends StatefulWidget {
   State<SetPinScreen> createState() => _SetPinScreenState();
 }
 
+/// Manages the PIN creation form and save lifecycle.
 class _SetPinScreenState extends State<SetPinScreen> {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _pinController = TextEditingController();
@@ -20,6 +38,7 @@ class _SetPinScreenState extends State<SetPinScreen> {
   bool _saving = false;
   String? _error;
 
+  /// Disposes text controllers.
   @override
   void dispose() {
     _pinController.dispose();
@@ -27,6 +46,7 @@ class _SetPinScreenState extends State<SetPinScreen> {
     super.dispose();
   }
 
+  /// Validates form input, saves the new PIN, and closes the sheet.
   Future<void> _savePin() async {
     final form = _formKey.currentState;
     if (form == null || !form.validate()) {
@@ -51,6 +71,7 @@ class _SetPinScreenState extends State<SetPinScreen> {
     }
   }
 
+  /// Base validation ensuring 4-8 digits before we compare both fields.
   String? _validatePin(String? value) {
     final pin = value ?? '';
     if (pin.length < 4 || pin.length > 8) {
@@ -59,6 +80,7 @@ class _SetPinScreenState extends State<SetPinScreen> {
     return null;
   }
 
+  /// Renders the PIN + confirmation fields plus the save CTA.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);

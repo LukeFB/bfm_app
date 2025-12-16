@@ -1,23 +1,20 @@
 /// ---------------------------------------------------------------------------
 /// File: lib/screens/chat_screen.dart
-/// Author: Luke Fraser-Brown & Jack Unsworth
+/// Author: Luke Fraser-Brown
 ///
-/// High-level description:
-///   Chat UI that calls Moni AI directly (no backend) and retains context.
-///   - Keeps existing Bubble styles, colors, layout, and send button.
-///   - Loads/saves history locally so context survives restarts.
-///   - Sends a rolling window of the last N turns + PRIVATE CONTEXT (budgets,
-///     referrals, past-summary) assembled in AiClient/ContextBuilder.
+/// Called by:
+///   - `/chat` route via the bottom navigation.
 ///
-/// Design philosophy:
-///   - UI-only concerns live here.
-///     -> Networking + prompt assembly in `AiClient`.
-///     -> Persistence in `ChatStorage`.
-///     -> Message model in `ChatMessage`.
+/// Purpose:
+///   - Chat UI that talks to Moni AI directly (no backend) while preserving
+///     context between sessions.
 ///
-/// Notes:
-///   - If no API key is set, the input still renders; sending will show a
-///     friendly error. 
+/// Inputs:
+///   - User-entered text, stored chat history, optional API key.
+///
+/// Outputs:
+///   - Renders AI responses, persists conversation history, and surfaces helpful
+///     errors if no key is configured.
 /// ---------------------------------------------------------------------------
 
 import 'package:bubble/bubble.dart';
@@ -30,7 +27,7 @@ import 'package:bfm_app/services/chat_storage.dart';
 import 'package:bfm_app/services/api_key_store.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
-
+/// Top-level chat screen that wraps the Moni messenger UI.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
@@ -38,6 +35,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
+/// Handles conversation state, persistence, and network calls.
 class _ChatScreenState extends State<ChatScreen> {
   // Replaced _Message with ChatMessage to integrate with storage + AI.
   final List<ChatMessage> _messages = [];
@@ -58,6 +56,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // How many most-recent turns to send with each request
   static const int kContextWindowTurns = 12;
 
+  /// Sets up the AI + storage services and loads history.
   @override
   void initState() {
     super.initState();
@@ -66,7 +65,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _bootstrap();
   }
 
-  // dispose controllers to avoid leaks.
+  /// Disposes controllers to avoid leaks.
   @override
   void dispose() {
     _controller.dispose();
@@ -74,6 +73,8 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
+  /// Loads persisted messages, seeds the greeting when empty, and checks if an
+  /// API key exists so the UI can hint accordingly.
   Future<void> _bootstrap() async {
     // Load persisted messages (if any)
     final persisted = await _store.loadMessages();
@@ -101,7 +102,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  // helper to jump to end safely after a frame.
+  /// Helper to jump the ListView to the bottom after the next frame.
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scroll.hasClients) return;
@@ -109,6 +110,8 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  /// Pushes the user message, sends it through AiClient, handles retries, and
+  /// appends the assistant response (or an error bubble) while persisting both.
   Future<void> _sendMessage() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending) return;
@@ -158,7 +161,7 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     }
   }
-  // Clear chat method
+  /// Clears history after a confirmation dialog and reseeds the greeting.
   Future<void> _clearChat() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -195,6 +198,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Converts raw exceptions into user-friendly hints (e.g., missing API key).
   String _prettyErr(Object e) {
     final s = e.toString();
     // Give a short hint if key is missing
@@ -204,6 +208,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return '';
   }
 
+  /// Renders chat history, the message composer, and clear/send controls.
   @override
   Widget build(BuildContext context) {
     return Scaffold(

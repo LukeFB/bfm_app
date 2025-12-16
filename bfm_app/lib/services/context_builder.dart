@@ -1,28 +1,33 @@
-// ---------------------------------------------------------------------------
-// File: lib/services/context_builder.dart
-// Author: Luke Fraser-Brown & Jack Unsworth
-//
-// Purpose:
-//   Central place for "prompt engineering" assembly.
-//   Builds a single PRIVATE CONTEXT string that is injected as an
-//   assistant-role message *before* the recent user/assistant turns.
-//
-// Changes:
-//   - Integrated DB-backed budgets & referrals using PromptModel
-//   - Removed stubs and asset-based referral loader
-// ---------------------------------------------------------------------------
+/// ---------------------------------------------------------------------------
+/// File: lib/services/context_builder.dart
+/// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - `ai_client.dart` right before sending chat requests.
+///
+/// Purpose:
+///   - Builds the private context block (persona, history summary, DB-backed
+///     insights) that gets injected before the scrolling chat turns.
+///
+/// Inputs:
+///   - Recent UI turns plus boolean flags for which data sections to include.
+///
+/// Outputs:
+///   - A single multi-line string fed into the assistant prompt.
+/// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/models/prompt_model.dart';
 import 'package:bfm_app/models/chat_message.dart';
 import 'package:bfm_app/services/chat_storage.dart';
 
+/// Produces the assistant's private context using stored chat + DB data.
 class ContextBuilder {
-  /// Build the PRIVATE CONTEXT block injected before the rolling window.
-  ///
-  /// [recentTurns] are the last N UI-visible turns (already role-mapped).
+  /// Builds the PRIVATE CONTEXT block inserted before streaming the user's
+  /// latest turns. `[recentTurns]` should already be trimmed/role-mapped.
   static Future<String> build({
     required List<Map<String, String>> recentTurns,
+    bool includeCategories = true,
     bool includeBudgets = true,
     bool includeReferrals = true,
     bool includeGoals = true,
@@ -51,6 +56,7 @@ class ContextBuilder {
     final promptModel = PromptModel(db);
     final dbContext = await promptModel.buildPrompt(
       includeBudgets: includeBudgets,
+      includeCategories: includeCategories,
       includeReferrals: includeReferrals,
       includeGoals: includeGoals,
       includeReports: includeReports,
@@ -75,6 +81,8 @@ class ContextBuilder {
   // ---------------------------------------------------------------------------
   // Past conversation summary
   // ---------------------------------------------------------------------------
+  /// Summarises older chat history into bullet points plus a few recent user
+  /// lines so the assistant remembers long-running threads.
   static Future<String> _buildConversationSummary({int maxBullets = 10}) async {
     final all = await ChatStorage().loadAllMessages();
     if (all.isEmpty) return '';
@@ -102,6 +110,7 @@ class ContextBuilder {
     return bullets.join('\n');
   }
 
+  /// Picks the first few user messages and clips them for summary bullets.
   static List<String> _compressByTopic(List<ChatMessage> msgs, {int limit = 5}) {
     final out = <String>[];
     for (final m in msgs) {
@@ -117,6 +126,7 @@ class ContextBuilder {
   // ---------------------------------------------------------------------------
   // Persona
   // ---------------------------------------------------------------------------
+  /// Placeholder for future persona tagging (e.g., family vs business budget).
   static Future<String?> _getPersonaTag() async {
     // TODO: wire to user profile store
     return null;
@@ -125,6 +135,7 @@ class ContextBuilder {
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
+  /// Trims whitespace and caps a string at `max` characters with an ellipsis.
   static String _clip(String s, int max) {
     final t = s.trim().replaceAll('\n', ' ');
     return (t.length <= max) ? t : '${t.substring(0, max - 1)}…';
@@ -132,6 +143,7 @@ class ContextBuilder {
 }
 
 extension _TakeLast<E> on List<E> {
+  /// Pulls the last `n` items without copying when the list is already short.
   Iterable<E> takeLast(int n) {
     if (n <= 0) return const Iterable.empty();
     if (length <= n) return this;

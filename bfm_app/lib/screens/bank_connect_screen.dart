@@ -1,10 +1,29 @@
-// Author: Luke Fraser-Brown
+/// ---------------------------------------------------------------------------
+/// File: lib/screens/bank_connect_screen.dart
+/// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - Navigation routes `/bankconnect` right after LockGate when no bank is
+///     linked yet.
+///
+/// Purpose:
+///   - Collects Akahu app/user tokens, persists them securely, toggles the
+///     `bank_connected` flag, and kicks off an initial transaction sync.
+///
+/// Inputs:
+///   - User-entered app/user tokens.
+///
+/// Outputs:
+///   - SecureCredentialStore writes, SharedPreferences flags, navigation to the
+///     budget builder on success.
+/// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/services/secure_credential_store.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Simple form that handles bank credential onboarding.
 class BankConnectScreen extends StatefulWidget {
   const BankConnectScreen({Key? key}) : super(key: key);
 
@@ -12,10 +31,13 @@ class BankConnectScreen extends StatefulWidget {
   State<BankConnectScreen> createState() => _BankConnectScreenState();
 }
 
+/// Owns the token text controllers and sync tap handler.
 class _BankConnectScreenState extends State<BankConnectScreen> {
   final _appTokenController = TextEditingController();
   final _userTokenController = TextEditingController();
 
+  /// Validates tokens, saves them securely, flips `bank_connected`, fires a
+  /// sync, and routes to budget builder. Shows a snack bar on failure.
   Future<void> _onContinue() async {
     final appToken = _appTokenController.text.trim();
     final userToken = _userTokenController.text.trim();
@@ -50,6 +72,7 @@ class _BankConnectScreenState extends State<BankConnectScreen> {
     }
   }
 
+  /// Renders the two text fields plus CTA.
   @override
   Widget build(BuildContext context) {
     return Scaffold(

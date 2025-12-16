@@ -1,3 +1,18 @@
+/// ---------------------------------------------------------------------------
+/// File: lib/services/content_sync_service.dart
+/// Author: Luke Fraser-Brown
+///
+/// Purpose:
+///   Pulls dashboard copy (referrals, tips, events) from the backend and
+///   mirrors it into SQLite so the UI works offline.
+///
+/// Called by:
+///   `dashboard_screen.dart` whenever the user refreshes dashboard content.
+///
+/// Inputs / Outputs:
+///   Hits the backend REST endpoints using `BackendConfig`, maps JSON into
+///   models, and pushes them into their repositories using replace semantics.
+/// ---------------------------------------------------------------------------
 import 'dart:convert';
 
 import 'package:bfm_app/config/backend_config.dart';
@@ -10,6 +25,7 @@ import 'package:bfm_app/repositories/tip_repository.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+/// Small singleton because we only need one HTTP client instance + state.
 class ContentSyncService {
   ContentSyncService._internal();
   static final ContentSyncService _instance = ContentSyncService._internal();
@@ -17,10 +33,14 @@ class ContentSyncService {
 
   final http.Client _client = http.Client();
 
+  /// Fan-out helper used by the dashboard to refresh everything at once.
+  /// Runs referral, tip, and event sync in parallel.
   Future<void> syncDashboardContent() async {
     await Future.wait([syncReferrals(), syncTips(), syncEvents()]);
   }
 
+  /// Fetches referral JSON, maps to `ReferralModel`, and replaces the local
+  /// table with the new list. Swallows errors but logs them for debugging.
   Future<void> syncReferrals() async {
     try {
       final list = await _fetchList('/api/referrals', {'limit': '200'});
@@ -37,6 +57,7 @@ class ContentSyncService {
     }
   }
 
+  /// Same as `syncReferrals` but for the rotating financial tips.
   Future<void> syncTips() async {
     try {
       final list = await _fetchList('/api/tips', {'limit': '3'});
@@ -53,6 +74,7 @@ class ContentSyncService {
     }
   }
 
+  /// Same idea for live events/clinics. Keeps only the most recent items.
   Future<void> syncEvents() async {
     try {
       final list = await _fetchList('/api/events', {'limit': '5'});
@@ -69,10 +91,15 @@ class ContentSyncService {
     }
   }
 
+  /// Close the underlying HTTP client when the app shuts down or tests finish.
   void dispose() {
     _client.close();
   }
 
+  /// Shared HTTP helper:
+  /// - Builds the absolute URI with query params.
+  /// - Applies a timeout using our backend config.
+  /// - Ensures the payload is a JSON list before returning.
   Future<List<dynamic>> _fetchList(
     String path,
     Map<String, String> query,
@@ -93,6 +120,8 @@ class ContentSyncService {
     throw Exception('Unexpected payload for $path');
   }
 
+  /// Maps referral JSON into our `ReferralModel`, converting timestamps and
+  /// falling back to sensible defaults for optional fields.
   ReferralModel? _mapReferral(Map<String, dynamic> data) {
     DateTime? parseDate(dynamic value) {
       if (value == null) return null;
@@ -121,6 +150,8 @@ class ContentSyncService {
     );
   }
 
+  /// Converts a tip payload into `TipModel`, giving it a title fallback and
+  /// parsing expiry/updated timestamps.
   TipModel? _mapTip(Map<String, dynamic> data) {
     DateTime? parseDate(dynamic value) {
       if (value == null) return null;
@@ -140,6 +171,8 @@ class ContentSyncService {
     );
   }
 
+  /// Converts event payloads into `EventModel`, capturing backend ids and
+  /// guarding against bad timestamps.
   EventModel? _mapEvent(Map<String, dynamic> data) {
     DateTime? parseDate(dynamic value) {
       if (value == null) return null;
@@ -158,6 +191,8 @@ class ContentSyncService {
     );
   }
 
+  /// Lightweight logger so we can keep release builds quiet but still get
+  /// breadcrumbs in debug runs.
   void _log(String message, [Object? error]) {
     debugPrint('[ContentSync] $message');
     if (error != null) {

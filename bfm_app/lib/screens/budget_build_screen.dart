@@ -1,12 +1,23 @@
 /// ---------------------------------------------------------------------------
-/// File: budget_build_screen.dart
+/// File: lib/screens/budget_build_screen.dart
 /// Author: Luke Fraser-Brown
 ///
+/// Called by:
+///   - `/budget/build` after bank connect and `/budget/edit` from settings.
+///
 /// Purpose:
-///   Post-bank-connection screen where a user builds their weekly budget from
-///   data-driven suggestions. Categories are ordered by detected recurring,
-///   then category usage, then weekly spend. Users can toggle categories,
-///   edit weekly limits, and save.
+///   - Post-bank-connection screen where a user builds their weekly budget from
+///     data-driven suggestions. Categories are ordered by detected recurring,
+///     then category usage, then weekly spend. Users can toggle categories,
+///     edit weekly limits, categorise uncategorized descriptions, and save.
+///
+/// Inputs:
+///   - Suggestions from `BudgetAnalysisService`, existing budgets (edit mode),
+///     category rows, and uncategorized transaction clusters.
+///
+/// Outputs:
+///   - Writes selected categories into the `budgets` table and optionally
+///     re-categorises transactions the user tags.
 ///
 /// UX notes:
 ///   - Starts with all items deselected.
@@ -26,6 +37,7 @@ import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 
+/// Main UI for selecting suggested categories and setting weekly limits.
 class BudgetBuildScreen extends StatefulWidget {
   const BudgetBuildScreen({super.key, this.editMode = false});
 
@@ -35,6 +47,7 @@ class BudgetBuildScreen extends StatefulWidget {
   State<BudgetBuildScreen> createState() => _BudgetBuildScreenState();
 }
 
+/// Holds suggestion state, selection toggles, and text controllers.
 class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   bool _loading = true;
   List<BudgetSuggestionModel> _suggestions = [];
@@ -43,12 +56,15 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   final Map<int?, bool> _selected = {}; // by categoryId (null allowed for map keys)
   final Map<int?, TextEditingController> _amountCtrls = {};
 
+  /// Kicks off the first suggestion load when the widget mounts.
   @override
   void initState() {
     super.initState();
     _load();
   }
 
+  /// Refreshes analysis suggestions, merges existing budgets (in edit mode),
+  /// restores user selection state, and wires controllers for every row.
   Future<void> _load() async {
     final previousSelection = Map<int?, bool>.from(_selected);
     final previousAmounts = <int?, String>{
@@ -167,6 +183,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     });
   }
 
+  /// Cleans up text controllers to avoid leaks.
   @override
   void dispose() {
     for (final c in _amountCtrls.values) {
@@ -175,20 +192,25 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     super.dispose();
   }
 
+  /// Returns the current week's Monday in YYYY-MM-DD for budget period start.
   String _mondayOfThisWeek() {
     final now = DateTime.now();
     final monday = now.subtract(Duration(days: now.weekday - 1));
     return "${monday.year.toString().padLeft(4, '0')}-${monday.month.toString().padLeft(2, '0')}-${monday.day.toString().padLeft(2, '0')}";
   }
 
+  /// Parses a text field value into a non-negative double.
   double _parseAmount(String s) {
     final v = double.tryParse(s.trim());
     if (v == null || v.isNaN || v.isInfinite) return 0.0;
     return max(0.0, v);
   }
 
+  /// Rounds a value to the nearest `step`. Used for +/- buttons.
   double _roundTo(double x, double step) => (step <= 0) ? x : (x / step).round() * step;
 
+  /// Persists every selected category as a budget row (clearing old ones when
+  /// in edit mode) and routes back to the dashboard.
   Future<void> _saveSelected() async {
     final periodStart = _mondayOfThisWeek();
     int saved = 0;
@@ -223,6 +245,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     Navigator.pushNamedAndRemoveUntil(context, '/dashboard', (route) => false);
   }
 
+  /// Pre-selects every recurring suggestion and seeds the amount fields.
   void _selectAllRecurring() {
     setState(() {
       for (final s in _suggestions.where((x) => !x.isUncategorizedGroup && x.hasRecurring)) {
@@ -233,6 +256,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     });
   }
 
+  /// Unchecks every selectable category so the user can start fresh.
   void _clearAll() {
     setState(() {
       for (final s in _suggestions.where((x) => !x.isUncategorizedGroup)) {
@@ -241,7 +265,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     });
   }
 
-  // Same normalisation as the service (local to avoid importing a private fn)
+  /// Same normalisation as the service (local to avoid importing a private fn)
   String _normalizeText(String raw) => raw
       .toLowerCase()
       .replaceAll(RegExp(r'[^a-z ]'), '')
@@ -486,6 +510,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     );
   }
 
+  /// Builds the entire budget builder UI: headers, suggestions list, and footer.
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -725,6 +750,8 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     );
   }
 
+  /// Returns the running total for selected categories so the footer badge can
+  /// display a weekly sum.
   double _selectedTotal() {
     double sum = 0;
     for (final s in _suggestions) {
@@ -736,6 +763,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     return sum;
   }
 
+  /// Rebuilds the suggestion list when manual entries change.
   void _refreshDisplayedSuggestions() {
     setState(() {
       _suggestions = [
@@ -745,6 +773,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     });
   }
 
+  /// Counts how many categories are selected (for summary copy).
   int _selectedCount() {
     var count = 0;
     for (final entry in _selected.entries) {
@@ -755,6 +784,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
 
 }
 
+/// Tiny label used to show recurring tags.
 class _Pill extends StatelessWidget {
   final String label;
   final IconData? icon;
@@ -785,6 +815,7 @@ class _Pill extends StatelessWidget {
   }
 }
 
+/// +/- buttons that nudge the weekly amount by \$1 increments.
 class _StepperButtons extends StatelessWidget {
   final bool enabled;
   final VoidCallback onMinus;
@@ -802,6 +833,7 @@ class _StepperButtons extends StatelessWidget {
   }
 }
 
+/// Shows the aggregate weekly total selected so far.
 class _SelectedTotalBadge extends StatelessWidget {
   final double amount;
   const _SelectedTotalBadge({required this.amount});
@@ -819,6 +851,7 @@ class _SelectedTotalBadge extends StatelessWidget {
   }
 }
 
+/// Renders the contextual headers inside the suggestion list.
 class _SectionHeader extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -860,6 +893,7 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
+/// Simple card summarising how many items are toggled and the weekly amount.
 class _SummaryCard extends StatelessWidget {
   final int selectedCount;
   final double total;

@@ -1,23 +1,24 @@
 /// ---------------------------------------------------------------------------
-/// File: budget_suggestion_model.dart
+/// File: lib/models/budget_suggestion_model.dart
 /// Author: Luke Fraser-Brown
 ///
-/// Purpose:
-///   Lightweight view-model used by the Budget Build screen. Represents either
-///   (a) a normal category suggestion, or (b) an uncategorized listed by description
-///   suggestion that the user can categorize.
+/// Called by:
+///   - `budget_analysis_service.dart` and the Budget Build UI when surfacing
+///     suggested categories/description groups to include in a plan.
 ///
-/// Fields:
-///   - categoryId         (null for uncategorized-by-description rows)
-///   - categoryName       (for uncategorized rows this is the description label)
-///   - weeklySuggested
-///   - usageCount
-///   - txCount
-///   - hasRecurring
-///   - isUncategorizedGroup
-///   - description        (only for uncategorized groups)
+/// Purpose:
+///   - Wraps analytics output into a friendlier view-model so the UI can render
+///     rows without understanding the raw SQL shape.
+///
+/// Inputs:
+///   - Derived metrics such as weeklySuggested, tx counts, recurring flags.
+///
+/// Outputs:
+///   - Structured data the UI can map to list tiles, plus helpers for
+///     understanding if the item is uncategorized.
 /// ---------------------------------------------------------------------------
 
+/// View-model representing a recommended budget entry or uncategorized cluster.
 class BudgetSuggestionModel {
   final int? categoryId;
   final String categoryName;
@@ -41,5 +42,7 @@ class BudgetSuggestionModel {
     this.description,
   });
 
+  /// `true` when the item has no categoryId and is not a grouped description row
+  /// (meaning it's a direct "uncategorized" bucket).
   bool get isUncategorized => categoryId == null && !isUncategorizedGroup;
 }

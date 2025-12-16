@@ -1,6 +1,20 @@
 /// ---------------------------------------------------------------------------
-/// File: dashboard_screen.dart
+/// File: lib/screens/dashboard_screen.dart
 /// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - `/dashboard` route (main entry after LockGate).
+///
+/// Purpose:
+///   - Aggregates and displays the user's weekly budget, alerts, goals, tips,
+///     events, and recent transactions in one scrollable surface.
+///
+/// Inputs:
+///   - Fetches data via `DashboardService`, `TransactionRepository`, and
+///     `ContentSyncService`.
+///
+/// Outputs:
+///   - UI summarising money health plus navigation entry points.
 ///
 /// Budget header logic:
 ///   weeklyBudget = weeklyIncomeThisWeek − sum(weekly budgets)
@@ -34,6 +48,7 @@ const Color bfmBlue = Color(0xFF005494); // TODO: make a themes file
 const Color bfmOrange = Color(0xFFFF6934);
 const Color bfmBeige = Color(0xFFF5F5E1);
 
+/// Home surface summarising budgets, goals, alerts, and recent activity.
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -41,15 +56,18 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
+/// Manages refresh logic, route awareness, and UI helpers for dashboard data.
 class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   late Future<DashData> _future;
 
+  /// Bootstraps the dashboard load as soon as the widget mounts.
   @override
   void initState() {
     super.initState();
     _future = _load();
   }
 
+  /// Subscribes to route observer so we can refresh when returning to the tab.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -59,18 +77,20 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     }
   }
 
+  /// Unsubscribes from the route observer.
   @override
   void dispose() {
     appRouteObserver.unsubscribe(this);
     super.dispose();
   }
 
+  /// Refresh when returning from another screen (e.g., budget edit) so totals update.
   @override
   void didPopNext() {
-    // Refresh when returning from another screen (e.g., budget edit) so totals update.
     _refresh();
   }
 
+  /// Syncs transactions/content when stale and composes the `DashData` bundle.
   Future<DashData> _load() async {
     await TransactionSyncService().syncIfStale();
     try {
@@ -109,12 +129,14 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     );
   }
 
+  /// Triggers a rebuild by swapping the Future.
   Future<void> _refresh() async {
     setState(() {
       _future = _load();
     });
   }
 
+  /// Pushes a named route and refreshes the dashboard after returning.
   Future<void> _openRoute(String route) async {
     await Navigator.pushNamed(context, route);
     if (!mounted) return;
@@ -137,6 +159,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     return "Almost tapped out — press pause on extras if you can ⏸️";
   }
 
+  /// Tiny helper for "Apr 12" style date labels.
   String _formatShortDate(DateTime date) {
     const months = [
       'Jan',
@@ -156,6 +179,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     return '$month ${date.day}';
   }
 
+  /// Renders the scrollable dashboard plus bottom navigation.
   @override
   Widget build(BuildContext context) {
     return Scaffold(

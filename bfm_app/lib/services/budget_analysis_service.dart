@@ -27,10 +27,14 @@ import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/utils/analysis_utils.dart';
 import 'package:bfm_app/models/recurring_transaction_model.dart';
 
+/// Houses all budget-related analytics (recurring detection + suggestions).
 class BudgetAnalysisService {
 
   // -------------------- recurring detection --------------------
 
+  /// Walks through local transactions, groups similar merchants/amounts, and
+  /// creates recurring transaction entries when the cadence looks weekly or
+  /// monthly. Keeps detection local so we don't hit backend APIs.
   static Future<void> identifyRecurringTransactions() async {
     final allTxns = await TransactionRepository.getAll();
     if (allTxns.isEmpty) return;
@@ -112,6 +116,9 @@ class BudgetAnalysisService {
 
   // -------------------- SUGGESTIONS --------------------
 
+  /// Builds weekly budget suggestions for normal categories plus grouped
+  /// uncategorized descriptions. Normalises spend to actual available weeks and
+  /// boosts recurring categories even if they spend below `minWeekly`.
   static Future<List<BudgetSuggestionModel>> getCategoryWeeklyBudgetSuggestions({
     double minWeekly = 5.0,
   }) async {
@@ -225,6 +232,7 @@ class BudgetAnalysisService {
 
   // -------------------- helpers --------------------
 
+  /// Lowercases and strips punctuation so description groupings stay stable.
   static String _normalizeText(String raw) {
     return raw
         .toLowerCase()
@@ -233,18 +241,23 @@ class BudgetAnalysisService {
         .trim();
   }
 
+  /// Picks the category label when present, otherwise falls back to a cleaned
+  /// description token for grouping.
   static String _preferredGroupLabel({String? categoryName, required String description}) {
     final cat = (categoryName ?? '').trim();
     if (cat.isNotEmpty) return cat;
     return _normalizeText(description.isEmpty ? 'unknown' : description);
   }
 
+  /// Returns true when two amounts are within the provided percentage, used to
+  /// cluster recurring expenses with similar values.
   static bool _amountsClose(double a, double b, {double pct = 0.05}) {
     if (a == 0 || b == 0) return false;
     final diff = (a - b).abs();
     return diff <= (a.abs() * pct);
   }
 
+  /// Formats today's date as YYYY-MM-DD.
   static String _today() {
     final n = DateTime.now();
     return "${n.year.toString().padLeft(4, '0')}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}";

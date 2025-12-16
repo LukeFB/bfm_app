@@ -1,23 +1,27 @@
 /// ---------------------------------------------------------------------------
-/// File: transaction_model.dart
+/// File: lib/models/transaction_model.dart
 /// Author: Luke Fraser-Brown
 ///
 /// Purpose:
-///   Represents a single financial transaction
-///   This model bridges the raw bank/aggregation payload 
-///   from Akahu and the local DB 
-///   
-/// Design notes:
-///   - We provide `fromAkahu` to translate Akahu's enriched JSON into our model.
-///     This makes ingestion deterministic and centralised.
-///   - `toDbMap()` returns only the keys currently present in our transactions table
+///   Canonical representation of a user transaction inside the app.
+///   Bridges Akahu payloads, SQLite rows, and UI-friendly helpers.
 ///
+/// Called by:
+///   `transaction_repository.dart`, `budget_analysis_service.dart`,
+///   dashboards, insights, and transaction/goal screens that need typed data.
+///
+/// Inputs / Outputs:
+///   - `fromAkahu` ingests raw API JSON.
+///   - `fromMap` / `toDbMap` translate to SQLite.
+///   - Helper getters provide derived values for UI.
 /// ---------------------------------------------------------------------------
 
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
+/// Immutable transaction domain object.
+/// Gives every consumer the same names, types, and helper methods.
 class TransactionModel {
   final int? id;
 
@@ -62,8 +66,8 @@ class TransactionModel {
     this.meta,
   });
 
-  /// Convert from a DB row (Map) to model.
-  /// Expects snake_case keys produced by sqflite.
+  /// Rehydrates a transaction from SQLite (snake_case keys expected).
+  /// Handles nullable ints and alternate `_id` columns so migrations stay easy.
   factory TransactionModel.fromMap(Map<String, dynamic> map) {
     return TransactionModel(
       id: map['id'] as int?,
@@ -81,7 +85,8 @@ class TransactionModel {
     );
   }
 
-  /// Convert model to a Map suitable for inserting/updating the DB table.
+  /// Serialises the model back into a map for inserts/updates.
+  /// Only writes populated optional fields so legacy columns stay untouched.
   Map<String, dynamic> toDbMap({bool includeId = false}) {
     final m = <String, dynamic>{
       'category_id': categoryId,
@@ -100,11 +105,11 @@ class TransactionModel {
     return m;
   }
 
-  /// Build a TransactionModel from raw Akahu JSON.
-  /// This centralises the translation logic. We:
-  ///  - safely read optional fields,
-  ///  - Assign transactions to local 'income'/'expense', (future prospect would be do dive deeper into types)
-  ///  - extract merchant/category when available.
+  /// Converts raw Akahu JSON into our local format.
+  /// - Normalises dates to YYYY-MM-DD.
+  /// - Derives local type based on amount sign (safer than Akahu type alone).
+  /// - Pulls category + merchant metadata when available.
+  /// - Generates a deterministic hash when Akahu doesn't send one.
   factory TransactionModel.fromAkahu(Map<String, dynamic> a) {
     // Keep the bank-provided date but normalise to 'YYYY-MM-DD' if possible.
     String dt = (a['date'] ?? a['created_at'] ?? '').toString();
@@ -161,6 +166,8 @@ class TransactionModel {
     );
   }
 
+  /// Returns the provided Akahu hash if it exists, otherwise derives one using
+  /// account/date/amount/description so duplicate detection still works.
   static String _resolveHash(Map<String, dynamic> a) {
     final provided = (a['hash'] as String?)?.trim();
     if (provided != null && provided.isNotEmpty) {
@@ -178,16 +185,16 @@ class TransactionModel {
   // Small, useful helpers
   // ---------------------------
 
-  /// Returns true if this transaction should be treated as an expense.
+  /// True when this record should be treated as a debit/expense downstream.
   bool get isExpense {
     final t = type.toLowerCase();
     return t == 'expense' || t == 'debit';
   }
 
-  /// Signed amount: negative for expenses, positive for income.
+  /// Converts `amount` into a signed number that downstream charts expect.
   double get signedAmount => isExpense ? -amount.abs() : amount.abs();
 
-  /// Return a simple human-friendly amount string with currency symbol.
+  /// Formats the amount with a currency prefix for quick UI labels.
   String formattedAmount({int decimals = 2}) =>
       '\$${amount.toStringAsFixed(decimals)}';
 }

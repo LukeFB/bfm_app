@@ -1,11 +1,31 @@
+/// ---------------------------------------------------------------------------
+/// File: lib/repositories/weekly_report_repository.dart
+/// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - Insights service/screens responsible for storing and reading weekly
+///     insight snapshots.
+///
+/// Purpose:
+///   - Persists full weekly reports in SQLite and exposes query helpers.
+///
+/// Inputs:
+///   - `WeeklyInsightsReport` instances or week start dates.
+///
+/// Outputs:
+///   - Stored JSON blobs and typed report entries.
+/// ---------------------------------------------------------------------------
 import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/models/weekly_report.dart';
 import 'package:sqflite/sqflite.dart';
 
+/// Handles persistence of weekly insights report blobs.
 class WeeklyReportRepository {
+  /// Formats dates to ISO days for consistent keying.
   static String _iso(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 
+  /// Inserts or replaces the report for the specified week.
   static Future<void> upsert(WeeklyInsightsReport report) async {
     final db = await AppDatabase.instance.database;
     final payload = report.toEncodedJson();
@@ -21,6 +41,7 @@ class WeeklyReportRepository {
     );
   }
 
+  /// Returns every stored report entry ordered by most recent week first.
   static Future<List<WeeklyReportEntry>> getAll() async {
     final db = await AppDatabase.instance.database;
     final rows = await db.query(
@@ -30,6 +51,7 @@ class WeeklyReportRepository {
     return rows.map((e) => WeeklyReportEntry.fromMap(e)).toList();
   }
 
+  /// Fetches a single report by its week start date.
   static Future<WeeklyInsightsReport?> getByWeek(DateTime weekStart) async {
     final db = await AppDatabase.instance.database;
     final rows = await db.query(

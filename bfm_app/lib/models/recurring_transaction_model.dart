@@ -1,18 +1,20 @@
 /// ---------------------------------------------------------------------------
-/// File: recurring_transaction_model.dart
+/// File: lib/models/recurring_transaction_model.dart
 /// Author: Luke Fraser-Brown
 ///
 /// Purpose:
-///   Model representing a recurring / expected payment. This feeds Alerts for
-///   upcoming bills in UI.
+///   Encapsulates recurring payments/bills detected from transaction history.
 ///
-/// Fields:
-///   id, category_id, amount, frequency ('weekly'|'monthly'), next_due_date,
-///   description, created_at, updated_at
-/// TODO: currently only have access to one month akahu transactions so monthly 
-/// transaction detection out of scope righ now.
+/// Called by:
+///   `recurring_repository.dart` for persistence and `budget_analysis_service.dart`
+///   when generating alerts or weekly reminders.
+///
+/// Inputs / Outputs:
+///   Offers helpers to convert to/from SQLite rows and determine when the next
+///   payment is due.
 /// ---------------------------------------------------------------------------
 
+/// Immutable recurring transaction definition.
 class RecurringTransactionModel {
   final int? id;
   final int categoryId;
@@ -23,6 +25,7 @@ class RecurringTransactionModel {
   final String? createdAt;
   final String? updatedAt;
 
+  /// Captures all metadata needed to surface upcoming payments.
   const RecurringTransactionModel({
     this.id,
     required this.categoryId,
@@ -34,6 +37,7 @@ class RecurringTransactionModel {
     this.updatedAt,
   });
 
+  /// Hydrates from a SQLite map. Casts numeric columns to doubles where needed.
   factory RecurringTransactionModel.fromMap(Map<String, dynamic> m) {
     return RecurringTransactionModel(
       id: m['id'] as int?,
@@ -47,6 +51,7 @@ class RecurringTransactionModel {
     );
   }
 
+  /// Serialises back to a map for inserts/updates. Optionally includes id.
   Map<String, dynamic> toMap({bool includeId = false}) {
     final m = <String, dynamic>{
       'category_id': categoryId,
@@ -61,7 +66,8 @@ class RecurringTransactionModel {
     return m;
   }
 
-  /// Returns days until due from the provided `now` DateTime.
+  /// Calculates how many days remain until the next due date relative to `now`
+  /// (defaults to today). Returns a large sentinel on parse failure.
   int daysUntilDue([DateTime? now]) {
     final n = now ?? DateTime.now();
     try {
@@ -72,6 +78,6 @@ class RecurringTransactionModel {
     }
   }
 
-  /// For convenience, check if due within [days] days.
+  /// Convenience predicate that wraps `daysUntilDue` so alert code stays tidy.
   bool isDueWithin(int days, [DateTime? now]) => daysUntilDue(now) <= days;
 }

@@ -1,3 +1,18 @@
+/// ---------------------------------------------------------------------------
+/// File: lib/screens/goals_screen.dart
+/// Author: Luke Fraser-Brown
+///
+/// Purpose:
+///   Full UI for showing, creating, editing, contributing to, and deleting
+///   savings goals.
+///
+/// Called by:
+///   `app.dart` via the bottom nav Goals tab.
+///
+/// Inputs / Outputs:
+///   Reads goals through `GoalRepository`, writes changes back via the same,
+///   and logs manual contributions as transactions so analytics stay in sync.
+/// ---------------------------------------------------------------------------
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -7,6 +22,8 @@ import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/transaction_model.dart';
 
+/// Stateful wrapper because the screen owns dialog controllers and refreshes
+/// its own Future each time a CRUD action completes.
 class GoalsScreen extends StatefulWidget {
   const GoalsScreen({Key? key}) : super(key: key);
 
@@ -14,15 +31,18 @@ class GoalsScreen extends StatefulWidget {
   State<GoalsScreen> createState() => _GoalsScreenState();
 }
 
+/// Loads goals, handles CRUD dialogs, and keeps the list fresh.
 class _GoalsScreenState extends State<GoalsScreen> {
   late Future<List<GoalModel>> _goalsFuture;
 
+  /// Bootstraps the goals Future when entering the screen.
   @override
   void initState() {
     super.initState();
     _refreshGoals();
   }
 
+  /// Reloads goals from SQLite and rebuilds the FutureBuilder in-place.
   void _refreshGoals() {
     setState(() {
       _goalsFuture = GoalRepository.getAll();
@@ -31,6 +51,10 @@ class _GoalsScreenState extends State<GoalsScreen> {
 
   // --- UI ---
   @override
+  /// Builds the scaffold with:
+  /// - App bar, loading fallback, “no goals” empty state.
+  /// - Lazy list of goals that shows progress, CTA buttons, and popup menu.
+  /// - FAB for adding new goals.
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("My Goals")),
@@ -110,6 +134,8 @@ class _GoalsScreenState extends State<GoalsScreen> {
   }
 
   // --- Add Goal Dialog ---
+  /// Presents a dialog for creating a new goal, validates numeric inputs,
+  /// persists via the repository, and triggers a refresh plus a navigator pop.
   void _showAddGoalDialog() {
     final nameController = TextEditingController();
     final amountController = TextEditingController();
@@ -162,6 +188,8 @@ class _GoalsScreenState extends State<GoalsScreen> {
   }
 
   // --- Edit Goal Dialog ---
+  /// Mirrors the add dialog but pre-fills fields, then updates the record and
+  /// refreshes the list once the user saves changes.
   void _showEditGoalDialog(GoalModel goal) {
     final nameController = TextEditingController(text: goal.name);
     final amountController =
@@ -218,11 +246,15 @@ class _GoalsScreenState extends State<GoalsScreen> {
   }
 
   // --- Delete Goal ---
+  /// Deletes the goal by id and refreshes the visible list afterwards.
   Future<void> _deleteGoal(int id) async {
     await GoalRepository.delete(id);
     _refreshGoals();
   }
 
+  /// Collects a manual contribution amount, applies it to the goal, writes a
+  /// matching manual transaction, and surfaces toast feedback.
+  /// Picks a helpful default amount (weekly contribution or capped catch-up).
   void _showContributeDialog(GoalModel goal) {
     final defaultAmount = goal.weeklyContribution > 0
         ? goal.weeklyContribution

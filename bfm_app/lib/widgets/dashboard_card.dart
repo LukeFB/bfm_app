@@ -1,28 +1,30 @@
 /// ---------------------------------------------------------------------------
-/// File: dashboard_card.dart
+/// File: lib/widgets/dashboard_card.dart
 /// Author: Luke Fraser-Brown
-/// Description:
-///   A reusable card-style container used throughout the dashboard.
-///   Wraps content in consistent padding, rounded corners, and shadow.
+///
+/// Purpose:
+///   Shared visual shell for dashboard sections so spacing/typography stays
+///   consistent.
+///
+/// Called by:
+///   `dashboard_screen.dart` for activity, tips, cards, etc.
+///
+/// Inputs / Outputs:
+///   Takes a title, body widget, and optional trailing action. Emits layout
+///   only; caller owns state.
 /// ---------------------------------------------------------------------------
 
 import 'package:flutter/material.dart';
 
+/// Simple stateless wrapper with consistent padding, rounded corners, and
+/// optional trailing actions.
 class DashboardCard extends StatelessWidget {
   final String title;
   final Widget child;
   final Widget? trailing;
 
-  /// Creates a dashboard card with a section title and content.
-  ///
-  /// Example usage:
-  /// ```
-  /// DashboardCard(
-  ///   title: "Recent Activity",
-  ///   trailing: IconButton(...),
-  ///   child: Column(children: [...]),
-  /// )
-  /// ```
+  /// Creates a dashboard card with a required title/body and optional trailing
+  /// widget (buttons, filters, etc.).
   const DashboardCard({
     super.key,
     required this.title,
@@ -31,6 +33,10 @@ class DashboardCard extends StatelessWidget {
   });
 
   @override
+  /// Renders the card:
+  /// - Title row with trailing slot.
+  /// - Spacing followed by the provided child content.
+  /// - White background with a soft drop shadow.
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,

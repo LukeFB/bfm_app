@@ -1,17 +1,17 @@
 /// ---------------------------------------------------------------------------
-/// File: activity_item.dart
+/// File: lib/widgets/activity_item.dart
 /// Author: Luke Fraser-Brown
-/// Description:
-///   A single row representing one transaction in the "Recent Activity"
-///   section of the dashboard.
 ///
-/// Features:
-///   - Displays description, amount, and weekday label.
-///   - Color-codes amount: red for expenses, green for income.
+/// Called by:
+///   - Dashboard recent activity card.
+///
+/// Purpose:
+///   - One-line widget showing transaction label, amount, and day string.
 /// ---------------------------------------------------------------------------
 
 import 'package:flutter/material.dart';
 
+/// Transaction row used in the dashboard feed.
 class ActivityItem extends StatelessWidget {
   final String label;
   final double amount;
@@ -24,6 +24,7 @@ class ActivityItem extends StatelessWidget {
     required this.date,
   });
 
+  /// Renders the label, amount with +/- color, and weekday label.
   @override
   Widget build(BuildContext context) {
     final isNegative = amount < 0;

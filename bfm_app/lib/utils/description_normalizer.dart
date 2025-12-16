@@ -1,13 +1,31 @@
-// File: description_normalizer.dart
-// Author: Luke Fraser-Brown
-//
-// Centralized description/merchant cleanup used by recurring + habit detectors.
-//
-// The goal here is to reduce noisy reference tails (e.g., "CITYFITNESSG 10100B830076")
-// while preserving meaningful merchant tokens. We try to keep human-readable words
-// and remove one-off hash-like fragments that would break grouping.
+/// ---------------------------------------------------------------------------
+/// File: lib/utils/description_normalizer.dart
+/// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - Recurring transaction detection + budget analysis whenever merchants
+///     need to be grouped by a clean label.
+///
+/// Purpose:
+///   - Strip noisy reference tails from merchant descriptions so heuristics can
+///     find recurring payments without splitting on random tokens.
+///
+/// Inputs:
+///   - Raw merchant name and description strings from the transactions table.
+///
+/// Outputs:
+///   - Lowercased, cleaned strings intended for grouping and comparisons.
+///
+/// Notes:
+///   - Keep the cleaning rules conservative; we only remove high-confidence
+///     noise so users still recognise the merchant.
+/// ---------------------------------------------------------------------------
 
+/// Helper that collapses merchant names/descriptions into stable labels.
 class DescriptionNormalizer {
+  /// Picks the non-empty string between `merchantName` and `description`, trims
+  /// it, then runs `_normalize`. Used when we prefer merchant names but fall
+  /// back to the raw description if the feed left it blank.
   static String normalizeMerchant(String? merchantName, String? description) {
     final src = (merchantName ?? '').trim().isNotEmpty
         ? merchantName!.trim()
@@ -16,10 +34,16 @@ class DescriptionNormalizer {
     return _normalize(src);
   }
 
+  /// Direct convenience method when we only need the description cleaned.
   static String normalizeDescription(String? description) {
     return _normalize((description ?? '').trim());
   }
 
+  /// Applies the layered cleanup:
+  ///   - lowercase + collapse whitespace
+  ///   - drop currency symbols + most punctuation
+  ///   - remove reference/hash tokens that ruin grouping
+  ///   - trim leftover tiny tails
   static String _normalize(String s) {
     // Lowercase, collapse whitespace.
     var out = s.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -45,6 +69,8 @@ class DescriptionNormalizer {
     return out;
   }
 
+  /// Heuristic to decide if a token is a one-off reference (long digits or
+  /// mixed alphanumerics). Short words like "nz" or "co" are kept.
   static bool _looksLikeReferenceToken(String t) {
     if (t.isEmpty) return false;
     final hasLetters = RegExp(r'[a-zA-Z]').hasMatch(t);

@@ -1,3 +1,18 @@
+/// ---------------------------------------------------------------------------
+/// File: lib/models/referral_model.dart
+/// Author: Luke Fraser-Brown
+///
+/// Purpose:
+///   Plain-Dart model for referral rows stored locally in SQLite.
+///
+/// Called by:
+///   `referral_repository.dart` for CRUD work and `content_sync_service.dart`
+///   when mapping backend sync payloads.
+///
+/// Inputs / Outputs:
+///   Translates between raw DB maps and strongly typed values with
+///   nullable fields that match the backend schema.
+/// ---------------------------------------------------------------------------
 class ReferralModel {
   final int? id;
   final int? backendId;
@@ -15,6 +30,8 @@ class ReferralModel {
   final bool isActive;
   final DateTime? updatedAt;
 
+  /// Creates an immutable referral in memory. Optional named params align
+  /// with our SQLite columns so repositories can hydrate objects easily.
   const ReferralModel({
     this.id,
     this.backendId,
@@ -33,6 +50,10 @@ class ReferralModel {
     this.updatedAt,
   });
 
+  /// Builds a referral from a SQLite row or API map.
+  /// - Safely parses nullable DateTimes.
+  /// - Coerces `is_active` ints into booleans.
+  /// Anything unexpected falls back to `null` so UI code can handle absence.
   factory ReferralModel.fromMap(Map<String, dynamic> data) {
     DateTime? parseDate(dynamic value) {
       if (value == null) return null;
@@ -62,6 +83,9 @@ class ReferralModel {
     );
   }
 
+  /// Converts the model back into a map for inserts/updates.
+  /// - Handles optional `id` inclusion for updates vs inserts.
+  /// - Persists booleans and DateTimes in the formats expected by SQLite.
   Map<String, dynamic> toMap({bool includeId = false}) {
     final map = <String, dynamic>{
       'backend_id': backendId,

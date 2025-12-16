@@ -1,10 +1,26 @@
-//FIle: category_repository.dart
-// Author: Luke Fraser-Brown
+/// ---------------------------------------------------------------------------
+/// File: lib/repositories/category_repository.dart
+/// Author: Luke Fraser-Brown
+///
+/// Purpose:
+///   Handles CRUD and lookup helpers for the categories table.
+///
+/// Called by:
+///   `transaction_repository.dart`, `budget_build_screen.dart`,
+///   and `insights_service.dart`.
+///
+/// Inputs / Outputs:
+///   Works directly with raw maps so callers can submit partial data and get
+///   back ids or query results.
+/// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
 import 'package:sqflite/sqflite.dart';
 
+/// Thin repository around the `categories` table.
 class CategoryRepository {
+  /// Inserts a category map. Uses `OR IGNORE` so re-inserting an existing name
+  /// does not reset usage statistics.
   static Future<int> insert(Map<String, dynamic> category) async {
     final db = await AppDatabase.instance.database;
     // Use IGNORE so we don't reset usage_count on name conflicts
@@ -15,17 +31,20 @@ class CategoryRepository {
     );
   }
 
+  /// Returns every category row as-is.
   static Future<List<Map<String, dynamic>>> getAll() async {
     final db = await AppDatabase.instance.database;
     return await db.query('categories');
   }
 
+  /// Removes a category by id. Returns number of rows deleted.
   static Future<int> delete(int id) async {
     final db = await AppDatabase.instance.database;
     return await db.delete('categories', where: 'id = ?', whereArgs: [id]);
   }
 
-  /// Ensure a row exists for [name]. Returns the category id.
+  /// Ensures a row exists for [name] (case-insensitive) and returns its id.
+  /// Also backfills Akahu metadata and icon/color if provided later.
   static Future<int> ensureByName(
     String name, {
     String? akahuCategoryId,
@@ -77,6 +96,8 @@ class CategoryRepository {
     return id;
   }
 
+  /// Returns a map of id -> name for the provided ids. Useful for analytics
+  /// that already have numeric foreign keys.
   static Future<Map<int, String>> getNamesByIds(Iterable<int> ids) async {
     final unique = ids.toSet();
     if (unique.isEmpty) return {};
@@ -99,7 +120,7 @@ class CategoryRepository {
     return map;
   }
 
-  /// Categories ordered by popularity, then name.
+  /// Returns categories sorted by usage_count desc then name asc.
   static Future<List<Map<String, dynamic>>> getAllOrderedByUsage({int? limit}) async {
     final db = await AppDatabase.instance.database;
     return await db.query(
@@ -109,7 +130,8 @@ class CategoryRepository {
     );
   }
 
-  /// Increment usage_count when a transaction is categorised.
+  /// Increments `usage_count` and updates `last_used_at`. Called whenever we
+  /// categorise a transaction or detect recurring usage.
   static Future<void> incrementUsage(int id, {int by = 1}) async {
     final db = await AppDatabase.instance.database;
     await db.rawUpdate('''

@@ -1,3 +1,17 @@
+/// ---------------------------------------------------------------------------
+/// File: lib/models/goal_progress_log.dart
+/// Author: Luke Fraser-Brown
+///
+/// Purpose:
+///   Represents one weekly entry in the goal progress log table.
+///
+/// Called by:
+///   `goal_repository.dart`, `insights_service.dart`, and `app_database.dart`
+///   (for migrations/seeding).
+///
+/// Inputs / Outputs:
+///   Converts SQLite rows to typed objects with convenience booleans.
+/// ---------------------------------------------------------------------------
 class GoalProgressLog {
   final int? id;
   final int goalId;
@@ -7,6 +21,7 @@ class GoalProgressLog {
   final String? note;
   final DateTime createdAt;
 
+  /// Immutable record capturing how a goal performed for one week.
   const GoalProgressLog({
     this.id,
     required this.goalId,
@@ -17,6 +32,7 @@ class GoalProgressLog {
     required this.createdAt,
   });
 
+  /// Hydrates from a SQLite map and converts status to a `credited` boolean.
   factory GoalProgressLog.fromMap(Map<String, dynamic> map) {
     return GoalProgressLog(
       id: map['id'] as int?,

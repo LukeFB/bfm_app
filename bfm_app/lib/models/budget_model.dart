@@ -1,14 +1,20 @@
 /// ---------------------------------------------------------------------------
-/// File: budget_model.dart
+/// File: lib/models/budget_model.dart
 /// Author: Luke Fraser-Brown
 ///
 /// Purpose:
-///   Represents a weekly budget allowance for a single category.
+///   Strongly typed representation of a weekly budget allowance row.
 ///
-/// DB mapping:
-///   id, category_id, weekly_limit, period_start, period_end, created_at, updated_at
+/// Called by:
+///   `budget_repository.dart` for persistence and `budget_build_screen.dart`
+///   for rendering/editing budgets in the UI.
+///
+/// Inputs / Outputs:
+///   Provides constructors that convert to/from SQLite maps, plus helpers to
+///   identify goal-linked budgets.
 /// ---------------------------------------------------------------------------
 
+/// Immutable weekly budget record with optional goal linkage.
 class BudgetModel {
   final int? id;
   final int? categoryId;
@@ -32,6 +38,7 @@ class BudgetModel {
     this.updatedAt,
   });
 
+  /// Rebuilds a model from a SQLite row, casting numbers to doubles as needed.
   factory BudgetModel.fromMap(Map<String, dynamic> m) {
     return BudgetModel(
       id: m['id'] as int?,
@@ -46,6 +53,8 @@ class BudgetModel {
     );
   }
 
+  /// Serialises the model back to a map.
+  /// Includes the id only when `includeId` is true so inserts stay auto-inc.
   Map<String, dynamic> toMap({bool includeId = false}) {
     final m = <String, dynamic>{
       'category_id': categoryId,
@@ -61,5 +70,6 @@ class BudgetModel {
     return m;
   }
 
+  /// Quick flag for budgets tied to a goal (used to style list items).
   bool get isGoalBudget => goalId != null;
 }

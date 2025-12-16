@@ -2,14 +2,16 @@
 /// File: lib/screens/settings_screen.dart
 /// Author: Luke Fraser-Brown
 ///
-/// High-level description:
-///   Settings page extended with an API key section, without removing your
-///   existing "Disconnect Bank" tile and "View Debug Data" button.
+/// Purpose:
+///   Settings surface for managing OpenAI keys, disconnecting the bank link,
+///   and accessing debug tools.
 ///
-/// Design notes:
-///   - Converted to StatefulWidget to manage API key text & status.
-///   - Keeps your existing ListTile/ElevatedButton untouched.
-///   - Adds a small card to Save/Clear the OpenAI API key (stored securely).
+/// Called by:
+///   `app.dart` when the user taps the Settings tab.
+///
+/// Inputs / Outputs:
+///   Reads/writes API keys via `ApiKeyStore`, toggles SharedPreferences flags,
+///   and routes to other screens as needed.
 /// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/services/bank_service.dart';
@@ -19,6 +21,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // Added
 import 'package:bfm_app/services/api_key_store.dart';
 
+/// Settings surface for keys, disconnect, and debug entry points.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
 
@@ -26,16 +29,20 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
+/// Holds controller state for the settings form.
 class _SettingsScreenState extends State<SettingsScreen> {
   final _apiKeyCtrl = TextEditingController();
   String _apiKeyStatus = '';
 
+  /// Boots the API key load as soon as the screen mounts.
   @override
   void initState() {
     super.initState();
     _loadApiKey();
   }
 
+  /// Loads the stored API key, pre-fills the text field, and updates the inline
+  /// status message.
   Future<void> _loadApiKey() async {
     final k = await ApiKeyStore.get();
     setState(() {
@@ -44,6 +51,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  /// Persists the key if it looks valid; otherwise surfaces inline help text.
   Future<void> _saveApiKey() async {
     final k = _apiKeyCtrl.text.trim();
     if (k.isEmpty) {
@@ -54,6 +62,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _apiKeyStatus = 'Key saved ✓');
   }
 
+  /// Removes the stored key and clears the text field/state.
   Future<void> _clearApiKey() async {
     await ApiKeyStore.clear();
     setState(() {
@@ -62,6 +71,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  /// Cleans up controllers.
   @override
   void dispose() {
     _apiKeyCtrl.dispose();
@@ -69,6 +79,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   @override
+  /// Builds the full settings list:
+  /// - API key card
+  /// - Disconnect bank tile
+  /// - Debug button
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),

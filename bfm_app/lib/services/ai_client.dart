@@ -2,12 +2,20 @@
 /// File: lib/services/ai_client.dart
 /// Author: Luke Fraser-Brown
 ///
-/// High-level description:
-///   Chat completion client (no backend).
-///   - Injects BFM SYSTEM PROMPT (policy/tone/safety).
-///   - Injects PRIVATE CONTEXT built by ContextBuilder (summary, budgets, referrals).
-///   - Sends recent user/assistant turns after the context.
+/// Called by:
+///   - `chat_screen.dart` when the user sends a message.
 ///
+/// Purpose:
+///   - Chat completion client (no backend):
+///       • Injects the Moni system prompt (policy/tone/safety).
+///       • Injects PRIVATE CONTEXT built by `ContextBuilder`.
+///       • Sends recent user/assistant turns after the context.
+///
+/// Inputs:
+///   - Recent chat turns (`role`, `content`) and the stored API key.
+///
+/// Outputs:
+///   - Assistant reply text powered by OpenAI.
 /// ---------------------------------------------------------------------------
 
 import 'dart:convert';
@@ -16,6 +24,8 @@ import 'package:http/http.dart' as http;
 import 'package:bfm_app/services/api_key_store.dart';
 import 'package:bfm_app/services/context_builder.dart';
 
+/// Lightweight OpenAI chat client that injects the Moni system prompt and
+/// private context before sending the latest chat history.
 class AiClient {
   static const String _openAiUrl = 'https://api.openai.com/v1/chat/completions';
 
@@ -1918,8 +1928,9 @@ Seasonal adjustments (e.g., university break periods)
 
 ''';
 
-  /// Complete a turn using:
-  ///   SYSTEM to PRIVATE CONTEXT to recentTurns (user/assistant)
+  /// Completes a turn in the chat flow by combining the system prompt, freshly
+  /// built private context, and the latest user/assistant turns before calling
+  /// OpenAI. Throws when no API key is stored or the API returns an error.
   Future<String> complete(List<Map<String, String>> recentTurns) async {
     final apiKey = await ApiKeyStore.get();
     if (apiKey == null || apiKey.isEmpty) {

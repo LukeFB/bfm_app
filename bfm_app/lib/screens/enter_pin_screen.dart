@@ -1,8 +1,26 @@
+/// ---------------------------------------------------------------------------
+/// File: lib/screens/enter_pin_screen.dart
+/// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - LockGate when the user chooses the app PIN fallback.
+///
+/// Purpose:
+///   - Collects the stored app PIN, validates it locally, and returns `true`
+///     when the PIN matches.
+///
+/// Inputs:
+///   - `PinStore` instance injected from the caller.
+///
+/// Outputs:
+///   - `Navigator.pop(true)` on success, otherwise shows inline errors.
+/// ---------------------------------------------------------------------------
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/pin_store.dart';
 
+/// PIN entry modal for unlocking the app without biometrics.
 class EnterPinScreen extends StatefulWidget {
   const EnterPinScreen({super.key, required this.pinStore});
 
@@ -12,6 +30,7 @@ class EnterPinScreen extends StatefulWidget {
   State<EnterPinScreen> createState() => _EnterPinScreenState();
 }
 
+/// Manages the PIN form, validation, and verification state.
 class _EnterPinScreenState extends State<EnterPinScreen> {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _pinController = TextEditingController();
@@ -19,12 +38,14 @@ class _EnterPinScreenState extends State<EnterPinScreen> {
   bool _verifying = false;
   String? _error;
 
+  /// Cleans up the text controller.
   @override
   void dispose() {
     _pinController.dispose();
     super.dispose();
   }
 
+  /// Validates the form, calls the PinStore, and closes the sheet on success.
   Future<void> _verifyPin() async {
     final form = _formKey.currentState;
     if (form == null || !form.validate()) {
@@ -49,6 +70,7 @@ class _EnterPinScreenState extends State<EnterPinScreen> {
     }
   }
 
+  /// Ensures the PIN length is between 4 and 8 digits inclusive.
   String? _validatePin(String? value) {
     final pin = value ?? '';
     if (pin.length < 4 || pin.length > 8) {
@@ -57,6 +79,7 @@ class _EnterPinScreenState extends State<EnterPinScreen> {
     return null;
   }
 
+  /// Renders the PIN input field, inline errors, and submission button.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);

@@ -1,24 +1,48 @@
-// -----------------------------------------------------------------------------
-// Author: Luke Fraser-Brown
-// -----------------------------------------------------------------------------
+/// ---------------------------------------------------------------------------
+/// File: lib/db/app_database.dart
+/// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - `lib/main.dart` during bootstrap plus every repository/service that
+///     needs a `Database` handle.
+///
+/// Purpose:
+///   - Owns the sqflite setup, migrations, and table DDL so the rest of the
+///     app can ask for `AppDatabase.instance.database` and forget about wiring.
+///
+/// Inputs:
+///   - `sqflite` database factory, schema version, and on-disk file path.
+///
+/// Outputs:
+///   - A fully configured SQLite file with tables, indexes, and triggers ready
+///     for repositories to query against.
+///
+/// Notes:
+///   - Bump the `version` constant and extend `_upgradeDB` when making schema
+///     changes. Keep helper methods focused on a single table to cut risk.
+/// ---------------------------------------------------------------------------
 
 import 'dart:async';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
-/// Singleton wrapper for app database
+/// Singleton wrapper that lazy-inits the on-device SQLite database.
 class AppDatabase {
   static final AppDatabase instance = AppDatabase._init();
   static Database? _database;
 
   AppDatabase._init();
 
+  /// Lazy getter that opens the SQLite file once and caches the connection for
+  /// the rest of the process lifetime.
   Future<Database> get database async {
     if (_database != null) return _database!;
     _database = await _initDB("bfm_app.db");
     return _database!;
   }
 
+  /// Resolves the on-disk path, opens the database with the current schema
+  /// version, enables FK constraints, and wires create/upgrade callbacks.
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
@@ -35,7 +59,9 @@ class AppDatabase {
     );
   }
 
-  // Define the onUpgrade to alter tables for new columns
+  /// Handles schema migrations between versions. Ensures tables exist, recreates
+  /// old schemas when columns are missing, backfills indexes, and keeps usage
+  /// counters aligned.
   Future _upgradeDB(Database db, int oldVersion, int newVersion) async {
     Future<bool> hasTable(String table) async {
       final rows = await db.rawQuery(
@@ -160,7 +186,7 @@ class AppDatabase {
     ''');
   }
 
-  /// Database schema
+  /// Creates every table + index from scratch when the DB file is new.
   Future _createDB(Database db, int version) async {
     await _createCategories(db);
     await _createTransactions(db);
@@ -178,6 +204,8 @@ class AppDatabase {
 
   // --- DDL helpers ---
 
+  /// Creates the `categories` table plus indexes for quick lookup by name and
+  /// the usage count ordering used in the budget UI.
   Future<void> _createCategories(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS categories (
@@ -199,6 +227,7 @@ class AppDatabase {
     );
   }
 
+  /// Creates the `transactions` table and core indexes the services rely on.
   Future<void> _createTransactions(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS transactions (
@@ -231,6 +260,7 @@ class AppDatabase {
     );
   }
 
+  /// Base DDL for the `goals` table with saved amount tracking.
   Future<void> _createGoals(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS goals (
@@ -243,6 +273,8 @@ class AppDatabase {
     ''');
   }
 
+  /// Rebuilds the goals table when we need to add core columns. Copies over
+  /// data from the legacy schema and drops the old table afterwards.
   Future<void> _recreateGoalsTable(Database db) async {
     await db.execute('ALTER TABLE goals RENAME TO goals_old;');
     await _createGoals(db);
@@ -259,6 +291,7 @@ class AppDatabase {
     await db.execute('DROP TABLE goals_old;');
   }
 
+  /// Creates the budgets table plus indexes on category + goal linkage.
   Future<void> _createBudgets(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS budgets (
@@ -283,6 +316,8 @@ class AppDatabase {
     );
   }
 
+  /// Recreates the budgets table so we can add optional goal linkage while
+  /// preserving existing rows.
   Future<void> _recreateBudgetsTable(Database db) async {
     await db.execute('ALTER TABLE budgets RENAME TO budgets_old;');
     await _createBudgets(db);
@@ -311,6 +346,7 @@ class AppDatabase {
     await db.execute('DROP TABLE budgets_old;');
   }
 
+  /// DDL for the historical goal progress log kept per week.
   Future<void> _createGoalProgressLog(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS goal_progress_log (
@@ -327,6 +363,7 @@ class AppDatabase {
     ''');
   }
 
+  /// Stores dashboard snapshots per week so we can show historical reports.
   Future<void> _createWeeklyReports(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS weekly_reports (
@@ -339,6 +376,7 @@ class AppDatabase {
     ''');
   }
 
+  /// Tracks recurring transaction heuristics. Called from create + upgrade flows.
   Future<void> _createRecurring(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS recurring_transactions (
@@ -355,6 +393,7 @@ class AppDatabase {
     ''');
   }
 
+  /// Holds short alert banner content that sync pulls down.
   Future<void> _createAlerts(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS alerts (
@@ -365,6 +404,7 @@ class AppDatabase {
     ''');
   }
 
+  /// DDL for events/training calendar entries pulled from the backend CMS.
   Future<void> _createEvents(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS events (
@@ -393,6 +433,7 @@ class AppDatabase {
     );
   }
 
+  /// Rebuilds the events table when we need to add columns like backend IDs.
   Future<void> _recreateEventsTable(Database db) async {
     await db.execute('ALTER TABLE events RENAME TO events_old;');
     await _createEvents(db);
@@ -423,6 +464,7 @@ class AppDatabase {
     await db.execute('DROP TABLE events_old;');
   }
 
+  /// Stores referral partners along with metadata and sync state.
   Future<void> _createReferrals(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS referrals (
@@ -452,6 +494,7 @@ class AppDatabase {
     );
   }
 
+  /// Holds educational tips and CTA metadata pulled from the backend.
   Future<void> _createTips(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS tips (
@@ -479,6 +522,8 @@ class AppDatabase {
     );
   }
 
+  /// Ensures all category usage triggers exist so counts stay accurate even if
+  /// migrations run on an existing database.
   Future<void> _ensureIndexesAndTriggers(Database db) async {
     // usage_count triggers
     await db.execute('''
@@ -522,6 +567,7 @@ class AppDatabase {
     ''');
   }
 
+  /// Closes the cached database connection so the next call re-opens it.
   Future close() async {
     final db = _database;
     if (db == null) return;

@@ -1,6 +1,20 @@
-// Author: Luke Fraser-Brown
-/// for debugging
-
+/// ---------------------------------------------------------------------------
+/// File: lib/screens/debug_screen.dart
+/// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - `/debug` route surfaced from settings.
+///
+/// Purpose:
+///   - Developer-only dump of prefs, DB metadata, budgets, categories, and
+///     transaction stats to help diagnose local issues.
+///
+/// Inputs:
+///   - Reads from `SharedPreferences`, SQLite, and repositories.
+///
+/// Outputs:
+///   - Plain-text diagnostic report rendered in a scrollable view.
+/// ---------------------------------------------------------------------------
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -11,6 +25,7 @@ import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 
+/// Developer panel that prints diagnostics to the screen.
 class DebugScreen extends StatefulWidget {
   const DebugScreen({super.key});
 
@@ -18,15 +33,18 @@ class DebugScreen extends StatefulWidget {
   State<DebugScreen> createState() => _DebugScreenState();
 }
 
+/// Loads diagnostic info and renders it as monospaced text.
 class _DebugScreenState extends State<DebugScreen> {
   String _text = 'Loading…';
 
+  /// Boots the diagnostics fetch.
   @override
   void initState() {
     super.initState();
     _load();
   }
 
+  /// Formats byte counts into KB/MB strings.
   String _fmtBytes(int bytes) {
     const units = ['B', 'KB', 'MB', 'GB'];
     double size = bytes.toDouble();
@@ -38,6 +56,7 @@ class _DebugScreenState extends State<DebugScreen> {
     return '${size.toStringAsFixed(2)} ${units[unit]}';
   }
 
+  /// Builds the entire debug report and surfaces warnings.
   Future<void> _load() async {
     final buf = StringBuffer();
 
@@ -317,6 +336,7 @@ class _DebugScreenState extends State<DebugScreen> {
     setState(() => _text = buf.toString());
   }
 
+  /// Renders the scrollable text blob plus refresh action.
   @override
   Widget build(BuildContext context) {
     return Scaffold(

@@ -1,3 +1,20 @@
+/// ---------------------------------------------------------------------------
+/// File: lib/screens/insights_screen.dart
+/// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - `/insights` route from the bottom navigation.
+///
+/// Purpose:
+///   - Shows the weekly insights report, top categories, goal outcomes, and
+///     historical reports.
+///
+/// Inputs:
+///   - `InsightsService` data (current report + history).
+///
+/// Outputs:
+///   - Rich cards and charts summarising weekly performance.
+/// ---------------------------------------------------------------------------
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -6,6 +23,7 @@ import 'package:bfm_app/models/transaction_model.dart';
 import 'package:bfm_app/models/weekly_report.dart';
 import 'package:bfm_app/services/insights_service.dart';
 
+/// Screen for viewing weekly insights snapshots.
 class InsightsScreen extends StatefulWidget {
   const InsightsScreen({super.key});
 
@@ -13,27 +31,32 @@ class InsightsScreen extends StatefulWidget {
   State<InsightsScreen> createState() => _InsightsScreenState();
 }
 
+/// Internal container bundling the latest report plus saved history.
 class _InsightsPayload {
   final WeeklyInsightsReport report;
   final List<WeeklyReportEntry> history;
   const _InsightsPayload({required this.report, required this.history});
 }
 
+/// Handles fetching reports, pull-to-refresh, and history modals.
 class _InsightsScreenState extends State<InsightsScreen> {
   late Future<_InsightsPayload> _future;
 
+  /// Seeds the Future when the screen mounts.
   @override
   void initState() {
     super.initState();
     _future = _load();
   }
 
+  /// Generates the latest report and pulls stored history entries.
   Future<_InsightsPayload> _load() async {
     final report = await InsightsService.generateWeeklyReport();
     final history = await InsightsService.getSavedReports();
     return _InsightsPayload(report: report, history: history);
   }
 
+  /// Rebuilds the Future and waits for it so pull-to-refresh can complete.
   Future<void> _refresh() async {
     setState(() {
       _future = _load();
@@ -41,6 +64,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
     await _future;
   }
 
+  /// Opens a bottom sheet that shows the JSON-backed report for a given week.
   Future<void> _openHistoryDetail(WeeklyReportEntry entry) async {
     await showModalBottomSheet(
       context: context,
@@ -50,6 +74,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
     );
   }
 
+  /// Renders the insights cards and history list.
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -105,6 +130,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
   }
 }
 
+/// Card summarising goal outcomes and linking to the goals screen.
 class _GoalReportCard extends StatelessWidget {
   final WeeklyInsightsReport report;
   final Future<void> Function() onOpenGoals;
@@ -165,6 +191,7 @@ class _GoalReportCard extends StatelessWidget {
   }
 }
 
+/// Visualises income vs budget/spend using a custom donut chart.
 class _BudgetRingCard extends StatelessWidget {
   final WeeklyInsightsReport report;
   const _BudgetRingCard({required this.report});
@@ -283,6 +310,7 @@ class _BudgetRingCard extends StatelessWidget {
     );
   }
 
+  /// Generates the donut segments from budget categories, other spend, leftover.
   List<_RingSegment> _buildSegments(WeeklyInsightsReport report) {
     final palette = _ringPalette;
     final segments = <_RingSegment>[];
@@ -339,6 +367,7 @@ class _BudgetRingCard extends StatelessWidget {
   }
 }
 
+/// Simple label/value row used in the stats section.
 class _StatRow extends StatelessWidget {
   final String label;
   final String value;
@@ -384,6 +413,7 @@ const List<Color> _ringPalette = [
   Colors.amber,
 ];
 
+/// Represents one segment in the donut chart.
 class _RingSegment {
   final double value;
   final String label;
@@ -396,6 +426,7 @@ class _RingSegment {
   });
 }
 
+/// Paints the income/budget donut ring.
 class _BudgetRingPainter extends CustomPainter {
   final List<_RingSegment> segments;
   final double strokeWidth;
@@ -441,6 +472,7 @@ class _BudgetRingPainter extends CustomPainter {
   }
 }
 
+/// Shows the top spending categories as progress bars.
 class _TopCategoryChart extends StatelessWidget {
   final WeeklyInsightsReport report;
   const _TopCategoryChart({required this.report});
@@ -495,6 +527,7 @@ class _TopCategoryChart extends StatelessWidget {
   }
 }
 
+/// Renders a single category row inside the history detail sheet.
 class _CategoryRow extends StatelessWidget {
   final CategoryWeeklySummary summary;
   const _CategoryRow({required this.summary});
@@ -544,6 +577,7 @@ class _CategoryRow extends StatelessWidget {
   }
 }
 
+/// List card showing previously saved weekly reports.
 class _HistoryList extends StatelessWidget {
   final List<WeeklyReportEntry> history;
   final Future<void> Function(WeeklyReportEntry) onOpen;
@@ -579,6 +613,7 @@ class _HistoryList extends StatelessWidget {
   }
 }
 
+/// Bottom sheet that drills into a historical weekly report.
 class _WeeklyReportDetailSheet extends StatelessWidget {
   final WeeklyReportEntry entry;
   const _WeeklyReportDetailSheet({required this.entry});

@@ -3,19 +3,15 @@
 /// Author: Luke Fraser-Brown
 ///
 /// Purpose:
-///   Centralise the “disconnect bank” flow so all transaction-related data is
-///   removed in one place and the UI can reliably return to Bank Connect.
+///   One-stop shop for nuking bank-connected data so the user can reconnect
+///   cleanly without dangling transactions or tokens.
 ///
-/// Behaviour:
-///   - Deletes all rows from: transactions, recurring_transactions, budgets.
-///   - Resets categories.usage_count to 0 and clears last_used_at (keeps
-///     the user’s category list, colours, icons, etc.).
-///   - Clears connection flags in SharedPreferences (bank_connected, last_sync_at,
-///     and any stored Akahu tokens if present).
+/// Called by:
+///   `settings_screen.dart` when the user taps “Disconnect bank”.
 ///
-/// Notes:
-///   - Uses repositories for table clears to preserve existing behaviour.
-///   - Leaves categories intact
+/// Inputs / Outputs:
+///   No inputs. Clears SQLite tables, SharedPreferences flags, and secure
+///   Akahu tokens. Returns a Future so UI can await completion.
 /// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
@@ -25,7 +21,17 @@ import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/services/secure_credential_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Coordinates cleanup when the user disconnects their bank.
 class BankService {
+  /// Disconnects the current bank session by:
+  /// - Clearing transactions, recurring rows, and budgets via repositories
+  ///   (keeps repository-level hooks consistent).
+  /// - Resetting category usage stats directly in SQLite so future analytics
+  ///   start from zero.
+  /// - Removing any local “connected” flags and Akahu tokens so the app lands
+  ///   back on the Bank Connect screen the next time.
+  /// Clears local transactions, budgets, recurring rows, category usage, prefs,
+  /// and secure tokens so the next launch behaves like a fresh install.
   static Future<void> disconnect() async {
     // ------ Clear transaction-related tables via repositories ------
     await TransactionRepository.clearAll();

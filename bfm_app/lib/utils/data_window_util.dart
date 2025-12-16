@@ -2,28 +2,35 @@
 /// File: lib/utils/data_window_util.dart
 /// Author: Luke Fraser-Brown
 ///
-/// Purpose:
-///   Utility to compute the effective data window from the transactions table
-///   (first/last transaction date), and derive the number of weeks for
-///   normalising totals to $/week.
+/// Called by:
+///   - Services like `budget_analysis_service.dart` when normalising spend.
 ///
-/// Returns:
-///   - start: 'YYYY-MM-DD'
-///   - end:   'YYYY-MM-DD'
-///   - days:  inclusive day span (>= 1)
-///   - weeks: max(1.0, days / 7.0)
+/// Purpose:
+///   - Reads the transaction table once and derives a safe date window so we
+///     can express totals per-week without guessing.
+///
+/// Inputs:
+///   - `AppDatabase` transactions table. No external parameters required.
+///
+/// Outputs:
+///   - Tuple containing start/end ISO strings plus derived day/week spans.
 ///
 /// Notes:
-///   - Using the actual window avoids over/under-estimating weekly spend when
-///     you only have ~1 month of data.
+///   - Using the actual window avoids overstating weekly spend when the dataset
+///     is short, and keeps the logic reusable across screens.
 /// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
 
+/// Wraps raw database lookups for transaction windows.
 class DataWindowUtil {
+  /// Formats a DateTime into `YYYY-MM-DD` so analytics stay ISO-friendly.
   static String _fmt(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 
+  /// Queries the DB for the first/last transaction dates, falls back to "now"
+  /// when empty, clamps the day span, and returns pre-formatted values plus the
+  /// derived week count. Callers use this to scale totals to per-week numbers.
   static Future<({String start, String end, int days, double weeks})>
       getTransactionDateWindow() async {
     final db = await AppDatabase.instance.database;

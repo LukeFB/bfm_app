@@ -1,3 +1,20 @@
+/// ---------------------------------------------------------------------------
+/// File: lib/services/insights_service.dart
+/// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - Insights screens and cron-like jobs that need weekly summaries stored.
+///
+/// Purpose:
+///   - Generates weekly insight reports, stores them, and offers helpers to
+///     fetch historical data or inspect a specific week.
+///
+/// Inputs:
+///   - Reads budgets, transactions, goals, and progress logs from repositories.
+///
+/// Outputs:
+///   - `WeeklyInsightsReport` objects and supporting aggregates.
+/// ---------------------------------------------------------------------------
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/goal_progress_log.dart';
 import 'package:bfm_app/models/transaction_model.dart';
@@ -8,7 +25,9 @@ import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/weekly_report_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 
+/// Builds and retrieves weekly insight reports.
 class InsightsService {
+  /// Creates a report for the current week, persists it, and returns the model.
   static Future<WeeklyInsightsReport> generateWeeklyReport() async {
     final period = _currentWeekPeriod();
     final lastWeek = _previousWeekPeriod(period.start);
@@ -101,6 +120,7 @@ class InsightsService {
     return report;
   }
 
+  /// Returns the Monday→today window for the current week.
   static _WeekPeriod _currentWeekPeriod() {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -108,16 +128,19 @@ class InsightsService {
     return _WeekPeriod(start: start, end: today);
   }
 
+  /// Returns the full week window preceding `currentWeekStart`.
   static _WeekPeriod _previousWeekPeriod(DateTime currentWeekStart) {
     final end = currentWeekStart.subtract(const Duration(days: 1));
     final start = end.subtract(const Duration(days: 6));
     return _WeekPeriod(start: start, end: end);
   }
 
+  /// Reads every stored report entry for history views.
   static Future<List<WeeklyReportEntry>> getSavedReports() async {
     return WeeklyReportRepository.getAll();
   }
 
+  /// Returns all transactions in the week following `weekStart`.
   static Future<List<TransactionModel>> getTransactionsForWeek(
       DateTime weekStart) async {
     final start = DateTime(weekStart.year, weekStart.month, weekStart.day);
@@ -125,6 +148,8 @@ class InsightsService {
     return TransactionRepository.getBetween(start, end);
   }
 
+  /// Determines per-goal outcomes for the week, optionally crediting
+  /// contributions when there is leftover cash.
   static Future<List<GoalWeeklyOutcome>> _evaluateGoalProgress({
     required DateTime weekStart,
     required bool hasLeftover,
@@ -176,6 +201,7 @@ class InsightsService {
     return outcomes;
   }
 
+  /// Converts the spend map into sorted summaries for the report.
   static List<CategoryWeeklySummary> _mapTopCategories(
     Map<int?, double> spendMap,
     Map<int, String> categoryNames,
@@ -195,6 +221,7 @@ class InsightsService {
     return list;
   }
 
+  /// Builds a friendly message explaining the credit outcome for a goal.
   static String _goalMessage(
       GoalModel goal, GoalProgressLog? log, bool hasLeftover) {
     if (goal.isComplete) {
@@ -214,6 +241,7 @@ class InsightsService {
 
 }
 
+/// Convenience date tuple capturing a week’s start/end bounds.
 class _WeekPeriod {
   final DateTime start;
   final DateTime end;

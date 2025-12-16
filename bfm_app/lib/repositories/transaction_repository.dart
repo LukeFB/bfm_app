@@ -1,12 +1,33 @@
-// Author: Luke Fraser-Brown
+/// ---------------------------------------------------------------------------
+/// File: lib/repositories/transaction_repository.dart
+/// Author: Luke Fraser-Brown
+///
+/// Called by:
+///   - Sync flows, analytics services, dashboards, and transaction screens.
+///
+/// Purpose:
+///   - Centralises all reads/writes for the `transactions` table plus helper
+///     aggregations for weekly spend, category totals, etc.
+///
+/// Inputs:
+///   - Raw Akahu payloads, manual `TransactionModel` instances, date ranges.
+///
+/// Outputs:
+///   - Persisted rows, typed transaction lists, and aggregate maps/doubles.
+///
+/// Notes:
+///   - Keep heavy transforms here so UI/services stay light.
+/// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/models/transaction_model.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:sqflite/sqflite.dart';
 
+/// Data access helpers for the `transactions` table plus related analytics.
 class TransactionRepository {
 
+  /// Returns the latest `limit` transactions ordered by date descending.
   static Future<List<TransactionModel>> getRecent(int limit) async {
     final db = await AppDatabase.instance.database;
     final result = await db.query(
@@ -17,6 +38,7 @@ class TransactionRepository {
     return result.map((e) => TransactionModel.fromMap(e)).toList();
   }
 
+  /// Returns every transaction, optionally filtered by category id.
   static Future<List<TransactionModel>> getAll({int? categoryId}) async {
     final db = await AppDatabase.instance.database;
     List<Map<String, dynamic>> result;
@@ -35,6 +57,7 @@ class TransactionRepository {
     return result.map((e) => TransactionModel.fromMap(e)).toList();
   }
 
+  /// Deletes a transaction by primary key.
   static Future<int> delete(int id) async {
     final db = await AppDatabase.instance.database;
     return await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
@@ -86,6 +109,8 @@ class TransactionRepository {
     return value.abs();
   }
 
+  /// Sums expenses grouped by category between the provided dates. Returns a
+  /// map keyed by category id (nullable for uncategorized).
   static Future<Map<int?, double>> sumExpensesByCategoryBetween(
       DateTime start, DateTime end) async {
     final db = await AppDatabase.instance.database;
@@ -105,6 +130,7 @@ class TransactionRepository {
     return map;
   }
 
+  /// Totals income transactions between the provided dates.
   static Future<double> sumIncomeBetween(
       DateTime start, DateTime end) async {
     final db = await AppDatabase.instance.database;
@@ -118,6 +144,7 @@ class TransactionRepository {
     return (value is num) ? value.toDouble() : 0.0;
   }
 
+  /// Returns transactions between the provided dates sorted by newest first.
   static Future<List<TransactionModel>> getBetween(
       DateTime start, DateTime end) async {
     final db = await AppDatabase.instance.database;
@@ -137,6 +164,8 @@ class TransactionRepository {
     await upsertFromAkahu(items);
   }
 
+  /// Writes Akahu payloads to SQLite, ensuring categories exist and batching
+  /// inserts for speed. Replaces matching rows by `akahu_hash`.
   static Future<void> upsertFromAkahu(List<Map<String, dynamic>> items) async {
     if (items.isEmpty) return;
     final db = await AppDatabase.instance.database;
@@ -158,6 +187,7 @@ class TransactionRepository {
     await batch.commit(noResult: true);
   }
 
+  /// Persists a manually created transaction (usually from admin/debug tools).
   static Future<int> insertManual(TransactionModel model) async {
     final db = await AppDatabase.instance.database;
     return await db.insert(
@@ -167,6 +197,8 @@ class TransactionRepository {
     );
   }
 
+  /// Ensures there is a category row for the given transaction and returns its
+  /// id. Falls back to "Uncategorized" when no name exists.
   static Future<int> _resolveCategoryId(
     Map<String, dynamic> raw,
     TransactionModel txn,
@@ -189,6 +221,7 @@ class TransactionRepository {
     );
   }
 
+  /// Removes every transaction row. Intended for debug resets.
   static Future<void> clearAll() async {
     final db = await AppDatabase.instance.database;
     await db.delete("transactions");
@@ -224,7 +257,8 @@ class TransactionRepository {
     return res.map((e) => (e['description'] as String?) ?? '').toList();
   }
 
-  // Local normaliser (kept in sync with analysis)
+  /// Local normaliser (kept in sync with analysis) that strips symbols and
+  /// lowercases description text for grouping.
   static String _normalizeText(String raw) {
     return raw
         .toLowerCase()
@@ -285,6 +319,7 @@ class TransactionRepository {
     await batch.commit(noResult: true);
   }
 
+  /// Formats a DateTime as YYYY-MM-DD so SQL comparisons stay consistent.
   static String _iso(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 }

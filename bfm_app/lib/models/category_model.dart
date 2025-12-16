@@ -1,13 +1,22 @@
 /// ---------------------------------------------------------------------------
-/// File: category_model.dart
+/// File: lib/models/category_model.dart
 /// Author: Luke Fraser-Brown
 ///
+/// Called by:
+///   - Category repository, budget builders, and analytics services whenever
+///     a category row needs to be read or written.
+///
 /// Purpose:
-///   Domain model for expense/income categories (Food, Rent, Bills, etc).
-///   Maps to categories table and may be populated from Akahu enrichment
-///   categories when available.
+///   - Strongly typed view of a category row including Akahu mapping metadata.
+///
+/// Inputs:
+///   - SQLite maps or network payloads containing Akahu IDs.
+///
+/// Outputs:
+///   - Dart objects plus serialised maps for persistence.
 /// ---------------------------------------------------------------------------
 
+/// Represents a budgeting category and optional usage stats.
 class CategoryModel {
   final int? id;
   final String name;
@@ -32,6 +41,7 @@ class CategoryModel {
     this.lastUsedAt,
   });
 
+  /// Recreates a category from a database row. Handles optional usage metadata.
   factory CategoryModel.fromMap(Map<String, dynamic> m) {
     return CategoryModel(
       id: m['id'] as int?,
@@ -45,6 +55,8 @@ class CategoryModel {
     );
   }
 
+  /// Serialises this category for inserts/updates. Usage timestamps are
+  /// included only when already known.
   Map<String, dynamic> toMap({bool includeId = false}) {
     final m = <String, dynamic>{
       'name': name,

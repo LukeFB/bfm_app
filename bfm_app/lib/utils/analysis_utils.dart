@@ -1,17 +1,34 @@
 /// ---------------------------------------------------------------------------
-/// File: analysis_utils.dart
+/// File: lib/utils/analysis_utils.dart
 /// Author: Luke Fraser-Brown
 ///
+/// Called by:
+///   - `budget_analysis_service.dart`, dashboards, and any widget needing
+///     canonical transaction ranges for normalising weekly spend.
+///
 /// Purpose:
-///   Small helpers used across analytics screens:
-///     - Global date range for transactions (min/max).
-///     - Safe week span calculation.
+///   - Wraps bits of SQL needed by analytics flows so the logic stays testable
+///     and we keep week calculations consistent across services.
+///
+/// Inputs:
+///   - Relies on `AppDatabase` transactions table plus provided ISO date strings.
+///
+/// Outputs:
+///   - Map objects describing min/max transaction dates and derived week counts.
+///
+/// Notes:
+///   - Keep these helpers pure/static so they can be reused anywhere without
+///     pulling extra dependencies into widgets.
 /// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
 
+/// Shared analytics helpers for looking up transaction spans and normalised
+/// week counts.
 class AnalysisUtils {
-  /// Returns { 'first': 'YYYY-MM-DD'?, 'last': 'YYYY-MM-DD'? }
+  /// Runs a tiny aggregate query to fetch the earliest and latest transaction
+  /// dates so callers can normalise spending windows. Returns both values as a
+  /// simple map with nullable ISO strings.
   static Future<Map<String, String?>> getGlobalDateRange() async {
     final db = await AppDatabase.instance.database;
     final res = await db.rawQuery('''
@@ -24,7 +41,9 @@ class AnalysisUtils {
     };
   }
 
-  /// Weeks spanned by [first..last], clamped to [1, 52].
+  /// Takes the raw `first`/`last` ISO strings and turns them into an observed
+  /// week span. Handles empty strings, parse failures, and clamps the value to
+  /// sane bounds so downstream maths never blows up.
   static double observedWeeks(String? first, String? last) {
     if (first == null || last == null || first.isEmpty || last.isEmpty) return 1.0;
     try {
