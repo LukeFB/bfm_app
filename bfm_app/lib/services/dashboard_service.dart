@@ -22,10 +22,13 @@ import 'dart:math' as math;
 import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/models/event_model.dart';
 import 'package:bfm_app/models/goal_model.dart';
+import 'package:bfm_app/models/recurring_transaction_model.dart';
 import 'package:bfm_app/models/tip_model.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/event_repository.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
+import 'package:bfm_app/repositories/recurring_repository.dart';
+import 'package:bfm_app/repositories/alert_repository.dart';
 import 'package:bfm_app/repositories/tip_repository.dart';
 
 /// Aggregates all database work needed to populate the dashboard.
@@ -60,37 +63,54 @@ class DashboardService {
     return goals.isEmpty ? null : goals.first;
   }
 
-  /// Upcoming recurring alerts (unchanged).
+  /// Upcoming recurring alerts configured by the user.
   static Future<List<String>> getAlerts() async {
-    final db = await AppDatabase.instance.database;
-    final today = DateTime.now();
-    final soon = today.add(const Duration(days: 7));
-    final rows = await db.query(
-      'recurring_transactions',
-      columns: ['description', 'next_due_date', 'amount'],
-    );
+    final activeAlerts = await AlertRepository.getActiveRecurring();
+    if (activeAlerts.isEmpty) return [];
 
-    final List<String> alerts = [];
-    for (final r in rows) {
-      final desc = (r['description'] ?? 'Bill') as String;
-      final amt = (r['amount'] is num) ? (r['amount'] as num).toDouble() : 0.0;
-      final dueStr = r['next_due_date'] as String?;
-      if (dueStr == null || dueStr.trim().isEmpty) continue;
+    final recurringIds = activeAlerts
+        .map((a) => a.recurringTransactionId)
+        .whereType<int>()
+        .toSet();
+    if (recurringIds.isEmpty) return [];
 
-      DateTime? due;
+    final recurringList = await RecurringRepository.getByIds(recurringIds);
+    final recurringMap = <int, RecurringTransactionModel>{};
+    for (final r in recurringList) {
+      final id = r.id;
+      if (id != null) recurringMap[id] = r;
+    }
+
+    final now = DateTime.now();
+    final alerts = <String>[];
+    for (final alert in activeAlerts) {
+      final rid = alert.recurringTransactionId;
+      if (rid == null) continue;
+      final recurring = recurringMap[rid];
+      if (recurring == null) continue;
+
+      DateTime due;
       try {
-        due = DateTime.parse(dueStr);
+        due = DateTime.parse(recurring.nextDueDate);
       } catch (_) {
         continue;
       }
 
-      final days = due.difference(today).inDays;
-      if (days >= 0 && due.isBefore(soon)) {
-        alerts.add(
-          "⚠️ $desc (\$${amt.toStringAsFixed(0)}) due in $days day${days == 1 ? '' : 's'}",
-        );
-      }
+      final days = due.difference(now).inDays;
+      if (days < 0 || days > alert.leadTimeDays) continue;
+
+      final desc = alert.title.trim().isEmpty
+          ? (recurring.description ?? 'Recurring expense')
+          : alert.title.trim();
+      final prefix = alert.icon ?? '🔔';
+      final defaultMessage =
+          'Due in $days day${days == 1 ? '' : 's'} (\$${recurring.amount.toStringAsFixed(0)})';
+      final body = alert.message?.isNotEmpty == true
+          ? alert.message!.replaceAll('{days}', days.toString())
+          : defaultMessage;
+      alerts.add('$prefix $desc · $body');
     }
+
     return alerts;
   }
 
@@ -102,29 +122,12 @@ class DashboardService {
   static String _fmtDay(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 
-  /// Income for last week (Mon→Sun).
-  /// Example: if today is Wed, 16 Oct, last week = Mon 7 Oct → Sun 13 Oct.
+  /// Weekly income estimated from recurring deposits when available.
+  /// Falls back to actual last-week income if no recurring income detected.
   static Future<double> weeklyIncomeLastWeek() async {
-    final db = await AppDatabase.instance.database;
-
-    final now = DateTime.now();
-    final mondayThisWeek = now.subtract(Duration(days: now.weekday - 1));
-    final start = _fmtDay(mondayThisWeek.subtract(const Duration(days: 7)));
-    final end = _fmtDay(
-      mondayThisWeek.subtract(const Duration(days: 1)),
-    ); // Sunday
-
-    final res = await db.rawQuery(
-      '''
-      SELECT IFNULL(SUM(amount),0) AS v
-      FROM transactions
-      WHERE type='income' AND date BETWEEN ? AND ?;
-    ''',
-      [start, end],
-    );
-
-    // Income should be positive already; keep as-is.
-    return (res.first['v'] as num?)?.toDouble() ?? 0.0;
+    final recurringWeekly = await _recurringIncomeWeeklyAmount();
+    if (recurringWeekly > 0) return recurringWeekly;
+    return _actualIncomeLastWeek();
   }
 
   /// Income for this week (Mon to today).
@@ -146,6 +149,43 @@ class DashboardService {
     );
 
     return (res.first['v'] as num?)?.toDouble() ?? 0.0;
+  }
+
+  static Future<double> _actualIncomeLastWeek() async {
+    final db = await AppDatabase.instance.database;
+    final now = DateTime.now();
+    final mondayThisWeek = now.subtract(Duration(days: now.weekday - 1));
+    final start = _fmtDay(mondayThisWeek.subtract(const Duration(days: 7)));
+    final end = _fmtDay(mondayThisWeek.subtract(const Duration(days: 1)));
+
+    final res = await db.rawQuery(
+      '''
+      SELECT IFNULL(SUM(amount),0) AS v
+      FROM transactions
+      WHERE type='income' AND date BETWEEN ? AND ?;
+    ''',
+      [start, end],
+    );
+    return (res.first['v'] as num?)?.toDouble() ?? 0.0;
+  }
+
+  static Future<double> _recurringIncomeWeeklyAmount() async {
+    final recurring = await RecurringRepository.getAll();
+    if (recurring.isEmpty) return 0.0;
+
+    double total = 0.0;
+    for (final r in recurring) {
+      if (r.transactionType.toLowerCase() != 'income') continue;
+      total += _weeklyAmountFromRecurring(r);
+    }
+    return total;
+  }
+
+  static double _weeklyAmountFromRecurring(RecurringTransactionModel r) {
+    final freq = r.frequency.toLowerCase();
+    if (freq == 'weekly') return r.amount;
+    if (freq == 'monthly') return r.amount / 4.33;
+    return 0.0;
   }
 
   /// Expenses for this week that should reduce "Left to spend".

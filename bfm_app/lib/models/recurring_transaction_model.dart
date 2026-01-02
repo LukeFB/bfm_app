@@ -24,6 +24,7 @@ class RecurringTransactionModel {
   final String? description;
   final String? createdAt;
   final String? updatedAt;
+  final String transactionType; // 'expense' or 'income'
 
   /// Captures all metadata needed to surface upcoming payments.
   const RecurringTransactionModel({
@@ -35,6 +36,7 @@ class RecurringTransactionModel {
     this.description,
     this.createdAt,
     this.updatedAt,
+    this.transactionType = 'expense',
   });
 
   /// Hydrates from a SQLite map. Casts numeric columns to doubles where needed.
@@ -48,6 +50,7 @@ class RecurringTransactionModel {
       description: m['description'] as String?,
       createdAt: m['created_at'] as String?,
       updatedAt: m['updated_at'] as String?,
+      transactionType: (m['transaction_type'] as String?) ?? 'expense',
     );
   }
 
@@ -59,6 +62,7 @@ class RecurringTransactionModel {
       'frequency': frequency,
       'next_due_date': nextDueDate,
       'description': description,
+      'transaction_type': transactionType,
       'created_at': createdAt,
       'updated_at': updatedAt,
     };

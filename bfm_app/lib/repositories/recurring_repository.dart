@@ -27,12 +27,14 @@ class RecurringRepository {
     final db = await AppDatabase.instance.database;
     final descKey = _normalizedDescription(bill.description);
     final freqKey = bill.frequency.trim().toLowerCase();
+    final typeKey = bill.transactionType.trim().toLowerCase();
     final payload = {
       'category_id': bill.categoryId,
       'amount': bill.amount,
       'frequency': freqKey,
       'next_due_date': bill.nextDueDate,
       'description': bill.description?.trim(),
+      'transaction_type': typeKey,
     };
     final nowIso = DateTime.now().toIso8601String();
 
@@ -40,8 +42,8 @@ class RecurringRepository {
       final existing = await db.query(
         'recurring_transactions',
         columns: ['id'],
-        where: 'LOWER(description) = ? AND LOWER(frequency) = ?',
-        whereArgs: [descKey, freqKey],
+        where: 'LOWER(description) = ? AND LOWER(frequency) = ? AND LOWER(transaction_type) = ?',
+        whereArgs: [descKey, freqKey, typeKey],
         limit: 1,
       );
       if (existing.isNotEmpty) {
@@ -57,8 +59,9 @@ class RecurringRepository {
         );
         await db.delete(
           'recurring_transactions',
-          where: 'LOWER(description) = ? AND LOWER(frequency) = ? AND id <> ?',
-          whereArgs: [descKey, freqKey, id],
+          where:
+              'LOWER(description) = ? AND LOWER(frequency) = ? AND LOWER(transaction_type) = ? AND id <> ?',
+          whereArgs: [descKey, freqKey, typeKey, id],
         );
         return id;
       }
@@ -80,6 +83,20 @@ class RecurringRepository {
     final db = await AppDatabase.instance.database;
     final result = await db.query('recurring_transactions');
     return result.map((e) => RecurringTransactionModel.fromMap(e)).toList();
+  }
+
+  /// Returns recurring transactions matching the provided ids.
+  static Future<List<RecurringTransactionModel>> getByIds(
+      Set<int> ids) async {
+    if (ids.isEmpty) return [];
+    final db = await AppDatabase.instance.database;
+    final placeholders = List.filled(ids.length, '?').join(', ');
+    final rows = await db.query(
+      'recurring_transactions',
+      where: 'id IN ($placeholders)',
+      whereArgs: ids.toList(),
+    );
+    return rows.map(RecurringTransactionModel.fromMap).toList();
   }
 
   /// Removes all recurring rows (used for debug resets).

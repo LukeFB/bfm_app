@@ -19,31 +19,58 @@ import 'package:http/http.dart' as http;
 
 /// Wraps Akahu HTTP calls behind a static helper.
 class AkahuService {
-  /// Fetches transactions from Akahu API and returns the `items` array as a
-  /// list of maps. Throws when the HTTP status is non-200 or the JSON shape is
-  /// unexpected.
+  /// Fetches transactions from Akahu API using cursor pagination so we cover
+  /// the entire requested window. Optional [start]/[end] map to Akahu's query
+  /// params and default to the provider's standard range when omitted.
   static Future<List<Map<String, dynamic>>> fetchTransactions(
-      String appToken, String userToken) async {
-    final url = Uri.parse("https://api.akahu.io/v1/transactions");
+    String appToken,
+    String userToken, {
+    DateTime? start,
+    DateTime? end,
+  }) async {
+    final headers = {
+      "X-Akahu-Id": appToken,
+      "Authorization": "Bearer $userToken",
+    };
 
-    final response = await http.get(
-      url,
-      headers: {
-        "X-Akahu-Id": appToken,
-        "Authorization": "Bearer $userToken",
-      },
-    );
+    final baseQuery = <String, String>{};
+    if (start != null) baseQuery['start'] = start.toUtc().toIso8601String();
+    if (end != null) baseQuery['end'] = end.toUtc().toIso8601String();
 
-    if (response.statusCode != 200) {
-      throw Exception(
-          "Akahu API error: ${response.statusCode} - ${response.body}");
-    }
+    final items = <Map<String, dynamic>>[];
+    String? cursor;
 
-    final data = jsonDecode(response.body);
-    if (data is Map && data['items'] is List) {
-      return List<Map<String, dynamic>>.from(data['items']);
-    } else {
-      throw Exception("Invalid response format: ${response.body}");
-    }
+    do {
+      final params = Map<String, String>.from(baseQuery);
+      if (cursor != null) params['cursor'] = cursor;
+
+      final uri = Uri.https('api.akahu.io', '/v1/transactions', params);
+      final response = await http.get(uri, headers: headers);
+
+      if (response.statusCode != 200) {
+        throw Exception(
+          "Akahu API error: ${response.statusCode} - ${response.body}",
+        );
+      }
+
+      final data = jsonDecode(response.body);
+      if (data is! Map<String, dynamic>) {
+        throw Exception("Invalid response format: ${response.body}");
+      }
+
+      final pageItems = data['items'];
+      if (pageItems is List) {
+        items.addAll(pageItems.cast<Map<String, dynamic>>());
+      }
+
+      final cursorObj = data['cursor'];
+      if (cursorObj is Map<String, dynamic>) {
+        cursor = cursorObj['next'] as String?;
+      } else {
+        cursor = null;
+      }
+    } while (cursor != null);
+
+    return items;
   }
 }

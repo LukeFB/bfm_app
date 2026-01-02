@@ -99,7 +99,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       debugPrint('Content sync skipped: $err');
     }
     final results = await Future.wait([
-      DashboardService.getDiscretionaryWeeklyBudget(), // uses last week's income
+      DashboardService.getDiscretionaryWeeklyBudget(), // recurring income (fallback: last week)
       DashboardService.discretionarySpendThisWeek(), // Mon to today expenses
       DashboardService.getPrimaryGoal(),
       DashboardService.getAlerts(),

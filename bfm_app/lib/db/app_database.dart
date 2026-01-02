@@ -50,7 +50,7 @@ class AppDatabase {
     // Open the database with version and an onUpgrade callback
     return await openDatabase(
       path,
-      version: 13,
+      version: 16,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },
@@ -83,18 +83,48 @@ class AppDatabase {
     if (!await hasTable('transactions')) await _createTransactions(db);
     if (!await hasTable('goals')) await _createGoals(db);
     if (!await hasTable('budgets')) await _createBudgets(db);
-    if (!await hasTable('recurring_transactions')) await _createRecurring(db);
-    if (!await hasTable('alerts')) await _createAlerts(db);
+    if (!await hasTable('recurring_transactions')) {
+      await _createRecurring(db);
+    }
+    if (!await hasCol('recurring_transactions', 'transaction_type')) {
+      await db.execute(
+        "ALTER TABLE recurring_transactions ADD COLUMN transaction_type TEXT NOT NULL DEFAULT 'expense';",
+      );
+      await db.rawUpdate('''
+        UPDATE recurring_transactions
+        SET transaction_type = 'expense'
+        WHERE transaction_type IS NULL OR TRIM(transaction_type) = '';
+      ''');
+    }
+    if (!await hasTable('alerts')) {
+      await _createAlerts(db);
+    } else {
+      final hasTitleOnAlerts = await hasCol('alerts', 'title');
+      final hasRecurringIdOnAlerts =
+          await hasCol('alerts', 'recurring_transaction_id');
+      if (!hasTitleOnAlerts || !hasRecurringIdOnAlerts) {
+        await _recreateAlertsTable(db);
+      }
+    }
     if (!await hasTable('events')) {
       await _createEvents(db);
     } else {
-      final hasTitleOnEvents = await hasCol('events', 'title');
-      if (!hasTitleOnEvents) {
+      final hasEventLocation = await hasCol('events', 'location');
+      final hasEventTitle = await hasCol('events', 'title');
+      final needsEventSimplify = hasEventLocation || !hasEventTitle;
+      if (needsEventSimplify) {
         await _recreateEventsTable(db);
       }
     }
     if (!await hasTable('referrals')) await _createReferrals(db);
-    if (!await hasTable('tips')) await _createTips(db);
+    if (!await hasTable('tips')) {
+      await _createTips(db);
+    } else {
+      final needsTipSimplify = await hasCol('tips', 'body');
+      if (needsTipSimplify) {
+        await _recreateTipsTable(db);
+      }
+    }
     if (!await hasTable('goal_progress_log')) await _createGoalProgressLog(db);
     if (!await hasTable('weekly_reports')) await _createWeeklyReports(db);
 
@@ -386,6 +416,7 @@ class AppDatabase {
         frequency TEXT NOT NULL,
         next_due_date TEXT NOT NULL,
         description TEXT,
+        transaction_type TEXT NOT NULL DEFAULT 'expense',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(category_id) REFERENCES categories(id)
@@ -393,15 +424,43 @@ class AppDatabase {
     ''');
   }
 
-  /// Holds short alert banner content that sync pulls down.
+  /// Holds recurring/user-configured alert preferences.
   Future<void> _createAlerts(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS alerts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        text TEXT NOT NULL,
-        icon TEXT
+        title TEXT NOT NULL,
+        message TEXT,
+        icon TEXT,
+        recurring_transaction_id INTEGER,
+        lead_time_days INTEGER NOT NULL DEFAULT 3,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(recurring_transaction_id) REFERENCES recurring_transactions(id) ON DELETE CASCADE
       );
     ''');
+  }
+
+  Future<void> _recreateAlertsTable(Database db) async {
+    await db.execute('ALTER TABLE alerts RENAME TO alerts_old;');
+    await _createAlerts(db);
+    await db.execute('''
+      INSERT INTO alerts (
+        id,
+        title,
+        message,
+        icon,
+        created_at
+      )
+      SELECT
+        id,
+        text,
+        text,
+        icon,
+        datetime('now')
+      FROM alerts_old;
+    ''');
+    await db.execute('DROP TABLE alerts_old;');
   }
 
   /// DDL for events/training calendar entries pulled from the backend CMS.
@@ -411,25 +470,16 @@ class AppDatabase {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         backend_id INTEGER,
         title TEXT NOT NULL,
-        description TEXT,
-        location TEXT,
-        region TEXT,
-        start_date TEXT NOT NULL,
         end_date TEXT,
-        registration_url TEXT,
-        icon TEXT,
-        audience TEXT,
-        is_virtual INTEGER NOT NULL DEFAULT 0,
-        is_published INTEGER NOT NULL DEFAULT 1,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        updated_at TEXT,
+        synced_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
     ''');
     await db.execute(
       'CREATE UNIQUE INDEX IF NOT EXISTS ux_events_backend ON events(backend_id) WHERE backend_id IS NOT NULL;',
     );
     await db.execute(
-      'CREATE INDEX IF NOT EXISTS ix_events_start_date ON events(start_date);',
+      'CREATE INDEX IF NOT EXISTS ix_events_end_date ON events(end_date);',
     );
   }
 
@@ -439,26 +489,20 @@ class AppDatabase {
     await _createEvents(db);
     await db.execute('''
       INSERT INTO events (
+        id,
         backend_id,
         title,
-        description,
-        start_date,
-        icon,
-        is_virtual,
-        is_published,
+        end_date,
         updated_at,
         synced_at
       )
       SELECT
-        NULL,
-        text,
-        NULL,
-        datetime('now'),
-        icon,
-        0,
-        1,
-        datetime('now'),
-        datetime('now')
+        id,
+        backend_id,
+        COALESCE(title, 'Event'),
+        end_date,
+        updated_at,
+        COALESCE(synced_at, datetime('now'))
       FROM events_old;
     ''');
     await db.execute('DROP TABLE events_old;');
@@ -501,25 +545,45 @@ class AppDatabase {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         backend_id INTEGER,
         title TEXT NOT NULL,
-        body TEXT NOT NULL,
-        category TEXT,
-        audience TEXT,
-        cta_label TEXT,
-        cta_url TEXT,
-        priority INTEGER NOT NULL DEFAULT 0,
         is_active INTEGER NOT NULL DEFAULT 1,
-        publish_at TEXT,
         expires_at TEXT,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        updated_at TEXT,
+        synced_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
     ''');
     await db.execute(
       'CREATE UNIQUE INDEX IF NOT EXISTS ux_tips_backend ON tips(backend_id) WHERE backend_id IS NOT NULL;',
     );
     await db.execute(
-      'CREATE INDEX IF NOT EXISTS ix_tips_priority ON tips(priority DESC, updated_at DESC);',
+      'CREATE INDEX IF NOT EXISTS ix_tips_expiry ON tips(expires_at, updated_at DESC);',
     );
+  }
+
+  /// Rebuilds the tips table to drop unused CMS columns.
+  Future<void> _recreateTipsTable(Database db) async {
+    await db.execute('ALTER TABLE tips RENAME TO tips_old;');
+    await _createTips(db);
+    await db.execute('''
+      INSERT INTO tips (
+        id,
+        backend_id,
+        title,
+        is_active,
+        expires_at,
+        updated_at,
+        synced_at
+      )
+      SELECT
+        id,
+        backend_id,
+        COALESCE(title, 'Tip'),
+        COALESCE(is_active, 1),
+        expires_at,
+        updated_at,
+        COALESCE(synced_at, datetime('now'))
+      FROM tips_old;
+    ''');
+    await db.execute('DROP TABLE tips_old;');
   }
 
   /// Ensures all category usage triggers exist so counts stay accurate even if

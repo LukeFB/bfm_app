@@ -22,12 +22,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// Stateless-ish service with a dependency-injected credential store for tests.
 class TransactionSyncService {
+  static const _lastSyncKey = 'last_sync_at';
+  static const _backfillCompleteKey = 'tx_backfill_complete';
+  static const Duration _rollingWindow = Duration(days: 120); // ~4 months
+  static const Duration _initialBackfillWindow = Duration(days: 365);
+
   /// Accepts a custom credential store for tests; defaults to the real one.
   TransactionSyncService({SecureCredentialStore? credentialStore})
       : _credentialStore = credentialStore ?? SecureCredentialStore();
 
   final SecureCredentialStore _credentialStore;
-  static const _lastSyncKey = 'last_sync_at';
 
   /// Pulls transactions immediately:
   /// - Verifies we have active tokens + are marked connected.
@@ -46,16 +50,27 @@ class TransactionSyncService {
       return;
     }
 
-    final payloads =
-        await AkahuService.fetchTransactions(tokens.appToken, tokens.userToken);
+    final nowUtc = DateTime.now().toUtc();
+    final hasBackfilled = prefs.getBool(_backfillCompleteKey) ?? false;
+    final usedBackfillWindow = !hasBackfilled;
+    final windowStart = nowUtc.subtract(
+      hasBackfilled ? _rollingWindow : _initialBackfillWindow,
+    );
+
+    final payloads = await AkahuService.fetchTransactions(
+      tokens.appToken,
+      tokens.userToken,
+      start: windowStart,
+      end: nowUtc,
+    );
 
     if (payloads.isEmpty) {
-      await _markSynced();
+      await _markSynced(markBackfillComplete: usedBackfillWindow);
       return;
     }
 
     await TransactionRepository.upsertFromAkahu(payloads);
-    await _markSynced();
+    await _markSynced(markBackfillComplete: usedBackfillWindow);
   }
 
   /// Checks when we last synced and only calls `syncNow` if the delta exceeds
@@ -88,9 +103,12 @@ class TransactionSyncService {
 
   /// Writes the ISO timestamp of the latest sync to SharedPreferences so the
   /// next `syncIfStale` call has a comparison point.
-  Future<void> _markSynced() async {
+  Future<void> _markSynced({bool markBackfillComplete = false}) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_lastSyncKey, DateTime.now().toIso8601String());
+    if (markBackfillComplete) {
+      await prefs.setBool(_backfillCompleteKey, true);
+    }
   }
 }
 

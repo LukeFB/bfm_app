@@ -36,6 +36,7 @@ import 'package:bfm_app/services/budget_analysis_service.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
+import 'package:bfm_app/screens/budget_recurring_screen.dart';
 
 /// Main UI for selecting suggested categories and setting weekly limits.
 class BudgetBuildScreen extends StatefulWidget {
@@ -73,6 +74,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     setState(() => _loading = true);
 
     await BudgetAnalysisService.identifyRecurringTransactions();
+
     final list = await BudgetAnalysisService.getCategoryWeeklyBudgetSuggestions(
       minWeekly: 5.0,
     );
@@ -242,27 +244,10 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Saved $saved budget${saved == 1 ? '' : 's'}')),
     );
-    Navigator.pushNamedAndRemoveUntil(context, '/dashboard', (route) => false);
-  }
-
-  /// Pre-selects every recurring suggestion and seeds the amount fields.
-  void _selectAllRecurring() {
-    setState(() {
-      for (final s in _suggestions.where((x) => !x.isUncategorizedGroup && x.hasRecurring)) {
-        _selected[s.categoryId] = true;
-        _amountCtrls[s.categoryId]?.text =
-            s.weeklySuggested.toStringAsFixed(2);
-      }
-    });
-  }
-
-  /// Unchecks every selectable category so the user can start fresh.
-  void _clearAll() {
-    setState(() {
-      for (final s in _suggestions.where((x) => !x.isUncategorizedGroup)) {
-        _selected[s.categoryId] = false;
-      }
-    });
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const BudgetRecurringScreen()),
+    );
   }
 
   /// Same normalisation as the service (local to avoid importing a private fn)
@@ -289,11 +274,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       builder: (ctx) {
         int? chosenId;
         String? chosenName;
-        final amountCtrl = TextEditingController(
-          text: s.weeklySuggested.toStringAsFixed(2),
-        );
-        bool addToBudget = true;
-        bool creating = false;
         bool assigning = false;
         final newCatCtrl = TextEditingController();
 
@@ -302,11 +282,10 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
             Future<void> _createCategory() async {
               final name = newCatCtrl.text.trim();
               if (name.isEmpty) return;
-              setModalState(() => creating = true);
               final id = await CategoryRepository.ensureByName(name);
               chosenId = id;
               chosenName = name;
-              setModalState(() => creating = false);
+              setModalState(() {});
             }
 
             void _pick(Map<String, dynamic> c) {
@@ -352,67 +331,18 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                       const Divider(height: 1),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: newCatCtrl,
-                                decoration: const InputDecoration(
-                                  labelText: 'Create new category',
-                                  border: OutlineInputBorder(),
-                                ),
-                                onChanged: (_) => setModalState(() {}),
-                                onSubmitted: (_) => _createCategory(),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            FilledButton(
-                              onPressed: creating ? null : _createCategory,
-                              child: creating
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(strokeWidth: 2),
-                                    )
-                                  : const Text('Create'),
-                            ),
-                          ],
+                        child: TextField(
+                          controller: newCatCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Create new category',
+                            border: OutlineInputBorder(),
+                          ),
+                          onChanged: (_) => setModalState(() {}),
+                          onSubmitted: (_) => _createCategory(),
                         ),
                       ),
 
                       // Budget inline
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: amountCtrl,
-                                keyboardType: const TextInputType.numberWithOptions(
-                                  signed: false, decimal: true,
-                                ),
-                                decoration: const InputDecoration(
-                                  labelText: 'Add to weekly budget as',
-                                  prefixText: '\$',
-                                  border: OutlineInputBorder(),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('Add now', style: TextStyle(fontSize: 12)),
-                                Switch(
-                                  value: addToBudget,
-                                  onChanged: (v) => setModalState(() => addToBudget = v),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-
                       // Confirm
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -444,8 +374,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                                       Navigator.pop(ctx, {
                                         'categoryId': chosenId,
                                         'categoryName': chosenName ?? 'Category',
-                                        'add': addToBudget,
-                                        'amount': double.tryParse(amountCtrl.text.trim()) ?? 0.0,
                                       });
                                     }
                                   : null,
@@ -468,8 +396,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
 
     final int catId = result['categoryId'] as int;
     final String catName = (result['categoryName'] as String?) ?? 'Category';
-    final bool addToBudget = (result['add'] as bool?) ?? false;
-    final double weeklyAmount = (result['amount'] as num?)?.toDouble() ?? 0.0;
 
     // Re-tag uncategorized rows by normalized description key
     final key = _normalizeText(s.description ?? s.categoryName);
@@ -477,32 +403,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
 
     // Refresh suggestions from DB
     await _load();
-
-    // If user chose to add immediately, pre-select and set amount
-    if (addToBudget) {
-      final ctrl = _amountCtrls.putIfAbsent(
-        catId,
-        () => TextEditingController(text: weeklyAmount.toStringAsFixed(2)),
-      );
-      ctrl.text = weeklyAmount.toStringAsFixed(2);
-      _selected[catId] = true;
-
-      final existsInBase =
-          _baseSuggestions.any((element) => element.categoryId == catId);
-      if (!existsInBase) {
-        _manualSuggestions[catId] = BudgetSuggestionModel(
-          categoryId: catId,
-          categoryName: catName,
-          weeklySuggested: weeklyAmount,
-          usageCount: 0,
-          txCount: 0,
-          hasRecurring: false,
-          isUncategorizedGroup: false,
-        );
-      }
-
-      _refreshDisplayedSuggestions();
-    }
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -513,6 +413,9 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   /// Builds the entire budget builder UI: headers, suggestions list, and footer.
   @override
   Widget build(BuildContext context) {
+    final uncatSuggestions = _uncategorizedSuggestions();
+    final categorySuggestions = _categorySuggestions();
+
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.editMode ? 'Review & Edit Budget' : 'Build Your Weekly Budget'),
@@ -528,197 +431,30 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                // Header summary (responsive)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.editMode
-                            ? 'Existing budget categories are pre-selected. Adjust the weekly amounts below.'
-                            : 'Uncategorized items are shown first. Ordered by recurring, popularity, and weekly spend. Small items (< \$5/wk) are hidden.',
-                        style: const TextStyle(fontSize: 13, color: Colors.grey),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          ElevatedButton.icon(
-                            icon: const Icon(Icons.auto_awesome),
-                            onPressed: _selectAllRecurring,
-                            label: const Text('Select Recurring'),
-                          ),
-                          OutlinedButton(
-                            onPressed: _clearAll,
-                            child: const Text('Clear All'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: Card(
-                    child: ListTile(
-                      title: const Text('Savings goals'),
-                      subtitle: const Text(
-                        'Weekly contributions live on the Goals screen.',
-                      ),
-                      trailing: TextButton(
-                        onPressed: () async {
-                          await Navigator.pushNamed(context, '/goals');
-                          if (!mounted) return;
-                          await _load();
-                        },
-                        child: const Text('Open goals'),
-                      ),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      widget.editMode
+                          ? 'Existing budget categories are pre-selected. Adjust the weekly amounts below.'
+                          : 'We detected your average weekly expenses over the last 4 months and suggested budgets below. Select everything that applies.',
+                      style: const TextStyle(fontSize: 13, color: Colors.grey),
                     ),
                   ),
                 ),
-
                 const Divider(height: 1),
-
-                // Suggestions list
                 Expanded(
-                  child: ListView.builder(
-                    itemCount: _suggestions.length,
-                    itemBuilder: (context, i) {
-                      final s = _suggestions[i];
-                      final bool isGroup = s.isUncategorizedGroup;
-                      final bool showGroupHeader =
-                          isGroup && (i == 0 || !_suggestions[i - 1].isUncategorizedGroup);
-                      final bool showCategoryHeader =
-                          !isGroup && (i == 0 || _suggestions[i - 1].isUncategorizedGroup);
-
-                      final children = <Widget>[
-                        if (showGroupHeader)
-                          const _SectionHeader(
-                            icon: Icons.error_outline,
-                            label: 'Needs categorization',
-                            description: 'Match transactions to categories to tidy things up.',
-                          ),
-                        if (showCategoryHeader)
-                          _SectionHeader(
-                            icon: Icons.checklist_outlined,
-                            label: widget.editMode ? 'Suggested updates' : 'Suggested categories',
-                            description: widget.editMode
-                                ? 'New categories you can add to your weekly plan.'
-                                : 'Toggle the items you want to track weekly.',
-                          ),
-                      ];
-
-                      if (isGroup) {
-                        children.addAll([
-                          ListTile(
-                            contentPadding:
-                                const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            title: Text(
-                              s.categoryName,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                                color: Colors.orange,
-                              ),
-                            ),
-                            subtitle: Padding(
-                              padding: const EdgeInsets.only(top: 6),
-                              child: Text(
-                                'Weekly suggested: \$${s.weeklySuggested.toStringAsFixed(2)} • tx: ${s.txCount}',
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ),
-                            trailing: TextButton.icon(
-                              icon: const Icon(Icons.category_outlined),
-                              label: const Text('Categorize'),
-                              onPressed: () => _categorizeUncatGroup(s),
-                            ),
-                          ),
-                          const Divider(height: 1),
-                        ]);
-                      } else {
-                        final selected = _selected[s.categoryId] ?? false;
-                        final ctrl = _amountCtrls[s.categoryId]!;
-                        children.addAll([
-                          ListTile(
-                            contentPadding:
-                                const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            leading: Checkbox(
-                              value: selected,
-                              onChanged: (v) =>
-                                  setState(() => _selected[s.categoryId] = v ?? false),
-                            ),
-                            title: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    s.categoryName,
-                                    style: const TextStyle(fontWeight: FontWeight.w600),
-                                  ),
-                                ),
-                                if (s.hasRecurring)
-                                  const _Pill(label: 'Recurring', icon: Icons.repeat),
-                              ],
-                            ),
-                            subtitle: Padding(
-                              padding: const EdgeInsets.only(top: 6),
-                              child: Text(
-                                'Weekly suggested: \$${s.weeklySuggested.toStringAsFixed(2)} • usage: ${s.usageCount} • tx: ${s.txCount}',
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(72, 0, 16, 12),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: ctrl,
-                                    enabled: selected,
-                                    keyboardType: const TextInputType.numberWithOptions(
-                                      signed: false,
-                                      decimal: true,
-                                    ),
-                                    decoration: const InputDecoration(
-                                      labelText: 'Weekly limit',
-                                      prefixText: '\$',
-                                      border: OutlineInputBorder(),
-                                    ),
-                                    onChanged: (_) => setState(() {}),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                _StepperButtons(
-                                  enabled: selected,
-                                  onMinus: () {
-                                    final v = _parseAmount(ctrl.text);
-                                    final rounded = _roundTo(v, 1);
-                                    final next = max(0.0, rounded - 1.0);
-                                    setState(() => ctrl.text = next.toStringAsFixed(2));
-                                  },
-                                  onPlus: () {
-                                    final v = _parseAmount(ctrl.text);
-                                    final rounded = _roundTo(v, 1);
-                                    final next = rounded + 1.0;
-                                    setState(() => ctrl.text = next.toStringAsFixed(2));
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                          const Divider(height: 1),
-                        ]);
-                      }
-
-                      return Column(children: children);
-                    },
+                  child: ListView(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    children: [
+                      if (uncatSuggestions.isNotEmpty)
+                        _buildUncategorizedExpansion(uncatSuggestions),
+                      if (categorySuggestions.isNotEmpty)
+                        _buildCategoryExpansion(categorySuggestions),
+                    ],
                   ),
                 ),
-
-                // Save bar (no "Skip" – avoids overflow)
                 SafeArea(
                   top: false,
                   child: Container(
@@ -750,6 +486,195 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     );
   }
 
+  List<BudgetSuggestionModel> _uncategorizedSuggestions() {
+    final list = _suggestions.where((s) => s.isUncategorizedGroup).toList();
+    list.sort((a, b) => b.txCount.compareTo(a.txCount));
+    return list;
+  }
+
+  List<BudgetSuggestionModel> _categorySuggestions() {
+    return _suggestions.where((s) => !s.isUncategorizedGroup).toList(growable: false);
+  }
+
+  Widget _buildUncategorizedExpansion(List<BudgetSuggestionModel> items) {
+    final maxHeight = min(items.length * 76.0, 320.0);
+    return Card(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: true,
+          leading: const Icon(Icons.error_outline),
+          title: const Text('Needs categorization'),
+          subtitle: const Text(
+            'Match transactions to categories to tidy things up.',
+            style: TextStyle(fontSize: 12),
+          ),
+          children: [
+            SizedBox(
+              height: maxHeight,
+              child: ListView.builder(
+                padding: EdgeInsets.zero,
+                itemCount: items.length,
+                physics: const BouncingScrollPhysics(),
+                itemBuilder: (context, index) {
+                  final row = _buildUncategorizedRow(items[index]);
+                  return Column(
+                    children: [
+                      row,
+                      if (index != items.length - 1) const Divider(height: 1),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryExpansion(List<BudgetSuggestionModel> items) {
+    final maxHeight = min(items.length * 130.0, 420.0);
+    return Card(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: true,
+          leading: const Icon(Icons.checklist_outlined),
+          title: Text(widget.editMode ? 'Suggested updates' : 'Suggested categories'),
+          subtitle: Text(
+            widget.editMode
+                ? 'New categories you can add to your weekly plan.'
+                : 'Toggle the items you want to track weekly.',
+            style: const TextStyle(fontSize: 12),
+          ),
+          children: [
+            SizedBox(
+              height: maxHeight,
+              child: ListView.builder(
+                padding: EdgeInsets.zero,
+                itemCount: items.length,
+                physics: const BouncingScrollPhysics(),
+                itemBuilder: (context, index) {
+                  final row = _buildCategoryRow(items[index]);
+                  return Column(
+                    children: [
+                      row,
+                      if (index != items.length - 1) const Divider(height: 1),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUncategorizedRow(BudgetSuggestionModel s) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      title: Text(
+        s.categoryName,
+        style: const TextStyle(
+          fontWeight: FontWeight.w600,
+          color: Colors.orange,
+        ),
+      ),
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Text(
+          'Weekly suggested: \$${s.weeklySuggested.toStringAsFixed(2)} • tx: ${s.txCount}',
+          style: const TextStyle(fontSize: 12),
+        ),
+      ),
+      trailing: TextButton.icon(
+        icon: const Icon(Icons.category_outlined),
+        label: const Text('Categorize'),
+        onPressed: () => _categorizeUncatGroup(s),
+      ),
+    );
+  }
+
+  Widget _buildCategoryRow(BudgetSuggestionModel s) {
+    final selected = _selected[s.categoryId] ?? false;
+    final ctrl = _amountCtrls[s.categoryId]!;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        children: [
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            leading: Checkbox(
+              value: selected,
+              onChanged: (v) => setState(() => _selected[s.categoryId] = v ?? false),
+            ),
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    s.categoryName,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                if (s.hasRecurring) const _Pill(label: 'Recurring', icon: Icons.repeat),
+              ],
+            ),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'Weekly suggested: \$${s.weeklySuggested.toStringAsFixed(2)} • usage: ${s.usageCount} • tx: ${s.txCount}',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(72, 0, 16, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: ctrl,
+                    enabled: selected,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      signed: false,
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Weekly limit',
+                      prefixText: '\$',
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _StepperButtons(
+                  enabled: selected,
+                  onMinus: () {
+                    final v = _parseAmount(ctrl.text);
+                    final rounded = _roundTo(v, 1);
+                    final next = max(0.0, rounded - 1.0);
+                    setState(() => ctrl.text = next.toStringAsFixed(2));
+                  },
+                  onPlus: () {
+                    final v = _parseAmount(ctrl.text);
+                    final rounded = _roundTo(v, 1);
+                    final next = rounded + 1.0;
+                    setState(() => ctrl.text = next.toStringAsFixed(2));
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Returns the running total for selected categories so the footer badge can
   /// display a weekly sum.
   double _selectedTotal() {
@@ -761,25 +686,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       }
     }
     return sum;
-  }
-
-  /// Rebuilds the suggestion list when manual entries change.
-  void _refreshDisplayedSuggestions() {
-    setState(() {
-      _suggestions = [
-        ..._manualSuggestions.values,
-        ..._baseSuggestions,
-      ];
-    });
-  }
-
-  /// Counts how many categories are selected (for summary copy).
-  int _selectedCount() {
-    var count = 0;
-    for (final entry in _selected.entries) {
-      if (entry.value) count += 1;
-    }
-    return count;
   }
 
 }
@@ -815,6 +721,7 @@ class _Pill extends StatelessWidget {
   }
 }
 
+
 /// +/- buttons that nudge the weekly amount by \$1 increments.
 class _StepperButtons extends StatelessWidget {
   final bool enabled;
@@ -847,90 +754,6 @@ class _SelectedTotalBadge extends StatelessWidget {
         color: Theme.of(context).colorScheme.secondaryContainer,
       ),
       child: FittedBox(child: Text('Selected: \$${amount.toStringAsFixed(2)}/wk')),
-    );
-  }
-}
-
-/// Renders the contextual headers inside the suggestion list.
-class _SectionHeader extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String description;
-
-  const _SectionHeader({
-    required this.icon,
-    required this.label,
-    required this.description,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-      color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label,
-                    style:
-                        const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                const SizedBox(height: 4),
-                Text(description,
-                    style: const TextStyle(fontSize: 12, color: Colors.black54)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Simple card summarising how many items are toggled and the weekly amount.
-class _SummaryCard extends StatelessWidget {
-  final int selectedCount;
-  final double total;
-  final bool editing;
-
-  const _SummaryCard({
-    required this.selectedCount,
-    required this.total,
-    this.editing = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final hasSelection = selectedCount > 0;
-    final title = hasSelection
-        ? '$selectedCount ${editing ? 'budget' : 'category'}${selectedCount == 1 ? '' : 's'} selected'
-        : (editing ? 'No budgets selected yet' : 'No categories selected yet');
-    final subtitle = hasSelection
-        ? 'Weekly total \$${total.toStringAsFixed(2)}'
-        : (editing
-            ? 'Toggle items to include them in your weekly plan.'
-            : 'Pick a few categories to start planning.');
-
-    return Card(
-      margin: EdgeInsets.zero,
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: theme.colorScheme.primaryContainer,
-          child: Icon(
-            hasSelection ? Icons.check_circle : Icons.lightbulb_outline,
-            color: theme.colorScheme.onPrimaryContainer,
-          ),
-        ),
-        title: Text(title),
-        subtitle: Text(subtitle),
-      ),
     );
   }
 }

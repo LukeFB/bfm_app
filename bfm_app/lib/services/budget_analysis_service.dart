@@ -21,11 +21,11 @@
 
 import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/models/budget_suggestion_model.dart';
-import 'package:bfm_app/repositories/budget_repository.dart';
+import 'package:bfm_app/models/transaction_model.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
-import 'package:bfm_app/utils/analysis_utils.dart';
 import 'package:bfm_app/models/recurring_transaction_model.dart';
+import 'package:bfm_app/utils/description_normalizer.dart';
 
 /// Houses all budget-related analytics (recurring detection + suggestions).
 class BudgetAnalysisService {
@@ -39,79 +39,26 @@ class BudgetAnalysisService {
     final allTxns = await TransactionRepository.getAll();
     if (allTxns.isEmpty) return;
 
-    final expenses = allTxns.where((t) => t.type.toLowerCase() == 'expense').toList();
-    if (expenses.isEmpty) return;
+    final now = DateTime.now();
+    final firstOfThisMonth = DateTime(now.year, now.month, 1);
+    final detectionWindowStart =
+        DateTime(firstOfThisMonth.year, firstOfThisMonth.month - 3, 1);
 
-    final Map<String, List<dynamic>> groups = {};
-    for (var t in expenses) {
-      final label = _preferredGroupLabel(
-        categoryName: (t as dynamic).categoryName,
-        description: (t as dynamic).description,
-      );
-      groups.putIfAbsent(label, () => []).add(t);
+    bool withinWindow(TransactionModel txn) {
+      final date = DateTime.tryParse(txn.date);
+      if (date == null) return false;
+      return !date.isBefore(detectionWindowStart) && date.isBefore(now);
     }
 
-    for (var entry in groups.entries) {
-      final label = entry.key;
-      final txns = entry.value;
+    final expenses = allTxns
+        .where((t) => t.type.toLowerCase() == 'expense' && withinWindow(t))
+        .toList();
+    final incomes = allTxns
+        .where((t) => t.type.toLowerCase() == 'income' && withinWindow(t))
+        .toList();
 
-      final List<List<dynamic>> clusters = [];
-      for (var t in txns) {
-        bool added = false;
-        for (var cluster in clusters) {
-          if (_amountsClose(cluster.first.amount, t.amount, pct: 0.05)) {
-            cluster.add(t);
-            added = true;
-            break;
-          }
-        }
-        if (!added) clusters.add([t]);
-      }
-
-      for (var cluster in clusters) {
-        if (cluster.length < 2) continue;
-
-        final dates = cluster.map((t) => DateTime.parse(t.date)).toList()..sort();
-
-        final gaps = <int>[];
-        for (int i = 1; i < dates.length; i++) {
-          gaps.add(dates[i].difference(dates[i - 1]).inDays);
-        }
-        if (gaps.isEmpty) continue;
-
-        final avgGap = gaps.reduce((a, b) => a + b) / gaps.length;
-        final varianceOk = gaps.every((g) => (g - avgGap).abs() <= 3);
-
-        String? frequency;
-        if (avgGap >= 5 && avgGap <= 9 && cluster.length >= 4 && varianceOk) {
-          frequency = 'weekly';
-        } else if (avgGap >= 26 && avgGap <= 32 && cluster.length >= 3 && varianceOk) {
-          frequency = 'monthly';
-        } else {
-          continue;
-        }
-
-        final lastDate = dates.last;
-        final nextDue = frequency == 'weekly'
-            ? lastDate.add(const Duration(days: 7))
-            : DateTime(lastDate.year, lastDate.month + 1, lastDate.day);
-
-        final avgAmount = cluster.map((t) => t.amount).reduce((a, b) => a + b) / cluster.length;
-
-        final nextDueStr =
-            "${nextDue.year.toString().padLeft(4, '0')}-${nextDue.month.toString().padLeft(2, '0')}-${nextDue.day.toString().padLeft(2, '0')}";
-
-        final recurring = RecurringTransactionModel(
-          categoryId: cluster.first.categoryId ?? 1,
-          amount: avgAmount.abs(),
-          frequency: frequency,
-          nextDueDate: nextDueStr,
-          description: label,
-        );
-
-        await RecurringRepository.insert(recurring);
-      }
-    }
+    await _identifyRecurringClusters(expenses, transactionType: 'expense', now: now);
+    await _identifyRecurringClusters(incomes, transactionType: 'income', now: now);
   }
 
   // -------------------- SUGGESTIONS --------------------
@@ -125,14 +72,22 @@ class BudgetAnalysisService {
     final db = await AppDatabase.instance.database;
 
     // normalize to $/week
-    final range = await AnalysisUtils.getGlobalDateRange();
-    final start = (range['first'] ?? _today());
-    final end   = (range['last']  ?? _today());
-    final weeks = AnalysisUtils.observedWeeks(range['first'], range['last']);
+    final today = DateTime.now();
+    final firstOfThisMonth = DateTime(today.year, today.month, 1);
+    final prevMonthStart =
+        DateTime(firstOfThisMonth.year, firstOfThisMonth.month - 1, 1);
+    final prevMonthEnd = firstOfThisMonth.subtract(const Duration(days: 1));
+    final start = _formatDate(prevMonthStart);
+    final end = _formatDate(prevMonthEnd);
+    final weeks = ((prevMonthEnd.difference(prevMonthStart).inDays + 1) / 7)
+        .clamp(1, double.infinity) as double;
 
     // Recurring categories
     final recurring = await RecurringRepository.getAll();
-    final recurringCatIds = recurring.map((r) => r.categoryId).toSet();
+    final recurringCatIds = recurring
+        .where((r) => r.transactionType == 'expense')
+        .map((r) => r.categoryId)
+        .toSet();
 
     // Normal categories (excluding Uncategorized)
     final catRows = await db.rawQuery('''
@@ -187,7 +142,7 @@ class BudgetAnalysisService {
         AND (t.category_id IS NULL OR c.name IS NULL OR c.name = 'Uncategorized')
       GROUP BY t.description
       HAVING description IS NOT NULL AND TRIM(description) <> ''
-      ORDER BY total_spent DESC
+      ORDER BY tx_count DESC, total_spent DESC
     ''', [start, end]);
 
     for (final r in uncatRows) {
@@ -236,17 +191,22 @@ class BudgetAnalysisService {
   static String _normalizeText(String raw) {
     return raw
         .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z ]'), '')
+        .replaceAll(RegExp(r'[^a-z0-9 ]'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
   }
 
-  /// Picks the category label when present, otherwise falls back to a cleaned
-  /// description token for grouping.
-  static String _preferredGroupLabel({String? categoryName, required String description}) {
-    final cat = (categoryName ?? '').trim();
-    if (cat.isNotEmpty) return cat;
-    return _normalizeText(description.isEmpty ? 'unknown' : description);
+  /// Builds a grouping key that includes both category and description so we
+  /// don't double-count the same merchant across categories (or vice versa).
+  static String _recurringGroupKey(TransactionModel txn) {
+    final categoryRaw = (txn.categoryName ?? '').trim();
+    final normalizedCat = _normalizeText(categoryRaw);
+    final catKey = normalizedCat.isEmpty ? 'uncategorized' : normalizedCat;
+
+    final merchantLabel =
+        DescriptionNormalizer.normalizeMerchant(txn.merchantName, txn.description);
+    final descKey = merchantLabel.isEmpty ? catKey : merchantLabel;
+    return '$catKey::$descKey';
   }
 
   /// Returns true when two amounts are within the provided percentage, used to
@@ -257,9 +217,160 @@ class BudgetAnalysisService {
     return diff <= (a.abs() * pct);
   }
 
-  /// Formats today's date as YYYY-MM-DD.
-  static String _today() {
-    final n = DateTime.now();
-    return "${n.year.toString().padLeft(4, '0')}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}";
+  static String _formatDate(DateTime date) {
+    return "${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
+  }
+
+  static bool _hasRecentWeeklyPattern(List<DateTime> dates, DateTime now) {
+    final today = DateTime(now.year, now.month, now.day);
+    final mondayThisWeek = today.subtract(Duration(days: today.weekday - 1));
+    final windowStart = mondayThisWeek.subtract(const Duration(days: 7 * 3));
+    final relevant = dates
+        .where((d) => !d.isBefore(windowStart) && d.isBefore(mondayThisWeek))
+        .toList()
+      ..sort();
+    if (relevant.length < 3) return false;
+    for (var i = 1; i < relevant.length; i++) {
+      final gap = relevant[i].difference(relevant[i - 1]).inDays.abs();
+      if (gap < 5 || gap > 9) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static bool _hasRecentMonthlyPattern(List<DateTime> dates, DateTime now) {
+    final firstOfThisMonth = DateTime(now.year, now.month, 1);
+    final windowStart =
+        DateTime(firstOfThisMonth.year, firstOfThisMonth.month - 3, 1);
+    final relevant = dates
+        .where((d) => !d.isBefore(windowStart) && d.isBefore(firstOfThisMonth))
+        .toList()
+      ..sort();
+    if (relevant.length < 3) return false;
+    for (var i = 1; i < relevant.length; i++) {
+      final gap = relevant[i].difference(relevant[i - 1]).inDays.abs();
+      if (gap < 25 || gap > 35) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static DateTime _predictMonthlyDueDate(
+    List<DateTime> dates,
+    DateTime lastOccurrence,
+  ) {
+    final preferredDay = _commonDayOfMonth(dates);
+    final nextMonth = DateTime(lastOccurrence.year, lastOccurrence.month + 1, 1);
+    final daysInNextMonth = _daysInMonth(nextMonth.year, nextMonth.month);
+    final day = preferredDay > daysInNextMonth ? daysInNextMonth : preferredDay;
+    return DateTime(nextMonth.year, nextMonth.month, day);
+  }
+
+  static int _commonDayOfMonth(List<DateTime> dates) {
+    final counts = <int, int>{};
+    for (final d in dates) {
+      counts.update(d.day, (value) => value + 1, ifAbsent: () => 1);
+    }
+    counts.removeWhere((key, value) => value == 0);
+    final sorted = counts.entries.toList()
+      ..sort((a, b) {
+        final cmp = b.value.compareTo(a.value);
+        if (cmp != 0) return cmp;
+        return a.key.compareTo(b.key);
+      });
+    return sorted.isEmpty ? dates.last.day : sorted.first.key;
+  }
+
+  static int _daysInMonth(int year, int month) =>
+      DateTime(year, month + 1, 0).day;
+
+  /// Shared recurring logic for both expenses and income streams.
+  static Future<void> _identifyRecurringClusters(
+    List<TransactionModel> txns, {
+    required String transactionType,
+    required DateTime now,
+  }) async {
+    if (txns.isEmpty) return;
+
+    final Map<String, List<TransactionModel>> groups = {};
+    for (final t in txns) {
+      final key = _recurringGroupKey(t);
+      groups.putIfAbsent(key, () => []).add(t);
+    }
+
+    for (final grouped in groups.values) {
+
+      final List<List<TransactionModel>> clusters = [];
+      for (final txn in grouped) {
+        bool added = false;
+        for (final cluster in clusters) {
+          if (_amountsClose(cluster.first.amount, txn.amount, pct: 0.05)) {
+            cluster.add(txn);
+            added = true;
+            break;
+          }
+        }
+        if (!added) clusters.add([txn]);
+      }
+
+      for (final cluster in clusters) {
+        if (cluster.length < 2) continue;
+
+        final today = DateTime(now.year, now.month, now.day);
+        final dates = cluster
+            .map((t) => DateTime.parse(t.date))
+            .where((d) => d.isBefore(today))
+            .toList()
+          ..sort();
+        if (dates.length < 2) continue;
+
+        String? frequency;
+        if (_hasRecentWeeklyPattern(dates, now)) {
+          frequency = 'weekly';
+        } else if (_hasRecentMonthlyPattern(dates, now)) {
+          frequency = 'monthly';
+        } else {
+          continue;
+        }
+
+        final avgAmount =
+            cluster.map((t) => t.amount).reduce((a, b) => a + b) / cluster.length;
+        if (frequency == 'monthly' && avgAmount.abs() < 10) {
+          continue;
+        }
+
+        final lastDate = dates.last;
+        DateTime nextDue;
+        if (frequency == 'weekly') {
+          nextDue = lastDate.add(const Duration(days: 7));
+        } else {
+          nextDue = _predictMonthlyDueDate(dates, lastDate);
+        }
+        final nextDueStr =
+            "${nextDue.year.toString().padLeft(4, '0')}-${nextDue.month.toString().padLeft(2, '0')}-${nextDue.day.toString().padLeft(2, '0')}";
+
+        final firstDesc = cluster.first.description.trim();
+        String friendlyDesc;
+        if (firstDesc.isNotEmpty) {
+          friendlyDesc = firstDesc;
+        } else {
+          final catName = (cluster.first.categoryName ?? '').trim();
+          friendlyDesc = catName.isNotEmpty ? catName : 'Recurring $transactionType';
+        }
+
+        final recurring = RecurringTransactionModel(
+          categoryId: cluster.first.categoryId ?? 1,
+          amount: avgAmount.abs(),
+          frequency: frequency,
+          nextDueDate: nextDueStr,
+          description: friendlyDesc,
+          transactionType: transactionType,
+        );
+
+        await RecurringRepository.insert(recurring);
+      }
+    }
   }
 }

@@ -100,9 +100,11 @@ class InsightsService {
     final metBudget = totalBudget > 0 ? budgetSpend <= totalBudget : false;
     final hasLeftover = (currentWeekIncome - totalSpentAll) > 0.01;
 
+    const autoCreditEnabled = false;
     final goalOutcomes = await _evaluateGoalProgress(
       weekStart: period.start,
       hasLeftover: hasLeftover,
+      autoCreditEnabled: autoCreditEnabled,
     );
 
     final report = WeeklyInsightsReport(
@@ -153,6 +155,7 @@ class InsightsService {
   static Future<List<GoalWeeklyOutcome>> _evaluateGoalProgress({
     required DateTime weekStart,
     required bool hasLeftover,
+    required bool autoCreditEnabled,
   }) async {
     final goals = await GoalRepository.getAll();
     if (goals.isEmpty) return const [];
@@ -161,16 +164,18 @@ class InsightsService {
     for (final goal in goals) {
       final id = goal.id;
       if (id == null) continue;
-      final shouldCredit =
-          hasLeftover && goal.weeklyContribution > 0 && !goal.isComplete;
+      final shouldCredit = autoCreditEnabled &&
+          hasLeftover &&
+          goal.weeklyContribution > 0 &&
+          !goal.isComplete;
       final log = await GoalRepository.recordWeeklyOutcome(
         goal: goal,
         weekStart: weekStart,
         credited: shouldCredit,
-        amount: goal.weeklyContribution,
+        amount: shouldCredit ? goal.weeklyContribution : 0,
         note: shouldCredit
             ? 'Budgets met – contribution applied.'
-            : 'Budgets not met or contribution disabled.',
+            : 'Automatic goal contributions are disabled. Update goals manually if needed.',
       );
       logs[id] = log;
     }
@@ -194,7 +199,12 @@ class InsightsService {
           goal: displayGoal,
           credited: log?.credited ?? false,
           amountDelta: log?.amount ?? 0,
-          message: _goalMessage(displayGoal, log, hasLeftover),
+          message: _goalMessage(
+            displayGoal,
+            log,
+            hasLeftover,
+            autoCreditEnabled,
+          ),
         ),
       );
     }
@@ -222,13 +232,16 @@ class InsightsService {
   }
 
   /// Builds a friendly message explaining the credit outcome for a goal.
-  static String _goalMessage(
-      GoalModel goal, GoalProgressLog? log, bool hasLeftover) {
+  static String _goalMessage(GoalModel goal, GoalProgressLog? log,
+      bool hasLeftover, bool autoCreditEnabled) {
     if (goal.isComplete) {
       return "${goal.name} is already complete!";
     }
     if (log != null && log.credited && log.amount > 0) {
       return "Congrats! \$${log.amount.toStringAsFixed(2)} added to ${goal.name}.";
+    }
+    if (!autoCreditEnabled) {
+      return "Automatic contributions are turned off. Manage ${goal.name} manually.";
     }
     if (!hasLeftover) {
       return "${goal.name} wasn't topped up because no money was left over.";

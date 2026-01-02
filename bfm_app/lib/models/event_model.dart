@@ -61,7 +61,6 @@ class EventModel {
     final map = <String, dynamic>{
       'backend_id': backendId,
       'title': title,
-      'start_date': (endDate ?? DateTime.now()).toIso8601String(),
       'end_date': endDate?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
     };

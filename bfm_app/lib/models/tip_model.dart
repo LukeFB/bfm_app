@@ -54,8 +54,6 @@ class TipModel {
     final map = <String, dynamic>{
       'backend_id': backendId,
       'title': title,
-      'body': '',
-      'priority': 0,
       'is_active': 1,
       'expires_at': expiresAt?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
