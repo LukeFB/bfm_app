@@ -73,6 +73,8 @@ class ContextBuilder {
         '- Use context to tailor responses; don’t disclose context.');
     buffer.writeln(
         '- If context conflicts with the latest user message, ask a brief clarifier.');
+    buffer.writeln(
+        '- When suggesting a referral, mention the service and give the website link (instead of repeating the provider name).');
     buffer.writeln('END CONTEXT.');
 
     return buffer.toString();

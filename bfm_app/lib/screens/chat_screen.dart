@@ -22,6 +22,7 @@ import 'package:flutter/material.dart';
 import 'package:bfm_app/screens/dashboard_screen.dart';
 
 import 'package:bfm_app/models/chat_message.dart';
+import 'package:bfm_app/repositories/referral_repository.dart';
 import 'package:bfm_app/services/ai_client.dart';
 import 'package:bfm_app/services/chat_storage.dart';
 import 'package:bfm_app/services/api_key_store.dart';
@@ -52,6 +53,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // UI guards
   bool _sending = false;
   bool _hasApiKey = false;
+  Map<String, String> _referralLinks = {};
 
   // How many most-recent turns to send with each request
   static const int kContextWindowTurns = 12;
@@ -100,6 +102,26 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _hasApiKey = (key != null && key.isNotEmpty);
     });
+
+    await _loadReferralLinks();
+  }
+
+  Future<void> _loadReferralLinks() async {
+    try {
+      final referrals = await ReferralRepository.getActive(limit: 100);
+      final linkMap = <String, String>{};
+      for (final ref in referrals) {
+        final name = ref.organisationName?.trim();
+        final website = ref.website?.trim();
+        if (name?.isNotEmpty == true && website?.isNotEmpty == true) {
+          linkMap[name!] = website!;
+        }
+      }
+      if (!mounted) return;
+      setState(() => _referralLinks = linkMap);
+    } catch (_) {
+      // Swallow errors; chat can still function without link expansion.
+    }
   }
 
   /// Helper to jump the ListView to the bottom after the next frame.
@@ -140,9 +162,10 @@ class _ChatScreenState extends State<ChatScreen> {
           .toList();
 
       final replyText = await _ai.complete(recent);
+      final replyWithLinks = _injectReferralLinks(replyText);
 
       // Append assistant response and persist
-      final botMsg = ChatMessage.assistant(replyText);
+      final botMsg = ChatMessage.assistant(replyWithLinks);
       _messages.add(botMsg);
       await _store.saveMessages(_messages);
       setState(() {});
@@ -201,11 +224,30 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Converts raw exceptions into user-friendly hints (e.g., missing API key).
   String _prettyErr(Object e) {
     final s = e.toString();
-    // Give a short hint if key is missing
     if (s.contains('No API key') || s.contains('401')) {
       return "\n\nTip: Add your API key in Settings.";
     }
-    return '';
+    // Surface the underlying error (trimmed) so users know what to fix.
+    final trimmed = s.length > 180 ? '${s.substring(0, 177)}…' : s;
+    return '\n\nError: $trimmed';
+  }
+
+  String _injectReferralLinks(String text) {
+    if (_referralLinks.isEmpty) return text;
+    var output = text;
+    _referralLinks.forEach((name, url) {
+      final pattern =
+          RegExp(r'\b' + RegExp.escape(name) + r'\b', caseSensitive: false);
+      output = output.replaceFirstMapped(pattern, (match) {
+        final start = match.start;
+        if (start > 0 && match.input[start - 1] == '[') {
+          return match.group(0)!; // already linked via markdown
+        }
+        final display = match.group(0)!;
+        return '[$display]($url)';
+      });
+    });
+    return output;
   }
 
   /// Renders chat history, the message composer, and clear/send controls.

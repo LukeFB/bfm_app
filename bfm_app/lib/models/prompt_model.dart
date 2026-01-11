@@ -356,66 +356,71 @@ class PromptModel {
     return buffer.toString();
   }
 
-  /// Lists the most recent active referral resources, including contact details,
-  /// so the assistant can suggest real providers.
+  /// Lists referral services using a short "service via website/org" format to
+  /// keep tokens low while still letting the model mention useful links.
   Future<String> _buildReferralContext() async {
+    const int _kMaxReferrals = 20;
     final referrals = await _db.query(
       'referrals',
       columns: [
         'organisation_name',
         'services',
-        'phone',
-        'email',
         'website',
-        'region',
-        'demographics',
-        'availability',
-        'is_active',
       ],
       where: 'is_active = 1',
       orderBy: 'updated_at DESC',
+      limit: _kMaxReferrals,
     );
 
     if (referrals.isEmpty) {
       return "No referral resources stored locally.\n";
     }
 
-    final buffer = StringBuffer("Available referral resources:\n");
+    final buffer = StringBuffer(
+      "Referral services (service first, share website instead of org name):\n",
+    );
     for (final r in referrals) {
-      final name = (r['organisation_name'] ?? 'Community service')
-          .toString()
-          .trim();
-      final services = (r['services'] ?? '').toString().trim();
-      final region = (r['region'] ?? '').toString().trim();
-      final audience = (r['demographics'] ?? '').toString().trim();
-      final availability = (r['availability'] ?? '').toString().trim();
+      final name =
+          (r['organisation_name'] ?? 'Community service').toString().trim();
+      final services =
+          _clipReferralSummary((r['services'] ?? '').toString().trim());
+      final website = _fmtReferralWebsite((r['website'] ?? '').toString());
 
-      final contactParts = <String>[];
-      if ((r['phone'] ?? '').toString().trim().isNotEmpty) {
-        contactParts.add('phone ${r['phone']}');
+      final entry = StringBuffer('- $services via ');
+      if (website.isNotEmpty) {
+        entry.write(website);
+        if (name.isNotEmpty) {
+          entry.write(' (');
+          entry.write(name);
+          entry.write(')');
+        }
+      } else {
+        entry.write(name.isNotEmpty ? name : 'local provider');
       }
-      if ((r['email'] ?? '').toString().trim().isNotEmpty) {
-        contactParts.add(r['email'].toString().trim());
-      }
-      if ((r['website'] ?? '').toString().trim().isNotEmpty) {
-        contactParts.add(r['website'].toString().trim());
-      }
-      final contactLine = contactParts.isEmpty
-          ? ''
-          : ' Contact: ${contactParts.join(', ')}';
 
-      final descriptors = <String>[];
-      if (services.isNotEmpty) descriptors.add(services);
-      if (availability.isNotEmpty) descriptors.add('Hours: $availability');
-      if (audience.isNotEmpty) descriptors.add('For: $audience');
-      if (region.isNotEmpty) descriptors.add('Region: $region');
-
-      buffer.writeln(
-        "- $name${descriptors.isEmpty ? '' : ' — ${descriptors.join(' | ')}'}$contactLine",
-      );
+      buffer.writeln(entry.toString());
     }
     buffer.writeln();
     return buffer.toString();
+  }
+
+  String _clipReferralSummary(String raw, {int maxChars = 90}) {
+    final normalised = raw.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (normalised.isEmpty) return 'general support';
+    if (normalised.length <= maxChars) return normalised;
+    return '${normalised.substring(0, maxChars - 1)}…';
+  }
+
+  String _fmtReferralWebsite(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    if (trimmed.startsWith('https://')) {
+      return trimmed.substring(8);
+    }
+    if (trimmed.startsWith('http://')) {
+      return trimmed.substring(7);
+    }
+    return trimmed;
   }
 
   /// Summarises upcoming events (end date filter) for quick suggestions.
@@ -544,7 +549,7 @@ class PromptModel {
   Future<String> _buildAlertContext() async {
     final alerts = await _db.query(
       'alerts',
-      columns: ['text', 'icon'],
+      columns: ['title', 'message', 'icon'],
       orderBy: 'id DESC',
       limit: 4,
     );
@@ -554,8 +559,12 @@ class PromptModel {
     final buffer = StringBuffer("Active alerts:\n");
     for (final alert in alerts) {
       final icon = (alert['icon'] ?? '⚠️').toString();
-      final text = (alert['text'] ?? '').toString();
-      buffer.writeln("- $icon $text");
+      final message = (alert['message'] ?? '').toString().trim();
+      final title = (alert['title'] ?? '').toString().trim();
+      final display = message.isNotEmpty
+          ? message
+          : (title.isNotEmpty ? title : 'Alert');
+      buffer.writeln("- $icon $display");
     }
     buffer.writeln();
     return buffer.toString();
