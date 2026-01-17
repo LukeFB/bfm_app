@@ -32,7 +32,7 @@ class AiClient {
   // TODO: gpt-5-mini
   static const String _model = 'gpt-4o-mini';
   static const double _temperature = 0.7;
-  static const int? _maxTokens = 800; // Cost control
+  static const int _maxTokens = 800; // Cost control
 
   // TODO: refine with stakeholders as needed (BFM policy)
   static const String _systemPrompt = '''
@@ -68,7 +68,8 @@ First chat defaults: ask preferred name, student status, what they want help wit
     // Build PRIVATE CONTEXT fresh each turn
     final contextStr = await ContextBuilder.build(
       recentTurns: recentTurns,
-      includeBudgets: true,   // TODO: expose as a Settings toggle
+      includeBudgets: true, // TODO: expose as a Settings toggle
+      includeCategories: true,
       includeReferrals: true, // TODO: expose as a Settings toggle
     );
 
@@ -83,8 +84,7 @@ First chat defaults: ask preferred name, student status, what they want help wit
       'messages': messages,
       'temperature': _temperature,
     };
-    if (_maxTokens != null) body['max_tokens'] = _maxTokens;
-
+    body['max_tokens'] = _maxTokens;
 
     // retry
     http.Response res;

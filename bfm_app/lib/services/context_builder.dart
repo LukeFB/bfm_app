@@ -17,9 +17,11 @@
 /// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
+import 'package:bfm_app/models/onboarding_response.dart';
 import 'package:bfm_app/models/prompt_model.dart';
 import 'package:bfm_app/models/chat_message.dart';
 import 'package:bfm_app/services/chat_storage.dart';
+import 'package:bfm_app/services/onboarding_store.dart';
 
 /// Produces the assistant's private context using stored chat + DB data.
 class ContextBuilder {
@@ -42,6 +44,14 @@ class ContextBuilder {
     final persona = await _getPersonaTag();
     if (persona != null) {
       buffer.writeln('persona: $persona');
+    }
+
+    final onboardingProfile = await _buildOnboardingProfileSummary();
+    if (onboardingProfile.isNotEmpty) {
+      buffer.writeln(
+        '\nonboarding_profile (optional answers provided by user):',
+      );
+      buffer.writeln(onboardingProfile);
     }
 
     // ---- Past conversation summary
@@ -70,11 +80,14 @@ class ContextBuilder {
     // ---- Guidance for AI
     buffer.writeln('\nGuidance:');
     buffer.writeln(
-        '- Use context to tailor responses; don’t disclose context.');
+      '- Use context to tailor responses; don’t disclose context.',
+    );
     buffer.writeln(
-        '- If context conflicts with the latest user message, ask a brief clarifier.');
+      '- If context conflicts with the latest user message, ask a brief clarifier.',
+    );
     buffer.writeln(
-        '- When suggesting a referral, mention the service and give the website link (instead of repeating the provider name).');
+      '- When suggesting a referral, mention the service and give the website link (instead of repeating the provider name).',
+    );
     buffer.writeln('END CONTEXT.');
 
     return buffer.toString();
@@ -90,7 +103,9 @@ class ContextBuilder {
     if (all.isEmpty) return '';
 
     const kKeepTail = 8;
-    final head = (all.length > kKeepTail) ? all.sublist(0, all.length - kKeepTail) : const <ChatMessage>[];
+    final head = (all.length > kKeepTail)
+        ? all.sublist(0, all.length - kKeepTail)
+        : const <ChatMessage>[];
     final tail = all.takeLast(kKeepTail).toList();
 
     final bullets = <String>[];
@@ -113,7 +128,10 @@ class ContextBuilder {
   }
 
   /// Picks the first few user messages and clips them for summary bullets.
-  static List<String> _compressByTopic(List<ChatMessage> msgs, {int limit = 5}) {
+  static List<String> _compressByTopic(
+    List<ChatMessage> msgs, {
+    int limit = 5,
+  }) {
     final out = <String>[];
     for (final m in msgs) {
       if (m.role == ChatRole.user) {
@@ -141,6 +159,18 @@ class ContextBuilder {
   static String _clip(String s, int max) {
     final t = s.trim().replaceAll('\n', ' ');
     return (t.length <= max) ? t : '${t.substring(0, max - 1)}…';
+  }
+
+  /// Loads the onboarding answers and formats them for the private context.
+  static Future<String> _buildOnboardingProfileSummary() async {
+    final OnboardingResponse? response = await OnboardingStore().getResponse();
+    if (response == null || !response.hasAnswers) return '';
+    final map = response.toDisplayMap();
+    if (map.isEmpty) return '';
+    final lines = map.entries
+        .map((entry) => '- ${entry.key}: ${entry.value}')
+        .join('\n');
+    return lines;
   }
 }
 

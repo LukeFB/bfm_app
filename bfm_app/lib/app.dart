@@ -37,6 +37,7 @@ import 'package:bfm_app/screens/insights_screen.dart';
 import 'package:bfm_app/screens/settings_screen.dart';
 import 'package:bfm_app/screens/bank_connect_screen.dart'; // BankConnect screen
 import 'package:bfm_app/screens/debug_screen.dart'; // Debug
+import 'package:bfm_app/screens/onboarding_screen.dart';
 
 import 'package:bfm_app/screens/budget_build_screen.dart';
 import 'package:bfm_app/screens/enter_pin_screen.dart';
@@ -46,6 +47,7 @@ import 'package:bfm_app/services/pin_store.dart';
 import 'package:bfm_app/utils/app_route_observer.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bfm_app/services/onboarding_store.dart';
 
 /// Root gate widget that blocks the navigation stack until a user completes
 /// biometrics or PIN auth. Owned by `MyApp` and pushed right after launch.
@@ -150,7 +152,8 @@ class _LockGateState extends State<LockGate> {
       }
     } on PlatformException catch (err) {
       if (!mounted) return;
-      final disableDeviceAuth = err.code == auth_error.notAvailable ||
+      final disableDeviceAuth =
+          err.code == auth_error.notAvailable ||
           err.code == auth_error.passcodeNotSet;
       setState(() {
         _status = _LockStatus.idle;
@@ -183,11 +186,14 @@ class _LockGateState extends State<LockGate> {
     });
 
     try {
+      final onboardingComplete = await OnboardingStore().isComplete();
       final prefs = await SharedPreferences.getInstance();
       final connected = prefs.getBool('bank_connected') ?? false;
 
       String nextRoute;
-      if (!connected) {
+      if (!onboardingComplete) {
+        nextRoute = '/onboarding';
+      } else if (!connected) {
         nextRoute = '/bankconnect';
       } else {
         final budgets = await BudgetRepository.getAll();
@@ -257,14 +263,14 @@ class _LockGateState extends State<LockGate> {
 
   /// Helper that keeps spinner logic in one place so the widget tree reads well.
   bool get _showProgress =>
-      _status == _LockStatus.initializing || _status == _LockStatus.authenticating;
+      _status == _LockStatus.initializing ||
+      _status == _LockStatus.authenticating;
 
   /// Renders the secure login shell with action cards, error copy, and spinners.
   /// Keeps button enabled/disabled state aligned with our private state flags.
   @override
   Widget build(BuildContext context) {
-    final canShowActions =
-        !_showProgress && _status != _LockStatus.routing;
+    final canShowActions = !_showProgress && _status != _LockStatus.routing;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Secure Login')),
@@ -315,7 +321,8 @@ class _LockGateState extends State<LockGate> {
                         if (_pinAvailable)
                           _LockGateActionCard(
                             title: 'App PIN',
-                            description: 'Enter the PIN you created for this app.',
+                            description:
+                                'Enter the PIN you created for this app.',
                             buttonLabel: 'Enter PIN',
                             onPressed: _launchPinEntry,
                           )
@@ -365,10 +372,7 @@ class _ActionColumn extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         for (final child in children)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: child,
-          ),
+          Padding(padding: const EdgeInsets.only(bottom: 16), child: child),
       ],
     );
   }
@@ -401,10 +405,7 @@ class _LockGateActionCard extends StatelessWidget {
           children: [
             Text(title, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            Text(
-              description,
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
+            Text(description, style: Theme.of(context).textTheme.bodyMedium),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
@@ -435,12 +436,15 @@ class MyApp extends StatelessWidget {
       title: 'BFM App',
       theme: ThemeData(
         primaryColor: const Color(0xFF005494),
-        colorScheme: ColorScheme.fromSwatch().copyWith(secondary: const Color(0xFFFF6934)),
+        colorScheme: ColorScheme.fromSwatch().copyWith(
+          secondary: const Color(0xFFFF6934),
+        ),
         scaffoldBackgroundColor: Colors.grey[100],
         fontFamily: 'Roboto',
       ),
       home: const LockGate(), // Set the home to our LockGate
       routes: {
+        '/onboarding': (_) => const OnboardingScreen(),
         '/bankconnect': (_) => const BankConnectScreen(),
         '/dashboard': (_) => const DashboardScreen(),
         '/transaction': (_) => const TransactionsScreen(),
