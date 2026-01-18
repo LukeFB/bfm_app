@@ -172,9 +172,9 @@ class _GoalsScreenState extends State<GoalsScreen> {
             onPressed: () async {
               final newGoal = GoalModel(
                 name: nameController.text.trim(),
-                amount: double.tryParse(amountController.text.trim()) ?? 0,
+                amount: _parseCurrency(amountController.text.trim()),
                 weeklyContribution:
-                    double.tryParse(weeklyController.text.trim()) ?? 0,
+                    _parseCurrency(weeklyController.text.trim()),
               );
               await GoalRepository.insert(newGoal);
               _refreshGoals();
@@ -228,11 +228,14 @@ class _GoalsScreenState extends State<GoalsScreen> {
             onPressed: () async {
               final updated = goal.copyWith(
                 name: nameController.text.trim(),
-                amount: double.tryParse(amountController.text.trim()) ??
-                    goal.amount,
-                weeklyContribution:
-                    double.tryParse(weeklyController.text.trim()) ??
-                        goal.weeklyContribution,
+                amount: _parseCurrency(
+                  amountController.text.trim(),
+                  fallback: goal.amount,
+                ),
+                weeklyContribution: _parseCurrency(
+                  weeklyController.text.trim(),
+                  fallback: goal.weeklyContribution,
+                ),
               );
               await GoalRepository.update(updated);
               _refreshGoals();
@@ -281,8 +284,7 @@ class _GoalsScreenState extends State<GoalsScreen> {
               child: const Text("Cancel")),
           FilledButton(
             onPressed: () async {
-              final amount =
-                  double.tryParse(amountController.text.trim()) ?? 0.0;
+              final amount = _parseCurrency(amountController.text.trim());
               if (amount <= 0) return;
               final applied =
                   await GoalRepository.addManualContribution(goal, amount);
@@ -315,5 +317,14 @@ class _GoalsScreenState extends State<GoalsScreen> {
         ],
       ),
     );
+  }
+  
+  /// Parses user-entered currency strings, tolerating commas and symbols.
+  double _parseCurrency(String raw, {double fallback = 0.0}) {
+    if (raw.trim().isEmpty) return fallback;
+    final sanitized = raw.replaceAll(RegExp(r'[^0-9\.\-]'), '');
+    final value = double.tryParse(sanitized);
+    if (value == null || value.isNaN || value.isInfinite) return fallback;
+    return value;
   }
 }
