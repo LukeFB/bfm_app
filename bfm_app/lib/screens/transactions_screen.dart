@@ -60,31 +60,53 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           if (txns.isEmpty) {
             return const Center(child: Text("No transactions yet."));
           }
-          return ListView.builder(
-            itemCount: txns.length,
-            itemBuilder: (context, index) {
-              final t = txns[index];
-              return Card(
-                margin: const EdgeInsets.all(8),
-                child: ListTile(
-                  leading: Icon(
-                    t.type == "expense" ? Icons.remove_circle : Icons.add_circle,
-                    color: t.type == "expense" ? Colors.red : Colors.green,
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: Text(
+                  "Hold a transaction to delete it.",
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.black54,
                   ),
-                  title: Text(t.description),
-                  subtitle: Text("${t.date} • Category ID: ${t.categoryId ?? 'None'}"),
-                  trailing: Text(
-                    (t.type == "expense" ? "-" : "+") +
-                        "\$${t.amount.abs().toStringAsFixed(2)}",
-                    style: TextStyle(
-                      color: t.type == "expense" ? Colors.red : Colors.green,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  onLongPress: () => _deleteTransaction(t.id!),
                 ),
-              );
-            },
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: txns.length,
+                  itemBuilder: (context, index) {
+                    final t = txns[index];
+                    return Card(
+                      margin: const EdgeInsets.all(8),
+                      child: ListTile(
+                        leading: Icon(
+                          t.type == "expense"
+                              ? Icons.remove_circle
+                              : Icons.add_circle,
+                          color:
+                              t.type == "expense" ? Colors.red : Colors.green,
+                        ),
+                        title: Text(t.description),
+                        subtitle: Text(
+                            "${t.date} • Category ID: ${t.categoryId ?? 'None'}"),
+                        trailing: Text(
+                          (t.type == "expense" ? "-" : "+") +
+                              "\$${t.amount.abs().toStringAsFixed(2)}",
+                          style: TextStyle(
+                            color:
+                                t.type == "expense" ? Colors.red : Colors.green,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        onLongPress: () => _deleteTransaction(t.id!),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
           );
         },
       ),

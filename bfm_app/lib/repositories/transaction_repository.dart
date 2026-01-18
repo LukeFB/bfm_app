@@ -39,20 +39,26 @@ class TransactionRepository {
   }
 
   /// Returns every transaction, optionally filtered by category id.
-  static Future<List<TransactionModel>> getAll({int? categoryId}) async {
+  static Future<List<TransactionModel>> getAll({
+    int? categoryId,
+    bool includeExcluded = true,
+  }) async {
     final db = await AppDatabase.instance.database;
-    List<Map<String, dynamic>> result;
-
+    final whereClauses = <String>[];
+    final whereArgs = <dynamic>[];
     if (categoryId != null) {
-      result = await db.query(
-        'transactions',
-        where: 'category_id = ?',
-        whereArgs: [categoryId],
-        orderBy: 'date DESC',
-      );
-    } else {
-      result = await db.query('transactions', orderBy: 'date DESC');
+      whereClauses.add('category_id = ?');
+      whereArgs.add(categoryId);
     }
+    if (!includeExcluded) {
+      whereClauses.add('excluded = 0');
+    }
+    final result = await db.query(
+      'transactions',
+      where: whereClauses.isEmpty ? null : whereClauses.join(' AND '),
+      whereArgs: whereClauses.isEmpty ? null : whereArgs,
+      orderBy: 'date DESC',
+    );
 
     return result.map((e) => TransactionModel.fromMap(e)).toList();
   }
@@ -71,6 +77,7 @@ class TransactionRepository {
       FROM transactions t
       LEFT JOIN categories c ON t.category_id = c.id
       WHERE t.type = 'expense'
+        AND t.excluded = 0
       GROUP BY c.name
     ''');
 
@@ -102,6 +109,7 @@ class TransactionRepository {
       FROM transactions
       WHERE type = 'expense'
         AND date BETWEEN ? AND ?
+        AND excluded = 0
     ''', [start, end]);
 
     final raw = (res.isNotEmpty ? res.first['spent'] : null);
@@ -118,6 +126,7 @@ class TransactionRepository {
       SELECT category_id, ABS(SUM(amount)) AS spent
       FROM transactions
       WHERE type = 'expense'
+        AND excluded = 0
         AND date BETWEEN ? AND ?
       GROUP BY category_id
     ''', [_iso(start), _iso(end)]);
@@ -138,6 +147,7 @@ class TransactionRepository {
       SELECT SUM(amount) AS income
       FROM transactions
       WHERE type = 'income'
+        AND excluded = 0
         AND date BETWEEN ? AND ?
     ''', [_iso(start), _iso(end)]);
     final value = rows.isNotEmpty ? rows.first['income'] : null;
@@ -169,14 +179,52 @@ class TransactionRepository {
   static Future<void> upsertFromAkahu(List<Map<String, dynamic>> items) async {
     if (items.isEmpty) return;
     final db = await AppDatabase.instance.database;
-    final batch = db.batch();
 
+    final transactions = <TransactionModel>[];
+    final hashes = <String>[];
     for (final item in items) {
       final txn = TransactionModel.fromAkahu(item);
+      transactions.add(txn);
+      final hash = txn.akahuHash?.trim();
+      if (hash != null && hash.isNotEmpty) {
+        hashes.add(hash);
+      }
+    }
+
+    final existingExcludedByHash = <String, int>{};
+    if (hashes.isNotEmpty) {
+      final unique = hashes.toSet().toList();
+      const chunkSize = 400;
+      for (var i = 0; i < unique.length; i += chunkSize) {
+        final end = (i + chunkSize) > unique.length ? unique.length : (i + chunkSize);
+        final chunk = unique.sublist(i, end);
+        final placeholders = List.filled(chunk.length, '?').join(',');
+        final rows = await db.rawQuery(
+          'SELECT akahu_hash, excluded FROM transactions WHERE akahu_hash IN ($placeholders)',
+          chunk,
+        );
+        for (final row in rows) {
+          final hash = row['akahu_hash'] as String?;
+          if (hash == null) continue;
+          final excludedFlag = _boolFromDb(row['excluded']) ? 1 : 0;
+          existingExcludedByHash[hash] = excludedFlag;
+        }
+      }
+    }
+
+    final batch = db.batch();
+
+    for (var i = 0; i < transactions.length; i++) {
+      final txn = transactions[i];
+      final item = items[i];
       final categoryId = await _resolveCategoryId(item, txn);
       final map = txn.toDbMap();
       map['category_id'] = categoryId;
       map['category_name'] = txn.categoryName ?? 'Uncategorized';
+      final hash = txn.akahuHash;
+      if (hash != null && existingExcludedByHash.containsKey(hash)) {
+        map['excluded'] = existingExcludedByHash[hash];
+      }
       batch.insert(
         'transactions',
         map,
@@ -249,12 +297,40 @@ class TransactionRepository {
     final res = await db.rawQuery('''
       SELECT description
       FROM transactions
-      WHERE type='expense' AND category_id IS NULL
+      WHERE type='expense'
+        AND excluded = 0
+        AND category_id IS NULL
       GROUP BY description
       ORDER BY COUNT(*) DESC
       LIMIT ?
     ''', [limit]);
     return res.map((e) => (e['description'] as String?) ?? '').toList();
+  }
+
+  /// Toggles whether a transaction should be ignored by spend calculations.
+  static Future<void> setExcluded({
+    required int id,
+    required bool excluded,
+  }) async {
+    final db = await AppDatabase.instance.database;
+    await db.update(
+      'transactions',
+      {'excluded': excluded ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  static bool _boolFromDb(dynamic raw) {
+    if (raw is bool) return raw;
+    if (raw is num) return raw != 0;
+    if (raw is String) {
+      final normalized = raw.trim().toLowerCase();
+      return normalized == '1' ||
+          normalized == 'true' ||
+          normalized == 'yes';
+    }
+    return false;
   }
 
   /// Local normaliser (kept in sync with analysis) that strips symbols and

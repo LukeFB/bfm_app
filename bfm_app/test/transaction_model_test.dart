@@ -109,5 +109,34 @@ void main() {
     expect(rows.first['category_name'], 'Uncategorized');
     expect(rows.first['akahu_hash'], isNotNull);
   });
+
+  test('Excluded flag persists through upserts', () async {
+    await TransactionRepository.upsertFromAkahu([Map<String, dynamic>.from(categorized)]);
+    final db = await AppDatabase.instance.database;
+    var rows = await db.query('transactions');
+    expect(rows.length, 1);
+    final id = rows.first['id'] as int?;
+    final hash = rows.first['akahu_hash'] as String?;
+    expect(id, isNotNull);
+    expect(hash, isNotNull);
+    expect(rows.first['excluded'], 0);
+
+    await TransactionRepository.setExcluded(id: id!, excluded: true);
+    rows = await db.query(
+      'transactions',
+      where: 'akahu_hash = ?',
+      whereArgs: [hash],
+    );
+    expect(rows.first['excluded'], 1);
+
+    // Upserting the same payload should preserve the exclusion flag.
+    await TransactionRepository.upsertFromAkahu([Map<String, dynamic>.from(categorized)]);
+    rows = await db.query(
+      'transactions',
+      where: 'akahu_hash = ?',
+      whereArgs: [hash],
+    );
+    expect(rows.first['excluded'], 1);
+  });
 }
 

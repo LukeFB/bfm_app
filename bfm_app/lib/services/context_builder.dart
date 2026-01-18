@@ -88,6 +88,10 @@ class ContextBuilder {
     buffer.writeln(
       '- When suggesting a referral, mention the service and give the website link (instead of repeating the provider name).',
     );
+    buffer.writeln('- Data available to you: current weekly budgets per category, this week\'s category spend vs limits, savings goals with progress, active referral services (with websites), upcoming events, the latest weekly report, and any active alerts.');
+    buffer.writeln('- When users ask for amounts or limits you already see, respond with the precise figures from context;');
+    buffer.writeln('- Offer budget coaching using the current limits/spend (compare expenses per category to average expenses in those categories, suggest reallocation, warn about overruns, celebrate under-budget categories).');
+    
     buffer.writeln('END CONTEXT.');
 
     return buffer.toString();

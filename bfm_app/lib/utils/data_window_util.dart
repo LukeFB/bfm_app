@@ -34,7 +34,10 @@ class DataWindowUtil {
   static Future<({String start, String end, int days, double weeks})>
       getTransactionDateWindow() async {
     final db = await AppDatabase.instance.database;
-    final row = (await db.rawQuery('SELECT MIN(date) AS start, MAX(date) AS end FROM transactions')).first;
+    final row = (await db.rawQuery(
+      'SELECT MIN(date) AS start, MAX(date) AS end FROM transactions WHERE excluded = 0',
+    ))
+        .first;
 
     final now = DateTime.now();
     final startStr = (row['start'] as String?) ?? _fmt(now);

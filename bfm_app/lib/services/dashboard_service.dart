@@ -49,7 +49,9 @@ class DashboardService {
       '''
       SELECT IFNULL(SUM(ABS(amount)),0) AS v
       FROM transactions
-      WHERE type='expense' AND date BETWEEN ? AND ?;
+      WHERE type='expense'
+        AND excluded = 0
+        AND date BETWEEN ? AND ?;
     ''',
       [start, end],
     );
@@ -143,7 +145,9 @@ class DashboardService {
       '''
       SELECT IFNULL(SUM(amount),0) AS v
       FROM transactions
-      WHERE type='income' AND date BETWEEN ? AND ?;
+      WHERE type='income'
+        AND excluded = 0
+        AND date BETWEEN ? AND ?;
     ''',
       [start, end],
     );
@@ -162,7 +166,9 @@ class DashboardService {
       '''
       SELECT IFNULL(SUM(amount),0) AS v
       FROM transactions
-      WHERE type='income' AND date BETWEEN ? AND ?;
+      WHERE type='income'
+        AND excluded = 0
+        AND date BETWEEN ? AND ?;
     ''',
       [start, end],
     );
@@ -212,7 +218,9 @@ class DashboardService {
       '''
       SELECT category_id, SUM(ABS(amount)) AS spent
       FROM transactions
-      WHERE type='expense' AND date BETWEEN ? AND ?
+      WHERE type='expense'
+        AND excluded = 0
+        AND date BETWEEN ? AND ?
       GROUP BY category_id;
       ''',
       [start, end],

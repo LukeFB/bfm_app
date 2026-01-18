@@ -105,6 +105,12 @@ class _EnterPinScreenState extends State<EnterPinScreen> {
                 ),
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) {
+                  if (!_verifying) {
+                    _verifyPin();
+                  }
+                },
                 obscureText: true,
                 maxLength: 8,
                 validator: _validatePin,

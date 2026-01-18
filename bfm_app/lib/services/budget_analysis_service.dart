@@ -36,7 +36,7 @@ class BudgetAnalysisService {
   /// creates recurring transaction entries when the cadence looks weekly or
   /// monthly. Keeps detection local so we don't hit backend APIs.
   static Future<void> identifyRecurringTransactions() async {
-    final allTxns = await TransactionRepository.getAll();
+    final allTxns = await TransactionRepository.getAll(includeExcluded: false);
     if (allTxns.isEmpty) return;
 
     final now = DateTime.now();
@@ -101,6 +101,7 @@ class BudgetAnalysisService {
       LEFT JOIN categories c ON c.id = t.category_id
       WHERE date(t.date) BETWEEN ? AND ?
         AND t.type='expense'
+        AND t.excluded = 0
         AND c.name IS NOT NULL
         AND c.name <> 'Uncategorized'
       GROUP BY t.category_id, c.name, c.usage_count
@@ -139,6 +140,7 @@ class BudgetAnalysisService {
       LEFT JOIN categories c ON c.id = t.category_id
       WHERE t.type='expense'
         AND date(t.date) BETWEEN ? AND ?
+        AND t.excluded = 0
         AND (t.category_id IS NULL OR c.name IS NULL OR c.name = 'Uncategorized')
       GROUP BY t.description
       HAVING description IS NOT NULL AND TRIM(description) <> ''

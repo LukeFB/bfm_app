@@ -25,9 +25,9 @@
 ///     and routing so tests can stub the dependencies.
 /// ---------------------------------------------------------------------------
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:local_auth/error_codes.dart' as auth_error;
-import 'package:local_auth/local_auth.dart'; // Auth
+// import 'package:flutter/services.dart';
+// import 'package:local_auth/error_codes.dart' as auth_error;
+// import 'package:local_auth/local_auth.dart'; // Auth
 
 import 'package:bfm_app/screens/dashboard_screen.dart';
 import 'package:bfm_app/screens/transactions_screen.dart';
@@ -64,12 +64,10 @@ enum _LockStatus { initializing, idle, authenticating, routing }
 
 /// Handles auth orchestration plus the conditional routing side effects.
 class _LockGateState extends State<LockGate> {
-  final LocalAuthentication _localAuth = LocalAuthentication();
+  // final LocalAuthentication _localAuth = LocalAuthentication();
   final PinStore _pinStore = PinStore();
 
   _LockStatus _status = _LockStatus.initializing;
-  bool _deviceSecurityAvailable = false;
-  bool _biometricHardwareDetected = false;
   bool _pinAvailable = false;
   bool _navigating = false;
   String? _errorMessage;
@@ -91,31 +89,33 @@ class _LockGateState extends State<LockGate> {
       _errorMessage = null;
     });
 
-    bool supported = false;
-    bool hasBiometrics = false;
-    try {
-      supported = await _localAuth.isDeviceSupported();
-      hasBiometrics = await _localAuth.canCheckBiometrics;
-    } on PlatformException {
-      supported = false;
-      hasBiometrics = false;
-    }
+    // Device security temporarily disabled; skip LocalAuthentication bootstrap.
+    // bool supported = false;
+    // bool hasBiometrics = false;
+    // try {
+    //   supported = await _localAuth.isDeviceSupported();
+    //   hasBiometrics = await _localAuth.canCheckBiometrics;
+    // } on PlatformException {
+    //   supported = false;
+    //   hasBiometrics = false;
+    // }
 
     final pinExists = await _pinStore.hasPin();
     if (!mounted) return;
 
     setState(() {
-      _deviceSecurityAvailable = supported;
-      _biometricHardwareDetected = hasBiometrics;
+      // _deviceSecurityAvailable = supported;
+      // _biometricHardwareDetected = hasBiometrics;
       _pinAvailable = pinExists;
       _status = _LockStatus.idle;
     });
 
-    if (supported) {
-      await _handleDeviceAuth(autoTriggered: true);
-    }
+    // if (supported) {
+    //   await _handleDeviceAuth(autoTriggered: true);
+    // }
   }
 
+  /*
   /// Asks LocalAuthentication to verify the user. If `autoTriggered` is false,
   /// the UI explicitly showed a button tap so we reset error messaging.
   /// Successful auth flows straight into `_routeAfterAuth`.
@@ -170,6 +170,7 @@ class _LockGateState extends State<LockGate> {
       });
     }
   }
+  */
 
   /// Looks at persisted state (bank connection flag + budgets) to decide which
   /// named route to push after auth. Guarded by `_navigating` so multiple async
@@ -243,6 +244,7 @@ class _LockGateState extends State<LockGate> {
     }
   }
 
+  /*
   /// Converts the LocalAuth error codes into human copy so the screen can
   /// explain what went wrong and how to retry.
   String _friendlyAuthError(PlatformException error) {
@@ -260,6 +262,7 @@ class _LockGateState extends State<LockGate> {
         return error.message ?? 'Authentication error. Try a different method.';
     }
   }
+  */
 
   /// Helper that keeps spinner logic in one place so the widget tree reads well.
   bool get _showProgress =>
@@ -292,7 +295,7 @@ class _LockGateState extends State<LockGate> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Use device security when available, or fall back to your app PIN.',
+                    'Enter your Bay Financial Mentors app PIN to continue.',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
@@ -305,19 +308,6 @@ class _LockGateState extends State<LockGate> {
                     const SizedBox(height: 16),
                     _ActionColumn(
                       children: [
-                        if (_deviceSecurityAvailable)
-                          _LockGateActionCard(
-                            title: _biometricHardwareDetected
-                                ? 'Biometric unlock'
-                                : 'Device PIN unlock',
-                            description: _biometricHardwareDetected
-                                ? 'Use Face ID / Touch ID.'
-                                : 'Use your device passcode.',
-                            buttonLabel: 'Use device security',
-                            onPressed: _status == _LockStatus.authenticating
-                                ? null
-                                : () => _handleDeviceAuth(),
-                          ),
                         if (_pinAvailable)
                           _LockGateActionCard(
                             title: 'App PIN',
@@ -330,7 +320,7 @@ class _LockGateState extends State<LockGate> {
                           _LockGateActionCard(
                             title: 'Create an app PIN',
                             description:
-                                'Recommended for emulators or devices without biometrics.',
+                                'Create a PIN to unlock the app on this device.',
                             buttonLabel: 'Create PIN',
                             onPressed: _launchPinSetup,
                           ),
@@ -378,7 +368,7 @@ class _ActionColumn extends StatelessWidget {
   }
 }
 
-/// Shared card used for both biometrics/device PIN and app PIN actions. Keeps
+/// Shared card used for the LockGate action buttons. Keeps
 /// layout consistent and makes the logic above easier to read.
 class _LockGateActionCard extends StatelessWidget {
   const _LockGateActionCard({

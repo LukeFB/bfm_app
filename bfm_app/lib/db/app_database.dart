@@ -50,7 +50,7 @@ class AppDatabase {
     // Open the database with version and an onUpgrade callback
     return await openDatabase(
       path,
-      version: 16,
+      version: 17,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },
@@ -182,6 +182,11 @@ class AppDatabase {
     if (!await hasCol('transactions', 'akahu_hash')) {
       await db.execute('ALTER TABLE transactions ADD COLUMN akahu_hash TEXT;');
     }
+    if (!await hasCol('transactions', 'excluded')) {
+      await db.execute(
+        "ALTER TABLE transactions ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0;",
+      );
+    }
     await db.execute(
       'CREATE UNIQUE INDEX IF NOT EXISTS ux_transactions_akahu_hash ON transactions(akahu_hash) WHERE akahu_hash IS NOT NULL;',
     );
@@ -273,6 +278,7 @@ class AppDatabase {
         merchant_name TEXT,
         category_name TEXT,
         akahu_hash TEXT,
+        excluded INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(category_id) REFERENCES categories(id)
       );
     ''');

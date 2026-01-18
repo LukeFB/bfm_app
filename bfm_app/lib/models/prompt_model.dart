@@ -180,6 +180,7 @@ class PromptModel {
       SELECT category_id, ABS(SUM(amount)) AS spent
       FROM transactions
       WHERE type = 'expense'
+        AND excluded = 0
         AND date BETWEEN ? AND ?
       GROUP BY category_id
       ORDER BY spent DESC;

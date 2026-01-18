@@ -32,7 +32,9 @@ class AnalysisUtils {
   static Future<Map<String, String?>> getGlobalDateRange() async {
     final db = await AppDatabase.instance.database;
     final res = await db.rawQuery('''
-      SELECT MIN(date) AS first, MAX(date) AS last FROM transactions
+      SELECT MIN(date) AS first, MAX(date) AS last
+      FROM transactions
+      WHERE excluded = 0
     ''');
     if (res.isEmpty) return {'first': null, 'last': null};
     return {

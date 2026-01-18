@@ -42,10 +42,13 @@ class TransactionModel {
 
   // Optional enrichment
   final double? balance;
-  final String? merchantName; 
+  final String? merchantName;
   final String? merchantWebsite;
   final String? logo;
   final Map<String, dynamic>? meta; // raw metadata object from Akahu
+
+  /// When true this transaction should be ignored by spend/budget calculations.
+  final bool excluded;
 
   const TransactionModel({
     this.id,
@@ -64,6 +67,7 @@ class TransactionModel {
     this.merchantWebsite,
     this.logo,
     this.meta,
+    this.excluded = false,
   });
 
   /// Rehydrates a transaction from SQLite (snake_case keys expected).
@@ -82,6 +86,7 @@ class TransactionModel {
       date: (map['date'] as String),
       type: (map['type'] as String),
       merchantName: map['merchant_name'] as String?,
+      excluded: _boolFromDb(map['excluded']),
     );
   }
 
@@ -94,6 +99,7 @@ class TransactionModel {
       'description': description,
       'date': date,
       'type': type,
+      'excluded': excluded ? 1 : 0,
     };
     if (includeId && id != null) m['id'] = id;
     if (categoryName != null) m['category_name'] = categoryName;
@@ -163,6 +169,7 @@ class TransactionModel {
       type: localType,
       balance: a['balance'] is num ? (a['balance'] as num).toDouble() : null,
       merchantName: merchant == null ? null : (merchant['name'] as String?),
+      excluded: false,
     );
   }
 
@@ -197,4 +204,17 @@ class TransactionModel {
   /// Formats the amount with a currency prefix for quick UI labels.
   String formattedAmount({int decimals = 2}) =>
       '\$${amount.toStringAsFixed(decimals)}';
+
+  /// Coerces SQLite values into a bool flag.
+  static bool _boolFromDb(dynamic raw) {
+    if (raw is bool) return raw;
+    if (raw is num) return raw != 0;
+    if (raw is String) {
+      final normalized = raw.trim().toLowerCase();
+      return normalized == '1' ||
+          normalized == 'true' ||
+          normalized == 'yes';
+    }
+    return false;
+  }
 }

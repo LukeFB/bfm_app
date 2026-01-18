@@ -179,6 +179,81 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     return '$month ${date.day}';
   }
 
+  void _showTransactionActions(TransactionModel txn) {
+    final id = txn.id;
+    if (id == null) return;
+
+    final formattedAmount = txn.signedAmount < 0
+        ? "-\$${txn.signedAmount.abs().toStringAsFixed(2)}"
+        : "\$${txn.signedAmount.toStringAsFixed(2)}";
+    final amountColor =
+        txn.isExpense ? const Color(0xFFFF6934) : Colors.green;
+
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: Text(
+                  txn.description.isEmpty ? "Transaction" : txn.description,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text("${txn.date} • ${txn.type}"),
+                trailing: Text(
+                  formattedAmount,
+                  style: TextStyle(
+                    color: amountColor,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              SwitchListTile.adaptive(
+                value: txn.excluded,
+                title: const Text('Exclude from calculations'),
+                subtitle: const Text(
+                  'Left to spend, discretionary spend, and insights will ignore this transaction.',
+                ),
+                onChanged: (value) => _toggleExcluded(sheetContext, id, value),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _toggleExcluded(
+    BuildContext sheetContext,
+    int transactionId,
+    bool exclude,
+  ) async {
+    try {
+      await TransactionRepository.setExcluded(
+        id: transactionId,
+        excluded: exclude,
+      );
+      if (!mounted) return;
+      Navigator.of(sheetContext).pop();
+      _refresh();
+      final message = exclude
+          ? 'Transaction excluded from calculations.'
+          : 'Transaction re-included in calculations.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update transaction: $err')),
+      );
+    }
+  }
+
   /// Renders the scrollable dashboard plus bottom navigation.
   @override
   Widget build(BuildContext context) {
@@ -342,19 +417,34 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                         onPressed: () => _openRoute('/transaction'),
                       ),
                       child: Column(
-                        children: data.recent.map((t) {
-                          final date = DateUtilsBFM.weekdayLabel(t.date);
-                          final amt = (t.type == 'expense')
-                              ? -t.amount.abs()
-                              : t.amount.abs();
-                          return ActivityItem(
-                            label: t.description.isEmpty
-                                ? "Transaction"
-                                : t.description,
-                            amount: amt,
-                            date: date,
-                          );
-                        }).toList(),
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ...data.recent.map((t) {
+                            final date = DateUtilsBFM.weekdayLabel(t.date);
+                            final amt = (t.type == 'expense')
+                                ? -t.amount.abs()
+                                : t.amount.abs();
+                            return ActivityItem(
+                              label: t.description.isEmpty
+                                  ? "Transaction"
+                                  : t.description,
+                              amount: amt,
+                              date: date,
+                              excluded: t.excluded,
+                              onLongPress: t.id == null
+                                  ? null
+                                  : () => _showTransactionActions(t),
+                            );
+                          }),
+                          const SizedBox(height: 8),
+                          const Text(
+                            "Hold a transaction to exclude it from calculations.",
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.black54,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
 
