@@ -40,6 +40,7 @@ import 'package:bfm_app/screens/debug_screen.dart'; // Debug
 import 'package:bfm_app/screens/onboarding_screen.dart';
 
 import 'package:bfm_app/screens/budget_build_screen.dart';
+import 'package:bfm_app/screens/budget_recurring_screen.dart';
 import 'package:bfm_app/screens/enter_pin_screen.dart';
 import 'package:bfm_app/screens/set_pin_screen.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
@@ -445,6 +446,7 @@ class MyApp extends StatelessWidget {
         '/debug': (_) => const DebugScreen(), // Debug
         '/budget/build': (_) => const BudgetBuildScreen(),
         '/budget/edit': (_) => const BudgetBuildScreen(editMode: true),
+        '/alerts/manage': (_) => const BudgetRecurringScreen(),
       },
     );
   }

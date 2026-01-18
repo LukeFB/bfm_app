@@ -217,8 +217,7 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
             customTitle.isNotEmpty ? customTitle : (fallback.isEmpty ? 'Recurring expense' : fallback);
         final icon =
             recurring.frequency.toLowerCase() == 'monthly' ? '📅' : '🔁';
-        final message =
-            'Due soon for \$${recurring.amount.toStringAsFixed(2)} (tap to review)';
+        final message = 'Due soon for \$${recurring.amount.toStringAsFixed(2)}';
         await AlertRepository.upsertRecurringAlert(
           recurringId: id,
           title: title,

@@ -393,17 +393,34 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                     // ---------- ALERTS ----------
                     DashboardCard(
                       title: "Alerts",
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: data.alerts
-                            .map(
-                              (msg) => Padding(
-                                padding: const EdgeInsets.only(bottom: 8.0),
-                                child: Text(msg),
-                              ),
-                            )
-                            .toList(),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.chevron_right),
+                        tooltip: 'Manage alerts',
+                        onPressed: () => _openRoute('/alerts/manage'),
                       ),
+                      child: data.alerts.isEmpty
+                          ? const Text(
+                              "No alerts yet. Tap the arrow to add reminders.",
+                            )
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: data.alerts
+                                  .map(
+                                    (msg) {
+                                      final cleaned =
+                                          msg.replaceAll('(tap to review)', '').trim();
+                                      final displayMsg = cleaned.isEmpty
+                                          ? 'Reminder saved for this bill.'
+                                          : cleaned;
+                                      return Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 8.0),
+                                        child: Text(displayMsg),
+                                      );
+                                    },
+                                  )
+                                  .toList(),
+                            ),
                     ),
 
                     const SizedBox(height: 24),

@@ -36,7 +36,6 @@ import 'package:bfm_app/services/budget_analysis_service.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
-import 'package:bfm_app/screens/budget_recurring_screen.dart';
 
 /// Main UI for selecting suggested categories and setting weekly limits.
 class BudgetBuildScreen extends StatefulWidget {
@@ -304,10 +303,15 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Saved $saved budget${saved == 1 ? '' : 's'}')),
     );
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const BudgetRecurringScreen()),
-    );
+    if (widget.editMode) {
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/dashboard',
+        (route) => false,
+      );
+    } else {
+      Navigator.pushReplacementNamed(context, '/alerts/manage');
+    }
   }
 
   Future<List<_RecurringBudgetItem>> _fetchRecurringBudgetItems() async {
