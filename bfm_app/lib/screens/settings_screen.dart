@@ -14,12 +14,11 @@
 ///   and routes to other screens as needed.
 /// ---------------------------------------------------------------------------
 
+import 'package:bfm_app/screens/onboarding_screen.dart';
+import 'package:bfm_app/services/api_key_store.dart';
 import 'package:bfm_app/services/bank_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-// Added
-import 'package:bfm_app/services/api_key_store.dart';
 
 /// Settings surface for keys, disconnect, and debug entry points.
 class SettingsScreen extends StatefulWidget {
@@ -78,6 +77,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  Future<void> _replayOnboarding(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Replay onboarding?'),
+        content: const Text(
+          'You can walk through the intro questions and tour again without reconnecting your bank.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Start tour'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const OnboardingScreen(),
+      ),
+    );
+  }
+
   @override
   /// Builds the full settings list:
   /// - API key card
@@ -133,6 +162,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
             ),
+          ),
+
+          ListTile(
+            leading: const Icon(Icons.auto_stories_outlined),
+            title: const Text('Replay onboarding tour'),
+            subtitle: const Text('Restart the welcome questions and tips without touching your bank link.'),
+            onTap: () => _replayOnboarding(context),
           ),
 
           // --- Disconnect Bank ---

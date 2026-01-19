@@ -15,7 +15,12 @@ import 'package:bfm_app/models/onboarding_response.dart';
 import 'package:bfm_app/services/onboarding_store.dart';
 
 class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({super.key});
+  final String onCompleteRoute;
+
+  const OnboardingScreen({
+    super.key,
+    this.onCompleteRoute = '/budget/build',
+  });
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -33,6 +38,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   int _currentPage = 0;
   bool _saving = false;
+  bool _loadingTriggered = false;
 
   @override
   void dispose() {
@@ -51,19 +57,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final pages = _buildPages(context);
     final totalPages = pages.length;
     final isLastPage = _currentPage >= totalPages - 1;
+    final isLoadingPage = isLastPage;
 
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
         title: const Text('Welcome to Moni'),
-        actions: [
-          TextButton(
-            onPressed: _saving
-                ? null
-                : () => _completeOnboarding(skipAnswers: true),
-            child: const Text('Skip'),
-          ),
-        ],
+        actions: const [],
       ),
       body: SafeArea(
         child: Column(
@@ -72,37 +72,44 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             Expanded(
               child: PageView(
                 controller: _pageController,
-                onPageChanged: (index) => setState(() => _currentPage = index),
+                onPageChanged: (index) {
+                  setState(() => _currentPage = index);
+                  final lastIndex = pages.length - 1;
+                  if (index == lastIndex) {
+                    _startFakeLoading();
+                  }
+                },
                 children: pages,
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-              child: Row(
-                children: [
-                  TextButton.icon(
-                    icon: const Icon(Icons.arrow_back),
-                    label: const Text('Back'),
-                    onPressed: _saving || _currentPage == 0
-                        ? null
-                        : () => _pageController.previousPage(
-                            duration: const Duration(milliseconds: 250),
-                            curve: Curves.easeInOut,
-                          ),
-                  ),
-                  const Spacer(),
-                  FilledButton.icon(
-                    icon: Icon(
-                      isLastPage ? Icons.rocket_launch : Icons.arrow_forward,
+            if (!isLoadingPage)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                child: Row(
+                  children: [
+                    TextButton.icon(
+                      icon: const Icon(Icons.arrow_back),
+                      label: const Text('Back'),
+                      onPressed: _saving || _currentPage == 0
+                          ? null
+                          : () => _pageController.previousPage(
+                                duration: const Duration(milliseconds: 250),
+                                curve: Curves.easeInOut,
+                              ),
                     ),
-                    label: Text(isLastPage ? 'Start using Moni' : 'Next'),
-                    onPressed: _saving
-                        ? null
-                        : () => _handleNext(totalPages, isLastPage),
-                  ),
-                ],
+                    const Spacer(),
+                    FilledButton.icon(
+                      icon: Icon(
+                        isLastPage ? Icons.rocket_launch : Icons.arrow_forward,
+                      ),
+                      label: Text(isLastPage ? 'Start using Moni' : 'Next'),
+                      onPressed: _saving
+                          ? null
+                          : () => _handleNext(totalPages, isLastPage),
+                    ),
+                  ],
+                ),
               ),
-            ),
             if (_saving) const LinearProgressIndicator(minHeight: 2),
           ],
         ),
@@ -113,40 +120,38 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   List<Widget> _buildPages(BuildContext context) {
     final questionSteps = _questionSteps();
     final questionPages = questionSteps.map(_buildQuestionPage).toList();
+    final loadingPage = _buildLoadingPage(context);
     return [
       ...questionPages,
       _buildPrivacyPage(context),
-      _buildFeatureTourPage(context),
-      _buildNextStepsPage(context),
+      loadingPage,
     ];
   }
 
   List<_QuestionStep> _questionSteps() {
     return [
       _QuestionStep(
-        title: 'How old are you?',
-        description: 'Optional. Helps us tailor nudges to your life stage.',
-        fieldLabel: 'Age',
-        controller: _ageCtrl,
-        hint: 'e.g. 29',
-        keyboardType: TextInputType.number,
-        infoMessage:
-            'Sharing your age keeps tips relevant, but you can skip anytime.',
-      ),
-      _QuestionStep(
-        title: 'How do you describe your gender?',
-        description: 'Use whatever language feels right or leave it blank.',
-        fieldLabel: 'Gender',
-        controller: _genderCtrl,
-        hint: 'Woman, non-binary, masculine, prefer not to say…',
-      ),
-      _QuestionStep(
-        title: 'Where are you based?',
-        description:
-            'Knowing your city/region helps us reference local services.',
-        fieldLabel: 'Location',
-        controller: _locationCtrl,
-        hint: 'City or region',
+        title: 'Tell us about yourself',
+        description: 'Age, gender, and location help us tailor tips to your life stage.',
+        groupedFields: [
+          _FieldConfig(
+            controller: _ageCtrl,
+            label: 'Age',
+            hint: 'e.g. 29',
+            keyboardType: TextInputType.number,
+          ),
+          _FieldConfig(
+            controller: _genderCtrl,
+            label: 'Gender',
+            hint: 'Woman, non-binary, masculine, etc.',
+          ),
+          _FieldConfig(
+            controller: _locationCtrl,
+            label: 'Location',
+            hint: 'City or region',
+          ),
+        ],
+        showInfo: false,
       ),
       _QuestionStep(
         title: 'Who pointed you to Moni?',
@@ -154,23 +159,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         fieldLabel: 'Referrer',
         controller: _referrerCtrl,
         hint: 'Friend, mentor, social media…',
+        showInfo: false,
       ),
       _QuestionStep(
-        title: 'Why do you want to use Moni?',
-        description: 'Describe your main goal so we can focus the coaching.',
-        fieldLabel: 'Main reason',
+        title: 'Tell us a little about your situation and why you want to use Moni',
+        description: 'Helps the coach focus advice on what matters most to you.',
         controller: _reasonCtrl,
-        hint: 'I want to get ahead with weekly spending…',
-        maxLines: 3,
-      ),
-      _QuestionStep(
-        title: 'Tell us about your situation',
-        description:
-            'Any context about studies, whānau support, or money stress.',
-        fieldLabel: 'Your situation',
-        controller: _situationCtrl,
-        hint: 'I’m studying full-time, working 10h/week, supporting whānau…',
-        maxLines: 4,
+        fieldLabel: 'Share anything helpful',
+        hint:
+            'I’m studying full-time, supporting whānau, and want to stay on top of weekly spending…',
+        maxLines: 6,
       ),
     ];
   }
@@ -181,21 +179,38 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       description: step.description,
       child: Column(
         children: [
-          _LabeledField(
-            controller: step.controller,
-            label: step.fieldLabel,
-            hint: step.hint,
-            maxLines: step.maxLines,
-            keyboardType: step.keyboardType,
-          ),
-          const SizedBox(height: 12),
-          _InfoBanner(
-            icon: Icons.info_outline,
-            message:
-                step.infoMessage ??
-                'These answers stay on your device to personalise coaching. '
-                    'You can skip or change them later.',
-          ),
+          if (step.groupedFields != null)
+            Column(
+              children: [
+                for (final field in step.groupedFields!) ...[
+                  _LabeledField(
+                    controller: field.controller,
+                    label: field.label,
+                    hint: field.hint,
+                    maxLines: field.maxLines,
+                    keyboardType: field.keyboardType,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              ],
+            )
+          else
+            _LabeledField(
+              controller: step.controller!,
+              label: step.fieldLabel ?? '',
+              hint: step.hint,
+              maxLines: step.maxLines,
+              keyboardType: step.keyboardType,
+            ),
+          if (step.showInfo) ...[
+            const SizedBox(height: 12),
+            _InfoBanner(
+              icon: Icons.info_outline,
+              message:
+                  step.infoMessage ??
+                  'All user data is kept on device and is optional.',
+            ),
+          ],
         ],
       ),
     );
@@ -226,123 +241,34 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  Widget _buildFeatureTourPage(BuildContext context) {
-    final features = [
-      const _FeatureCard(
-        icon: Icons.category_outlined,
-        title: 'Budget builder',
-        copy:
-            'Review Moni’s suggested categories, toggle the ones you need, and edit weekly limits before saving.',
-      ),
-      const _FeatureCard(
-        icon: Icons.dashboard_customize_outlined,
-        title: 'Dashboard & insights',
-        copy:
-            'See weekly spend, alerts, and tips surfaced from your transactions to stay on track.',
-      ),
-      const _FeatureCard(
-        icon: Icons.swap_horiz_outlined,
-        title: 'Transactions',
-        copy:
-            'Browse every transaction, tidy uncategorised rows, and spot recurring expenses.',
-      ),
-      const _FeatureCard(
-        icon: Icons.flag_outlined,
-        title: 'Goals & recurring plans',
-        copy:
-            'Set savings goals and convert recurring bills into budget lines so they never surprise you.',
-      ),
-      const _FeatureCard(
-        icon: Icons.chat_bubble_outline,
-        title: 'Coach & chat',
-        copy:
-            'Use the built-in coach to ask questions about your money trends or get nudges when things drift.',
-      ),
-    ];
-
+  Widget _buildLoadingPage(BuildContext context) {
     return _OnboardingPageShell(
-      title: 'Here’s how the app flows',
+      title: 'Almost there...',
       description:
-          'Take a quick tour so you know what each tab does. You can revisit this guide from Settings later.',
-      child: Column(
-        children: [
-          for (final feature in features) ...[
-            feature,
-            const SizedBox(height: 12),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNextStepsPage(BuildContext context) {
-    const steps = [
-      _NextStep(
-        title: 'Connect your bank',
-        copy:
-            'Securely link accounts so Moni can analyse the last 90 days of spending.',
-      ),
-      _NextStep(
-        title: 'Build your budget',
-        copy: 'Select categories, edit limits, and save your weekly plan.',
-      ),
-      _NextStep(
-        title: 'Stay on top of it',
-        copy:
-            'Check the dashboard, insights, and chat coach whenever you need a pulse check.',
-      ),
-    ];
-
-    return _OnboardingPageShell(
-      title: 'Ready to get started?',
-      description:
-          'Here’s what happens next. You can always adjust budgets or revisit onboarding later in Settings.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (final step in steps)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.check_circle_outline, color: Colors.green),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          step.title,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(step.copy),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          const _InfoBanner(
-            icon: Icons.school_outlined,
-            message:
-                'Need a refresher later? Screenshot this checklist or replay onboarding after clearing local app data.',
-          ),
-        ],
-      ),
+          'One moment while Moni calculates where your money’s going so we can tee up your budget builder.',
+      child: const _LoadingCard(),
     );
   }
 
   void _handleNext(int totalPages, bool isLastPage) {
     if (isLastPage) {
-      _completeOnboarding();
+      _startFakeLoading();
       return;
     }
     _pageController.nextPage(
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeInOut,
     );
+  }
+
+  void _startFakeLoading() {
+    if (_loadingTriggered || _saving) return;
+    setState(() => _loadingTriggered = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        _completeOnboarding();
+      }
+    });
   }
 
   Future<void> _completeOnboarding({bool skipAnswers = false}) async {
@@ -361,7 +287,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
     if (!mounted) return;
     setState(() => _saving = false);
-    Navigator.pushReplacementNamed(context, '/bankconnect');
+    final route = widget.onCompleteRoute;
+    Navigator.pushReplacementNamed(context, route);
   }
 
   String? _valueOrNull(String text, bool skip) {
@@ -507,76 +434,75 @@ class _PrivacyPoint extends StatelessWidget {
   }
 }
 
-class _FeatureCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String copy;
-
-  const _FeatureCard({
-    required this.icon,
-    required this.title,
-    required this.copy,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, size: 28, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(copy),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _QuestionStep {
   final String title;
   final String description;
-  final String fieldLabel;
-  final TextEditingController controller;
+  final String? fieldLabel;
+  final TextEditingController? controller;
   final String? hint;
   final int maxLines;
   final TextInputType? keyboardType;
   final String? infoMessage;
+  final List<_FieldConfig>? groupedFields;
+  final bool showInfo;
 
   const _QuestionStep({
     required this.title,
     required this.description,
-    required this.fieldLabel,
-    required this.controller,
+    this.fieldLabel,
+    this.controller,
     this.hint,
     this.maxLines = 1,
     this.keyboardType,
     this.infoMessage,
+    this.groupedFields,
+    this.showInfo = true,
   });
 }
 
-class _NextStep {
-  final String title;
-  final String copy;
-  const _NextStep({required this.title, required this.copy});
+class _FieldConfig {
+  final TextEditingController controller;
+  final String label;
+  final String? hint;
+  final int maxLines;
+  final TextInputType? keyboardType;
+
+  const _FieldConfig({
+    required this.controller,
+    required this.label,
+    this.hint,
+    this.maxLines = 1,
+    this.keyboardType,
+  });
+}
+
+class _LoadingCard extends StatelessWidget {
+  const _LoadingCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 24),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: Theme.of(context).colorScheme.secondaryContainer,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text(
+            'One moment as Moni calculates where your money’s going…',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _ProgressDots extends StatelessWidget {
