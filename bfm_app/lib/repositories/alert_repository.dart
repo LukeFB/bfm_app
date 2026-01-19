@@ -56,6 +56,11 @@ class AlertRepository {
   }) async {
     final db = await AppDatabase.instance.database;
     final nowIso = DateTime.now().toIso8601String();
+    await db.delete(
+      'alerts',
+      where: 'recurring_transaction_id = ?',
+      whereArgs: [recurringId],
+    );
     await db.insert(
       'alerts',
       {

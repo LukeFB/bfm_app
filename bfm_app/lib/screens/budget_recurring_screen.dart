@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:bfm_app/models/alert_model.dart';
 import 'package:bfm_app/models/recurring_transaction_model.dart';
 import 'package:bfm_app/repositories/alert_repository.dart';
+import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/services/budget_analysis_service.dart';
 
@@ -21,6 +22,7 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
   final Map<int, bool> _selected = {};
   final Map<int, RecurringTransactionModel> _recurringById = {};
   final Map<int, TextEditingController> _nameCtrls = {};
+  final Map<int, String> _categoryNames = {};
 
   @override
   void initState() {
@@ -62,6 +64,8 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
     final selection = <int, bool>{};
     final map = <int, RecurringTransactionModel>{};
     final controllers = <int, TextEditingController>{};
+    final categoryIds = combined.map((r) => r.categoryId).toSet();
+    final categoryNames = await CategoryRepository.getNamesByIds(categoryIds);
 
     for (final r in combined) {
       final id = r.id;
@@ -69,10 +73,10 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
       map[id] = r;
       final alert = alertsById[id];
       selection[id] = alert != null;
-      final fallback = (r.description ?? 'Recurring expense').trim();
+      final fallback = _displayName(r, categoryNames);
       final initial = (alert?.title ?? fallback).trim();
       controllers[id] = TextEditingController(
-        text: initial.isEmpty ? 'Recurring expense' : initial,
+        text: initial.isEmpty ? fallback : initial,
       );
     }
 
@@ -99,6 +103,9 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
       _nameCtrls
         ..clear()
         ..addAll(controllers);
+      _categoryNames
+        ..clear()
+        ..addAll(categoryNames);
       _loading = false;
     });
   }
@@ -212,9 +219,8 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
       if (selectedIds.contains(id)) {
         final controller = _nameCtrls[id];
         final customTitle = controller?.text.trim() ?? '';
-        final fallback = (recurring.description ?? 'Recurring expense').trim();
-        final title =
-            customTitle.isNotEmpty ? customTitle : (fallback.isEmpty ? 'Recurring expense' : fallback);
+        final fallback = _displayNameForItem(recurring);
+        final title = customTitle.isNotEmpty ? customTitle : fallback;
         final icon =
             recurring.frequency.toLowerCase() == 'monthly' ? '📅' : '🔁';
         final message = 'Due soon for \$${recurring.amount.toStringAsFixed(2)}';
@@ -275,11 +281,25 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
     );
   }
 
+  String _displayNameForItem(RecurringTransactionModel item) =>
+      _displayName(item, _categoryNames);
+
+  static String _displayName(
+    RecurringTransactionModel item,
+    Map<int, String> names,
+  ) {
+    final categoryLabel = (names[item.categoryId]?.trim() ?? '');
+    final hasCategory = categoryLabel.isNotEmpty &&
+        categoryLabel.toLowerCase() != 'uncategorized';
+    if (hasCategory) return categoryLabel;
+    final desc = (item.description ?? '').trim();
+    return desc.isNotEmpty ? desc : 'Recurring expense';
+  }
+
   Widget _buildRecurringTile(RecurringTransactionModel item) {
     final id = item.id;
     if (id == null) return const SizedBox.shrink();
-    final desc = (item.description ?? 'Recurring expense').trim();
-    final fallback = desc.isEmpty ? 'Recurring expense' : desc;
+    final fallback = _displayNameForItem(item);
     final controller = _nameCtrls.putIfAbsent(
       id,
       () => TextEditingController(text: fallback),

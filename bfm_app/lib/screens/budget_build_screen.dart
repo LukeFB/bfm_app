@@ -57,6 +57,9 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       {}; // by categoryId (null allowed for map keys)
   final Map<int?, TextEditingController> _amountCtrls = {};
   List<_RecurringBudgetItem> _recurringItems = [];
+  final Map<int, TextEditingController> _recurringAmountCtrls = {};
+  final Set<int> _selectedRecurringIds = {};
+  Map<int, _RecurringBudgetItem> _recurringItemLookup = {};
   Map<int, BudgetModel> _existingBudgetMap = {};
   final Map<String, TextEditingController> _uncatInputCtrls = {};
   final Map<String, TextEditingController> _uncatAmountCtrls = {};
@@ -85,6 +88,10 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     final previousAmounts = <int?, String>{
       for (final entry in _amountCtrls.entries) entry.key: entry.value.text,
     };
+    final previousRecurringSelection = Set<int>.from(_selectedRecurringIds);
+    final previousRecurringAmounts = <int, String>{
+      for (final entry in _recurringAmountCtrls.entries) entry.key: entry.value.text,
+    };
     setState(() => _loading = true);
 
     await BudgetAnalysisService.identifyRecurringTransactions();
@@ -93,6 +100,17 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       minWeekly: 5.0,
     );
     final recurringItems = await _fetchRecurringBudgetItems();
+    final recurringLookup = <int, _RecurringBudgetItem>{};
+    for (final item in recurringItems) {
+      final rid = item.recurringId;
+      if (rid != null) {
+        recurringLookup[rid] = item;
+      }
+    }
+    final validRecurringIds = recurringLookup.keys.toSet();
+    final restoredRecurringSelection = previousRecurringSelection
+        .where(validRecurringIds.contains)
+        .toSet();
 
     Map<int, BudgetModel> existingBudgets = {};
     Map<int, String> existingBudgetNames = {};
@@ -204,17 +222,25 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       _baseSuggestions = list;
       _suggestions = _composeSuggestionsList();
       _recurringItems = recurringItems;
+      _recurringItemLookup = recurringLookup;
+      _selectedRecurringIds
+        ..clear()
+        ..addAll(restoredRecurringSelection);
       _existingBudgetMap = widget.editMode ? existingBudgets : {};
       _loading = false;
     });
 
     _pruneUncatControllers(nextUncatKeys);
+    _syncRecurringAmountControllers(recurringLookup, previousRecurringAmounts);
   }
 
   /// Cleans up text controllers to avoid leaks.
   @override
   void dispose() {
     for (final c in _amountCtrls.values) {
+      c.dispose();
+    }
+    for (final c in _recurringAmountCtrls.values) {
       c.dispose();
     }
     for (final c in _uncatInputCtrls.values) {
@@ -252,6 +278,20 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
 
     if (widget.editMode) {
       await BudgetRepository.clearAll();
+    }
+
+    for (final rid in _selectedRecurringIds) {
+      final item = _recurringItemLookup[rid];
+      if (item == null) continue;
+      final weeklyLimit = _recurringAmountValue(rid, item);
+      if (weeklyLimit <= 0) continue;
+      final m = BudgetModel(
+        categoryId: item.categoryId,
+        weeklyLimit: weeklyLimit,
+        periodStart: periodStart,
+      );
+      await BudgetRepository.insert(m);
+      saved += 1;
     }
 
     for (final s in _suggestions) {
@@ -296,6 +336,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
 
     if (!mounted) return;
     setState(() {
+      _selectedRecurringIds.clear();
       _selectedUncatKeys.clear();
       _uncatNameOverrides.clear();
       _uncatAmountOverrides.clear();
@@ -336,9 +377,13 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
           : r.amount / _kWeeksPerMonth;
       final description = (r.description ?? '').trim();
       final categoryLabel = (names[r.categoryId] ?? '').trim();
-      final label = categoryLabel.isNotEmpty
-          ? categoryLabel
-          : 'Recurring expense';
+      final hasCategory = categoryLabel.isNotEmpty &&
+          categoryLabel.toLowerCase() != 'uncategorized';
+      final fallbackName =
+          description.isNotEmpty ? description : 'Recurring expense';
+      final label = hasCategory ? categoryLabel : fallbackName;
+      final transactionName =
+          hasCategory && description.isNotEmpty ? description : null;
       return _RecurringBudgetItem(
         recurringId: r.id,
         categoryId: r.categoryId,
@@ -346,7 +391,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
         frequency: freq,
         amount: r.amount,
         weeklyAmount: double.parse(weeklyAmount.toStringAsFixed(2)),
-        transactionName: description.isEmpty ? null : description,
+        transactionName: transactionName,
       );
     }).toList();
 
@@ -358,38 +403,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     });
 
     return items;
-  }
-
-  void _addRecurringBudget(_RecurringBudgetItem item) {
-    final int catId = item.categoryId;
-    final weeklyText = item.weeklyAmount.toStringAsFixed(2);
-
-    if (!_amountCtrls.containsKey(catId)) {
-      final controller = TextEditingController(text: weeklyText);
-      _amountCtrls[catId] = controller;
-      _manualSuggestions[catId] = BudgetSuggestionModel(
-        categoryId: catId,
-        categoryName: item.label,
-        weeklySuggested: item.weeklyAmount,
-        usageCount: 0,
-        txCount: 0,
-        hasRecurring: true,
-      );
-    } else {
-      _amountCtrls[catId]!.text = weeklyText;
-    }
-
-    _selected[catId] = true;
-
-    setState(() {
-      _suggestions = _composeSuggestionsList();
-    });
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Added ${item.label} at \$${weeklyText}/week')),
-      );
-    }
   }
 
   /// Builds the entire budget builder UI: headers, suggestions list, and footer.
@@ -501,6 +514,32 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     _uncatNameOverrides.removeWhere((k, _) => !keep.contains(k));
     _uncatAmountOverrides.removeWhere((k, _) => !keep.contains(k));
     _selectedUncatKeys.removeWhere((k) => !keep.contains(k));
+  }
+
+  void _syncRecurringAmountControllers(
+    Map<int, _RecurringBudgetItem> lookup,
+    Map<int, String> previousAmounts,
+  ) {
+    final validIds = lookup.keys.toSet();
+    final removeIds = _recurringAmountCtrls.keys
+        .where((id) => !validIds.contains(id))
+        .toList();
+    for (final id in removeIds) {
+      _recurringAmountCtrls[id]?.dispose();
+      _recurringAmountCtrls.remove(id);
+    }
+    for (final entry in lookup.entries) {
+      final id = entry.key;
+      final existing = _recurringAmountCtrls[id];
+      final defaultText = previousAmounts[id] ??
+          existing?.text ??
+          entry.value.weeklyAmount.toStringAsFixed(2);
+      if (existing == null) {
+        _recurringAmountCtrls[id] = TextEditingController(text: defaultText);
+      } else {
+        existing.text = defaultText;
+      }
+    }
   }
 
   String _uncatKey(BudgetSuggestionModel s) {
@@ -661,7 +700,9 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   }
 
   Widget _buildRecurringRow(_RecurringBudgetItem item) {
-    final alreadyAdded = _selected[item.categoryId] ?? false;
+    final rid = item.recurringId;
+    if (rid == null) return const SizedBox.shrink();
+    final alreadyAdded = _selectedRecurringIds.contains(rid);
     final weeklyText = item.weeklyAmount.toStringAsFixed(2);
     final paymentLabel = item.frequency == 'monthly'
         ? 'Monthly payment: \$${item.amount.toStringAsFixed(2)}'
@@ -670,49 +711,109 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
         ? 'Budget weekly limit: ≈ \$${weeklyText}'
         : 'Budget weekly limit: \$${weeklyText}';
 
-    final titleText = item.transactionName ?? item.label;
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      leading: Checkbox(
-        value: alreadyAdded,
-        onChanged: (v) {
-          final next = v ?? false;
-          if (next) {
-            _addRecurringBudget(item);
-          } else {
-            setState(() => _selected[item.categoryId] = false);
-          }
-        },
-      ),
-      title: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(titleText, style: const TextStyle(fontWeight: FontWeight.w600)),
-          if (item.transactionName != null) const SizedBox(height: 2),
-          if (item.transactionName != null)
-            Text(
-              item.label,
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
+    final showCategoryFirst = item.label.trim().isNotEmpty;
+    final primaryName =
+        showCategoryFirst ? item.label : (item.transactionName ?? item.label);
+    final rawSecondary = showCategoryFirst ? item.transactionName : null;
+    final secondaryName = (rawSecondary != null &&
+            rawSecondary.trim().isNotEmpty &&
+            rawSecondary.trim().toLowerCase() != primaryName.trim().toLowerCase())
+        ? rawSecondary
+        : null;
+    final controller = _recurringAmountController(rid, item);
+
+    return Column(
+      children: [
+        ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          leading: Checkbox(
+            value: alreadyAdded,
+            onChanged: (v) => _toggleRecurringSelection(item, v ?? false),
+          ),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                primaryName,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              if (secondaryName != null && secondaryName.trim().isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    secondaryName,
+                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                ),
+            ],
+          ),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '$paymentLabel • ${item.frequencyLabel}',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                Text(
+                  weeklyLine,
+                  style: const TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+              ],
             ),
-        ],
-      ),
-      subtitle: Padding(
-        padding: const EdgeInsets.only(top: 6),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '$paymentLabel • ${item.frequencyLabel}',
-              style: const TextStyle(fontSize: 12),
-            ),
-            Text(
-              weeklyLine,
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
-            ),
-          ],
+          ),
         ),
-      ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          child: TextField(
+            controller: controller,
+            enabled: alreadyAdded,
+            keyboardType: const TextInputType.numberWithOptions(
+              signed: false,
+              decimal: true,
+            ),
+            decoration: InputDecoration(
+              labelText: 'Weekly budget',
+              prefixText: '\$',
+              helperText: alreadyAdded
+                  ? 'Adjust the weekly limit if needed.'
+                  : 'Select to include in your budget',
+              border: const OutlineInputBorder(),
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _toggleRecurringSelection(_RecurringBudgetItem item, bool checked) {
+    final rid = item.recurringId;
+    if (rid == null) return;
+    setState(() {
+      if (checked) {
+        _selectedRecurringIds.add(rid);
+        _recurringAmountCtrls.putIfAbsent(
+          rid,
+          () => TextEditingController(
+            text: item.weeklyAmount.toStringAsFixed(2),
+          ),
+        );
+      } else {
+        _selectedRecurringIds.remove(rid);
+      }
+    });
+  }
+
+  TextEditingController _recurringAmountController(
+    int id,
+    _RecurringBudgetItem item,
+  ) {
+    return _recurringAmountCtrls.putIfAbsent(
+      id,
+      () => TextEditingController(text: item.weeklyAmount.toStringAsFixed(2)),
     );
   }
 
@@ -985,6 +1086,12 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
         sum += _parseAmount(_amountCtrls[s.categoryId]!.text);
       }
     }
+    for (final rid in _selectedRecurringIds) {
+      final item = _recurringItemLookup[rid];
+      if (item != null) {
+        sum += _recurringAmountValue(rid, item);
+      }
+    }
     final uncatMap = {
       for (final s in _suggestions.where((s) => s.isUncategorizedGroup))
         _uncatKey(s): s,
@@ -995,6 +1102,13 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       sum += _uncatAmountValue(key, suggestion);
     }
     return sum;
+  }
+
+  double _recurringAmountValue(int rid, _RecurringBudgetItem item) {
+    final text = _recurringAmountCtrls[rid]?.text ?? '';
+    final resolved =
+        text.trim().isEmpty ? item.weeklyAmount.toStringAsFixed(2) : text;
+    return _parseAmount(resolved);
   }
 }
 

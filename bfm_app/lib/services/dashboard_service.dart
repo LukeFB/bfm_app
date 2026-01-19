@@ -25,6 +25,7 @@ import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/recurring_transaction_model.dart';
 import 'package:bfm_app/models/tip_model.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
+import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/repositories/event_repository.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
@@ -83,6 +84,10 @@ class DashboardService {
       if (id != null) recurringMap[id] = r;
     }
 
+    final categoryNames = await CategoryRepository.getNamesByIds(
+      recurringMap.values.map((r) => r.categoryId),
+    );
+
     final now = DateTime.now();
     final alerts = <String>[];
     for (final alert in activeAlerts) {
@@ -102,7 +107,7 @@ class DashboardService {
       if (days < 0 || days > alert.leadTimeDays) continue;
 
       final desc = alert.title.trim().isEmpty
-          ? (recurring.description ?? 'Recurring expense')
+          ? _recurringDisplayName(recurring, categoryNames)
           : alert.title.trim();
       final prefix = alert.icon ?? '🔔';
       final defaultMessage =
@@ -192,6 +197,19 @@ class DashboardService {
     if (freq == 'weekly') return r.amount;
     if (freq == 'monthly') return r.amount / 4.33;
     return 0.0;
+  }
+
+  static String _recurringDisplayName(
+    RecurringTransactionModel recurring,
+    Map<int, String> categoryNames,
+  ) {
+    final categoryLabel =
+        (categoryNames[recurring.categoryId]?.trim() ?? '');
+    final hasCategory = categoryLabel.isNotEmpty &&
+        categoryLabel.toLowerCase() != 'uncategorized';
+    if (hasCategory) return categoryLabel;
+    final desc = (recurring.description ?? '').trim();
+    return desc.isNotEmpty ? desc : 'Recurring expense';
   }
 
   /// Expenses for this week that should reduce "Left to spend".
