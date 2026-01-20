@@ -1,25 +1,26 @@
-/// ---------------------------------------------------------------------------
-/// File: lib/services/dashboard_service.dart
-/// Author: Luke Fraser-Brown
-///
-/// Called by:
-///   - `dashboard_screen.dart`, widgets, and insights flows that need aggregated
-///     stats without embedding SQL.
-///
-/// Purpose:
-///   - Collects dashboard-specific metrics (weekly spend, income, alerts,
-///     featured tips/events) in one place.
-///
-/// Inputs:
-///   - Reads directly from SQLite repositories/utilities.
-///
-/// Outputs:
-///   - Doubles, strings, and model lists ready for UI consumption.
-/// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// File: lib/services/dashboard_service.dart
+// Author: Luke Fraser-Brown
+//
+// Called by:
+//   - `dashboard_screen.dart`, widgets, and insights flows that need aggregated
+//     stats without embedding SQL.
+//
+// Purpose:
+//   - Collects dashboard-specific metrics (weekly spend, income, alerts,
+//     featured tips/events) in one place.
+//
+// Inputs:
+//   - Reads directly from SQLite repositories/utilities.
+//
+// Outputs:
+//   - Doubles, strings, and model lists ready for UI consumption.
+// ---------------------------------------------------------------------------
 
 import 'dart:math' as math;
 
 import 'package:bfm_app/db/app_database.dart';
+import 'package:bfm_app/models/alert_model.dart';
 import 'package:bfm_app/models/event_model.dart';
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/recurring_transaction_model.dart';
@@ -41,10 +42,10 @@ class DashboardService {
     final db = await AppDatabase.instance.database;
     final now = DateTime.now();
     final monday = now.subtract(Duration(days: now.weekday - 1));
-    String _fmt(DateTime d) =>
+    String fmt(DateTime d) =>
         "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
-    final start = _fmt(monday);
-    final end = _fmt(now);
+    final start = fmt(monday);
+    final end = fmt(now);
 
     final res = await db.rawQuery(
       '''
@@ -68,57 +69,15 @@ class DashboardService {
 
   /// Upcoming recurring alerts configured by the user.
   static Future<List<String>> getAlerts() async {
-    final activeAlerts = await AlertRepository.getActiveRecurring();
-    if (activeAlerts.isEmpty) return [];
+    final recurringAlerts = await AlertRepository.getActiveRecurring();
+    final manualAlerts = (await AlertRepository.getAll())
+        .where((alert) => alert.recurringTransactionId == null && alert.isActive)
+        .toList();
 
-    final recurringIds = activeAlerts
-        .map((a) => a.recurringTransactionId)
-        .whereType<int>()
-        .toSet();
-    if (recurringIds.isEmpty) return [];
+    final formattedRecurring = await _formatRecurringAlerts(recurringAlerts);
+    final formattedManual = _formatManualAlerts(manualAlerts);
 
-    final recurringList = await RecurringRepository.getByIds(recurringIds);
-    final recurringMap = <int, RecurringTransactionModel>{};
-    for (final r in recurringList) {
-      final id = r.id;
-      if (id != null) recurringMap[id] = r;
-    }
-
-    final categoryNames = await CategoryRepository.getNamesByIds(
-      recurringMap.values.map((r) => r.categoryId),
-    );
-
-    final now = DateTime.now();
-    final alerts = <String>[];
-    for (final alert in activeAlerts) {
-      final rid = alert.recurringTransactionId;
-      if (rid == null) continue;
-      final recurring = recurringMap[rid];
-      if (recurring == null) continue;
-
-      DateTime due;
-      try {
-        due = DateTime.parse(recurring.nextDueDate);
-      } catch (_) {
-        continue;
-      }
-
-      final days = due.difference(now).inDays;
-      if (days < 0 || days > alert.leadTimeDays) continue;
-
-      final desc = alert.title.trim().isEmpty
-          ? _recurringDisplayName(recurring, categoryNames)
-          : alert.title.trim();
-      final prefix = alert.icon ?? '🔔';
-      final defaultMessage =
-          'Due in $days day${days == 1 ? '' : 's'} (\$${recurring.amount.toStringAsFixed(0)})';
-      final body = alert.message?.isNotEmpty == true
-          ? alert.message!.replaceAll('{days}', days.toString())
-          : defaultMessage;
-      alerts.add('$prefix $desc · $body');
-    }
-
-    return alerts;
+    return [...formattedManual, ...formattedRecurring];
   }
 
   // ---------------------------------------------------------------------------
@@ -224,10 +183,10 @@ class DashboardService {
     // Resolve current week window (Mon → today)
     final now = DateTime.now();
     final monday = now.subtract(Duration(days: now.weekday - 1));
-    String _fmt(DateTime d) =>
+    String fmt(DateTime d) =>
         "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
-    final start = _fmt(monday);
-    final end = _fmt(now);
+    final start = fmt(monday);
+    final end = fmt(now);
 
     final budgets = await _latestBudgetsByCategory();
 
@@ -261,6 +220,125 @@ class DashboardService {
     }
 
     return discretionary;
+  }
+
+  static Future<List<String>> _formatRecurringAlerts(
+    List<AlertModel> activeAlerts,
+  ) async {
+    if (activeAlerts.isEmpty) return const [];
+
+    final recurringIds = activeAlerts
+        .map((a) => a.recurringTransactionId)
+        .whereType<int>()
+        .toSet();
+    if (recurringIds.isEmpty) return const [];
+
+    final recurringList = await RecurringRepository.getByIds(recurringIds);
+    final recurringMap = <int, RecurringTransactionModel>{};
+    for (final r in recurringList) {
+      final id = r.id;
+      if (id != null) recurringMap[id] = r;
+    }
+
+    final categoryNames = await CategoryRepository.getNamesByIds(
+      recurringMap.values.map((r) => r.categoryId),
+    );
+
+    final now = DateTime.now();
+    final alerts = <String>[];
+    for (final alert in activeAlerts) {
+      final rid = alert.recurringTransactionId;
+      if (rid == null) continue;
+      final recurring = recurringMap[rid];
+      if (recurring == null) continue;
+
+      DateTime due;
+      try {
+        due = DateTime.parse(recurring.nextDueDate);
+      } catch (_) {
+        continue;
+      }
+
+      final days = due.difference(now).inDays;
+      if (days < 0 || days > alert.leadTimeDays) continue;
+
+      final desc = alert.title.trim().isEmpty
+          ? _recurringDisplayName(recurring, categoryNames)
+          : alert.title.trim();
+      final prefix = alert.icon ?? '🔔';
+      final dueLabel = _dueLabel(due);
+      alerts.add('$prefix $desc · $dueLabel');
+    }
+
+    return alerts;
+  }
+
+  static List<String> _formatManualAlerts(List<AlertModel> manualAlerts) {
+    if (manualAlerts.isEmpty) return const [];
+    manualAlerts.sort((a, b) {
+      final ad = a.dueDate ?? DateTime.tryParse(a.createdAt ?? '') ?? DateTime.now();
+      final bd = b.dueDate ?? DateTime.tryParse(b.createdAt ?? '') ?? DateTime.now();
+      return ad.compareTo(bd);
+    });
+
+    return manualAlerts.map((alert) {
+      final icon = alert.icon ?? '⏰';
+      final dueDate = alert.dueDate;
+      String dueLabel;
+      if (dueDate != null) {
+        dueLabel = _dueLabel(dueDate);
+      } else {
+        dueLabel = alert.message?.trim().isNotEmpty == true
+            ? alert.message!.trim()
+            : 'Reminder saved';
+      }
+      final amountLabel =
+          alert.amount != null ? ' · ${_currency(alert.amount!)}' : '';
+      final note = alert.message?.trim();
+      final noteLabel =
+          (note != null && note.isNotEmpty && dueDate == null) ? ' · $note' : '';
+      return '$icon ${alert.title} · $dueLabel$amountLabel$noteLabel';
+    }).toList();
+  }
+
+  static String _friendlyDate(DateTime date) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    final month = months[date.month - 1];
+    final day = date.day.toString().padLeft(2, '0');
+    return '$day $month ${date.year}';
+  }
+
+  static String _currency(double value) {
+    final decimals = value.abs() >= 100 ? 0 : 2;
+    return '\$${value.toStringAsFixed(decimals)}';
+  }
+
+  static String _dueLabel(DateTime due) {
+    final today = DateTime.now();
+    final normalizedToday = DateTime(today.year, today.month, today.day);
+    final normalizedDue = DateTime(due.year, due.month, due.day);
+    final delta = normalizedDue.difference(normalizedToday).inDays;
+    if (delta < 0) {
+      return 'Overdue · ${_friendlyDate(due)}';
+    } else if (delta == 0) {
+      return 'Due today';
+    } else if (delta == 1) {
+      return 'Due tomorrow';
+    }
+    return 'Due in $delta days · ${_friendlyDate(due)}';
   }
 
   /// Discretionary weekly budget shown in the header:

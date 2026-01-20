@@ -32,6 +32,19 @@ class AlertRepository {
     );
   }
 
+  static Future<void> update(AlertModel alert) async {
+    if (alert.id == null) {
+      throw ArgumentError('Cannot update alert without an id');
+    }
+    final db = await AppDatabase.instance.database;
+    await db.update(
+      'alerts',
+      alert.toMap(),
+      where: 'id = ?',
+      whereArgs: [alert.id],
+    );
+  }
+
   static Future<List<AlertModel>> getAll() async {
     final db = await AppDatabase.instance.database;
     final rows = await db.query('alerts');
@@ -68,6 +81,8 @@ class AlertRepository {
         'message': message,
         'icon': icon,
         'recurring_transaction_id': recurringId,
+        'amount': null,
+        'due_date': null,
         'lead_time_days': leadTimeDays,
         'is_active': 1,
         'created_at': nowIso,

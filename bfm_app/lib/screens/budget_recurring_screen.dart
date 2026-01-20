@@ -5,6 +5,8 @@ import 'package:bfm_app/repositories/alert_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/services/budget_analysis_service.dart';
+import 'package:bfm_app/utils/category_emoji_helper.dart';
+import 'package:bfm_app/widgets/manual_alert_sheet.dart';
 
 /// Review recurring expenses after finishing the budget setup flow.
 class BudgetRecurringScreen extends StatefulWidget {
@@ -17,12 +19,13 @@ class BudgetRecurringScreen extends StatefulWidget {
 class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
   bool _loading = true;
   bool _saving = false;
-  List<RecurringTransactionModel> _weekly = [];
-  List<RecurringTransactionModel> _monthly = [];
+  List<RecurringTransactionModel> _recurring = [];
   final Map<int, bool> _selected = {};
   final Map<int, RecurringTransactionModel> _recurringById = {};
   final Map<int, TextEditingController> _nameCtrls = {};
   final Map<int, String> _categoryNames = {};
+  List<AlertModel> _manualAlerts = [];
+  CategoryEmojiHelper? _emojiHelper;
 
   @override
   void initState() {
@@ -54,18 +57,24 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
       ..sort(_compareByDueDate);
 
     final alerts = await AlertRepository.getActiveRecurring();
+    final manualAlerts = (await AlertRepository.getAll())
+        .where((alert) =>
+            alert.recurringTransactionId == null && alert.isActive)
+        .toList()
+      ..sort(_compareAlertsByDueDate);
     final alertsById = <int, AlertModel>{};
     for (final alert in alerts) {
       final rid = alert.recurringTransactionId;
       if (rid != null) alertsById[rid] = alert;
     }
 
-    final combined = [...weekly, ...monthly];
+    final combined = [...weekly, ...monthly]..sort(_compareByDueDate);
     final selection = <int, bool>{};
     final map = <int, RecurringTransactionModel>{};
     final controllers = <int, TextEditingController>{};
     final categoryIds = combined.map((r) => r.categoryId).toSet();
     final categoryNames = await CategoryRepository.getNamesByIds(categoryIds);
+    final emojiHelper = await CategoryEmojiHelper.ensureLoaded();
 
     for (final r in combined) {
       final id = r.id;
@@ -92,8 +101,7 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
     }
 
     setState(() {
-      _weekly = weekly;
-      _monthly = monthly;
+      _recurring = combined;
       _selected
         ..clear()
         ..addAll(selection);
@@ -106,6 +114,8 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
       _categoryNames
         ..clear()
         ..addAll(categoryNames);
+      _manualAlerts = manualAlerts;
+      _emojiHelper = emojiHelper;
       _loading = false;
     });
   }
@@ -129,11 +139,9 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final hasRecurring = _weekly.isNotEmpty || _monthly.isNotEmpty;
-
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Recurring payments'),
+        title: const Text('Alerts'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -160,14 +168,7 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
                         style: TextStyle(fontSize: 14, color: Colors.black87),
                       ),
                       const SizedBox(height: 16),
-                      if (!hasRecurring)
-                        const Text(
-                          'No recurring expenses detected yet. Refresh after more transactions sync.',
-                          style: TextStyle(color: Colors.black54),
-                        ),
-                      if (_weekly.isNotEmpty) _buildSection('Weekly', _weekly),
-                      if (_monthly.isNotEmpty)
-                        _buildSection('Monthly', _monthly),
+                      _buildAlertsSection(),
                     ],
                   ),
                 ),
@@ -252,8 +253,7 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
     }
   }
 
-  Widget _buildSection(
-      String label, List<RecurringTransactionModel> items) {
+  Widget _buildAlertsSection() {
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       child: Padding(
@@ -263,21 +263,176 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-              child: Text(
-                '$label recurring',
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                ),
+              child: Row(
+                children: [
+                  const Text(
+                    'Alerts',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _createManualAlert,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add alert'),
+                  ),
+                ],
               ),
             ),
             const Divider(height: 1),
-            for (var i = 0; i < items.length; i++) ...[
-              _buildRecurringTile(items[i]),
-              if (i != items.length - 1) const Divider(height: 1),
+            if (_manualAlerts.isEmpty && _recurring.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'No alerts yet. Tap “Add alert” to create one.',
+                  style: TextStyle(color: Colors.black54),
+                ),
+              ),
+            if (_manualAlerts.isNotEmpty)
+              ..._manualAlerts.map(
+                (alert) => Column(
+                  children: [
+                    ListTile(
+                      leading: Icon(
+                        Icons.notifications_active_outlined,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      title: Text(alert.title),
+                      subtitle: Text(_manualAlertSubtitle(alert)),
+                      onLongPress: () => _editManualAlert(alert),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Delete alert',
+                        onPressed: alert.id == null
+                            ? null
+                            : () => _deleteManualAlert(alert),
+                      ),
+                    ),
+                    const Divider(height: 1),
+                  ],
+                ),
+              ),
+            if (_recurring.isNotEmpty) ...[
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Divider(
+                        height: 1,
+                        thickness: 1,
+                        indent: 16,
+                        endIndent: 8,
+                      ),
+                    ),
+                    Text(
+                      'Recurring payment alerts',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    Expanded(
+                      child: Divider(
+                        height: 1,
+                        thickness: 1,
+                        indent: 8,
+                        endIndent: 16,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              ..._recurring.map(
+                (item) => Column(
+                  children: [
+                    _buildRecurringTile(item),
+                    if (item != _recurring.last) const Divider(height: 1),
+                  ],
+                ),
+              ),
             ],
+            if (_manualAlerts.isNotEmpty)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
+                child: Text(
+                  'Hold an alert to edit it.',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+              ),
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _createManualAlert() async {
+    final form = await showManualAlertSheet(
+      context: context,
+      headerLabel: 'New alert',
+      initialDueDate: DateTime.now().add(const Duration(days: 7)),
+    );
+    if (form == null) return;
+
+    final alert = AlertModel(
+      title: form.title,
+      message: form.note,
+      icon: '⏰',
+      amount: form.amount,
+      dueDate: form.dueDate,
+    );
+    final id = await AlertRepository.insert(alert);
+    if (!mounted) return;
+    setState(() {
+      _manualAlerts
+        ..add(alert.copyWith(id: id))
+        ..sort(_compareAlertsByDueDate);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Alert '${form.title}' saved.")),
+    );
+  }
+
+  Future<void> _editManualAlert(AlertModel alert) async {
+    final form = await showManualAlertSheet(
+      context: context,
+      headerLabel: 'Edit alert',
+      initialTitle: alert.title,
+      initialAmount: alert.amount,
+      initialDueDate: alert.dueDate,
+      initialNote: alert.message,
+    );
+    if (form == null) return;
+
+    final updated = alert.copyWith(
+      title: form.title,
+      amount: form.amount,
+      dueDate: form.dueDate,
+      message: form.note ?? alert.message,
+    );
+    await AlertRepository.update(updated);
+    if (!mounted) return;
+    setState(() {
+      final idx = _manualAlerts.indexWhere((a) => a.id == alert.id);
+      if (idx != -1) {
+        _manualAlerts[idx] = updated;
+        _manualAlerts.sort(_compareAlertsByDueDate);
+      }
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Alert '${form.title}' updated.")),
+    );
+  }
+
+  Future<void> _deleteManualAlert(AlertModel alert) async {
+    if (alert.id == null) return;
+    await AlertRepository.delete(alert.id!);
+    if (!mounted) return;
+    setState(() {
+      _manualAlerts.removeWhere((a) => a.id == alert.id);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Alert '${alert.title}' deleted.")),
     );
   }
 
@@ -300,42 +455,27 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
     final id = item.id;
     if (id == null) return const SizedBox.shrink();
     final fallback = _displayNameForItem(item);
-    final controller = _nameCtrls.putIfAbsent(
-      id,
-      () => TextEditingController(text: fallback),
-    );
+    _nameCtrls.putIfAbsent(id, () => TextEditingController(text: fallback));
     final dueLabel = _dueLabel(item);
     final selected = _selected[id] ?? false;
+    final categoryName =
+        _categoryNames[item.categoryId]?.trim().isNotEmpty == true
+            ? _categoryNames[item.categoryId]!
+            : fallback;
+    final emoji =
+        _emojiHelper?.emojiForName(categoryName) ??
+        CategoryEmojiHelper.defaultEmoji;
 
-    final displayName =
-        controller.text.trim().isEmpty ? fallback : controller.text.trim();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        CheckboxListTile(
-          value: selected,
-          onChanged: (value) => _toggleSelection(id, value ?? false),
-          title: Text(displayName),
-          subtitle: Text(
-            '$dueLabel • \$${item.amount.toStringAsFixed(2)} / ${item.frequency}',
-          ),
-          secondary: Icon(
-            selected ? Icons.notifications_active : Icons.notifications_none,
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          child: TextField(
-            controller: controller,
-            decoration: const InputDecoration(
-              labelText: 'Alert name',
-              border: OutlineInputBorder(),
-            ),
-            onChanged: (_) => setState(() {}),
-          ),
-        ),
-      ],
+    return CheckboxListTile(
+      value: selected,
+      onChanged: (value) => _toggleSelection(id, value ?? false),
+      title: Text('$emoji $fallback'),
+      subtitle: Text(
+        '$dueLabel • \$${item.amount.toStringAsFixed(2)} / ${item.frequency}',
+      ),
+      secondary: Icon(
+        selected ? Icons.notifications_active : Icons.notifications_none,
+      ),
     );
   }
 
@@ -367,6 +507,41 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
     final day = date.day.toString().padLeft(2, '0');
     final month = date.month.toString().padLeft(2, '0');
     return '$day/$month';
+  }
+
+  int _compareAlertsByDueDate(AlertModel a, AlertModel b) {
+    final ad = a.dueDate ?? DateTime.tryParse(a.createdAt ?? '') ?? DateTime.now();
+    final bd = b.dueDate ?? DateTime.tryParse(b.createdAt ?? '') ?? DateTime.now();
+    return ad.compareTo(bd);
+  }
+
+  String _manualAlertSubtitle(AlertModel alert) {
+    final due = alert.dueDate;
+    final dueLabel =
+        due != null ? _manualDueLabel(due) : (alert.message ?? 'Reminder saved');
+    final amountLabel =
+        alert.amount != null ? ' • ${_formatCurrency(alert.amount!)}' : '';
+    return '$dueLabel$amountLabel';
+  }
+
+  String _manualDueLabel(DateTime due) {
+    final today = DateTime.now();
+    final normalizedToday = DateTime(today.year, today.month, today.day);
+    final normalizedDue = DateTime(due.year, due.month, due.day);
+    final delta = normalizedDue.difference(normalizedToday).inDays;
+    if (delta < 0) {
+      return 'Overdue · ${_formatDate(normalizedDue)}';
+    } else if (delta == 0) {
+      return 'Due today';
+    } else if (delta == 1) {
+      return 'Due tomorrow';
+    }
+    return 'Due in $delta days · ${_formatDate(normalizedDue)}';
+  }
+
+  String _formatCurrency(double value) {
+    final decimals = value.abs() >= 100 ? 0 : 2;
+    return '\$${value.toStringAsFixed(decimals)}';
   }
 }
 

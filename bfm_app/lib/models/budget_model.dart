@@ -20,6 +20,7 @@ class BudgetModel {
   final int? categoryId;
   final int? goalId;
   final String? label;
+  final String? uncategorizedKey;
   final double weeklyLimit;
   final String periodStart; // YYYY-MM-DD (week start)
   final String? periodEnd; // optional
@@ -31,6 +32,7 @@ class BudgetModel {
     this.categoryId,
     this.goalId,
     this.label,
+    this.uncategorizedKey,
     required this.weeklyLimit,
     required this.periodStart,
     this.periodEnd,
@@ -45,6 +47,7 @@ class BudgetModel {
       categoryId: m['category_id'] as int?,
       goalId: m['goal_id'] as int?,
       label: m['label'] as String?,
+      uncategorizedKey: m['uncategorized_key'] as String?,
       weeklyLimit: (m['weekly_limit'] as num).toDouble(),
       periodStart: (m['period_start'] as String),
       periodEnd: m['period_end'] as String?,
@@ -60,6 +63,7 @@ class BudgetModel {
       'category_id': categoryId,
       'goal_id': goalId,
       'label': label,
+      'uncategorized_key': uncategorizedKey,
       'weekly_limit': weeklyLimit,
       'period_start': periodStart,
       'period_end': periodEnd,

@@ -1,20 +1,20 @@
-/// ---------------------------------------------------------------------------
-/// File: lib/services/context_builder.dart
-/// Author: Luke Fraser-Brown
-///
-/// Called by:
-///   - `ai_client.dart` right before sending chat requests.
-///
-/// Purpose:
-///   - Builds the private context block (persona, history summary, DB-backed
-///     insights) that gets injected before the scrolling chat turns.
-///
-/// Inputs:
-///   - Recent UI turns plus boolean flags for which data sections to include.
-///
-/// Outputs:
-///   - A single multi-line string fed into the assistant prompt.
-/// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// File: lib/services/context_builder.dart
+// Author: Luke Fraser-Brown
+//
+// Called by:
+//   - `ai_client.dart` right before sending chat requests.
+//
+// Purpose:
+//   - Builds the private context block (persona, history summary, DB-backed
+//     insights) that gets injected before the scrolling chat turns.
+//
+// Inputs:
+//   - Recent UI turns plus boolean flags for which data sections to include.
+//
+// Outputs:
+//   - A single multi-line string fed into the assistant prompt.
+// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/models/onboarding_response.dart';
@@ -39,6 +39,10 @@ class ContextBuilder {
   }) async {
     final buffer = StringBuffer();
     buffer.writeln('PRIVATE CONTEXT: for assistant behaviour only.');
+
+    final now = DateTime.now();
+    buffer.writeln('current_datetime_iso: ${now.toIso8601String()}');
+    buffer.writeln('current_date_nz: ${_formatLongDate(now)}');
 
     // ---- Persona / flags
     final persona = await _getPersonaTag();
@@ -163,6 +167,36 @@ class ContextBuilder {
   static String _clip(String s, int max) {
     final t = s.trim().replaceAll('\n', ' ');
     return (t.length <= max) ? t : '${t.substring(0, max - 1)}…';
+  }
+
+  static String _formatLongDate(DateTime d) {
+    const months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    const weekdays = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    final weekday = weekdays[d.weekday - 1];
+    final month = months[d.month - 1];
+    final day = d.day.toString().padLeft(2, '0');
+    return '$weekday, $day $month ${d.year} (local NZ time)';
   }
 
   /// Loads the onboarding answers and formats them for the private context.

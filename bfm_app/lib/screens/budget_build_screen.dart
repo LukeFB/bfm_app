@@ -61,7 +61,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   final Map<int, TextEditingController> _recurringAmountCtrls = {};
   final Set<int> _selectedRecurringIds = {};
   Map<int, _RecurringBudgetItem> _recurringItemLookup = {};
-  Map<int, BudgetModel> _existingBudgetMap = {};
+  late bool _recurringExpanded;
   final Set<String> _selectedUncatKeys = {};
   final Map<String, String> _uncatNameOverrides = {};
   final Map<String, String> _uncatAmountOverrides = {};
@@ -78,6 +78,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   @override
   void initState() {
     super.initState();
+    _recurringExpanded = widget.editMode;
     _load();
   }
 
@@ -93,6 +94,9 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       for (final entry in _recurringAmountCtrls.entries)
         entry.key: entry.value.text,
     };
+    final previousUncatSelection = Set<String>.from(_selectedUncatKeys);
+    final previousUncatNames = Map<String, String>.from(_uncatNameOverrides);
+    final previousUncatAmounts = Map<String, String>.from(_uncatAmountOverrides);
     setState(() => _loading = true);
 
     await BudgetAnalysisService.identifyRecurringTransactions();
@@ -110,12 +114,13 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       }
     }
     final validRecurringIds = recurringLookup.keys.toSet();
-    final restoredRecurringSelection = previousRecurringSelection
+    final sanitizedPreviousRecurring = previousRecurringSelection
         .where(validRecurringIds.contains)
         .toSet();
 
     Map<int, BudgetModel> existingBudgets = {};
     Map<int, String> existingBudgetNames = {};
+    Map<String, BudgetModel> existingUncatBudgets = {};
     if (widget.editMode) {
       final budgets = await BudgetRepository.getAll();
       existingBudgets = {
@@ -127,7 +132,32 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
           existingBudgets.keys,
         );
       }
+      existingUncatBudgets = {
+        for (final b in budgets)
+          if ((b.uncategorizedKey?.trim().isNotEmpty ?? false))
+            b.uncategorizedKey!.trim().toLowerCase(): b,
+      };
     }
+
+    final existingRecurringSelection = <int>{};
+    final recurringBudgetPrefills = <int, String>{};
+    if (widget.editMode && existingBudgets.isNotEmpty) {
+      for (final item in recurringItems) {
+        final rid = item.recurringId;
+        if (rid == null) continue;
+        final budget = existingBudgets[item.categoryId];
+        if (budget == null) continue;
+        existingRecurringSelection.add(rid);
+        recurringBudgetPrefills[rid] = budget.weeklyLimit.toStringAsFixed(2);
+      }
+    }
+
+    final allRecurringIds = Set<int>.from(validRecurringIds);
+    final defaultRecurringSelection =
+        widget.editMode ? existingRecurringSelection : allRecurringIds;
+    final nextRecurringSelection = sanitizedPreviousRecurring.isNotEmpty
+        ? sanitizedPreviousRecurring
+        : defaultRecurringSelection;
 
     if (!mounted) return;
 
@@ -184,6 +214,34 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       remainingManual.addAll(manualBudgetEntries);
     }
 
+    if (existingUncatBudgets.isNotEmpty) {
+      final presentUncatKeys = list
+          .where((s) => s.isUncategorizedGroup)
+          .map(_uncatKey)
+          .toSet();
+      for (final entry in existingUncatBudgets.entries) {
+        if (presentUncatKeys.contains(entry.key)) continue;
+        final budget = entry.value;
+        final displayName =
+            (budget.label?.trim().isNotEmpty ?? false)
+                ? budget.label!.trim()
+                : (budget.uncategorizedKey ?? 'Budget');
+        list.add(
+          BudgetSuggestionModel(
+            categoryId: null,
+            categoryName: displayName,
+            weeklySuggested: budget.weeklyLimit,
+            usageCount: 0,
+            txCount: 0,
+            hasRecurring: false,
+            isUncategorizedGroup: true,
+            description: budget.uncategorizedKey ?? displayName,
+          ),
+        );
+        presentUncatKeys.add(entry.key);
+      }
+    }
+
     for (final entry in remainingManual.entries) {
       final id = entry.key;
       final model = entry.value;
@@ -215,10 +273,47 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       ..clear()
       ..addAll(remainingManual);
 
-    final nextUncatKeys = list
-        .where((s) => s.isUncategorizedGroup)
-        .map(_uncatKey)
+    final uncatSuggestionLookup = <String, BudgetSuggestionModel>{};
+    for (final suggestion in list.where((s) => s.isUncategorizedGroup)) {
+      uncatSuggestionLookup[_uncatKey(suggestion)] = suggestion;
+    }
+    final nextUncatKeys = uncatSuggestionLookup.keys.toSet();
+
+    final restoredSelectedUncat = previousUncatSelection
+        .where(nextUncatKeys.contains)
         .toSet();
+    final restoredNameOverrides = <String, String>{
+      for (final entry in previousUncatNames.entries)
+        if (nextUncatKeys.contains(entry.key)) entry.key: entry.value,
+    };
+    final restoredAmountOverrides = <String, String>{
+      for (final entry in previousUncatAmounts.entries)
+        if (nextUncatKeys.contains(entry.key)) entry.key: entry.value,
+    };
+
+    if (widget.editMode && existingUncatBudgets.isNotEmpty) {
+      for (final entry in existingUncatBudgets.entries) {
+        final key = entry.key;
+        if (!nextUncatKeys.contains(key)) continue;
+        final budget = entry.value;
+        restoredSelectedUncat.add(key);
+        final suggestion = uncatSuggestionLookup[key];
+        final suggestionName = suggestion?.categoryName ?? '';
+        final cleanedLabel = (budget.label ?? '').trim();
+        if (cleanedLabel.isNotEmpty && cleanedLabel != suggestionName) {
+          restoredNameOverrides[key] = cleanedLabel;
+        } else if (cleanedLabel.isEmpty && suggestionName.isNotEmpty) {
+          restoredNameOverrides.remove(key);
+        }
+        final amountText = budget.weeklyLimit.toStringAsFixed(2);
+        final defaultAmount = suggestion?.weeklySuggested.toStringAsFixed(2);
+        if (defaultAmount == null || defaultAmount != amountText) {
+          restoredAmountOverrides[key] = amountText;
+        } else {
+          restoredAmountOverrides.remove(key);
+        }
+      }
+    }
 
     setState(() {
       _baseSuggestions = list;
@@ -227,14 +322,26 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       _recurringItemLookup = recurringLookup;
       _selectedRecurringIds
         ..clear()
-        ..addAll(restoredRecurringSelection);
-      _existingBudgetMap = widget.editMode ? existingBudgets : {};
+        ..addAll(nextRecurringSelection);
+      _selectedUncatKeys
+        ..clear()
+        ..addAll(restoredSelectedUncat);
+      _uncatNameOverrides
+        ..clear()
+        ..addAll(restoredNameOverrides);
+      _uncatAmountOverrides
+        ..clear()
+        ..addAll(restoredAmountOverrides);
       _emojiHelper = emojiHelper;
       _loading = false;
     });
 
     _pruneUncatControllers(nextUncatKeys);
-    _syncRecurringAmountControllers(recurringLookup, previousRecurringAmounts);
+    _syncRecurringAmountControllers(
+      recurringLookup,
+      previousRecurringAmounts,
+      recurringBudgetPrefills,
+    );
   }
 
   /// Cleans up text controllers to avoid leaks.
@@ -319,11 +426,12 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       final suggestion = uncatMap[key];
       if (suggestion == null) continue;
       final targetName = _uncatResolvedName(key, suggestion);
-      final catId = await CategoryRepository.ensureByName(targetName);
       final weeklyLimit = _uncatAmountValue(key, suggestion);
       if (weeklyLimit <= 0) continue;
       final m = BudgetModel(
-        categoryId: catId,
+        categoryId: null,
+        label: targetName,
+        uncategorizedKey: key,
         weeklyLimit: weeklyLimit,
         periodStart: periodStart,
       );
@@ -410,7 +518,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   Widget build(BuildContext context) {
     final uncatSuggestions = _uncategorizedSuggestions();
     final categorySuggestions = _categorySuggestions();
-    final existingBudgetSuggestions = _existingBudgetSuggestions();
 
     return Scaffold(
       appBar: AppBar(
@@ -446,8 +553,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                   child: ListView(
                     padding: const EdgeInsets.only(bottom: 16),
                     children: [
-                      if (existingBudgetSuggestions.isNotEmpty)
-                        _buildExistingBudgetsCard(existingBudgetSuggestions),
                       if (_recurringItems.isNotEmpty ||
                           uncatSuggestions.isNotEmpty ||
                           categorySuggestions.isNotEmpty)
@@ -509,6 +614,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   void _syncRecurringAmountControllers(
     Map<int, _RecurringBudgetItem> lookup,
     Map<int, String> previousAmounts,
+    Map<int, String> budgetPrefills,
   ) {
     final validIds = lookup.keys.toSet();
     final removeIds = _recurringAmountCtrls.keys
@@ -521,9 +627,8 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     for (final entry in lookup.entries) {
       final id = entry.key;
       final existing = _recurringAmountCtrls[id];
-      final defaultText =
-          previousAmounts[id] ??
-          existing?.text ??
+      final defaultText = previousAmounts[id] ??
+          budgetPrefills[id] ??
           entry.value.weeklyAmount.toStringAsFixed(2);
       if (existing == null) {
         _recurringAmountCtrls[id] = TextEditingController(text: defaultText);
@@ -557,82 +662,55 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
 
   bool _isUncatSelected(String key) => _selectedUncatKeys.contains(key);
 
-  void _handleUncatToggle({required String key, required bool checked}) {
-    setState(() {
-      if (checked) {
+  Future<void> _handleUncatToggle({
+    required String key,
+    required BudgetSuggestionModel suggestion,
+    required bool checked,
+  }) async {
+    if (checked) {
+      final confirmed = await _promptForUncatSelection(key, suggestion);
+      if (!confirmed) return;
+      setState(() {
         _selectedUncatKeys.add(key);
-      } else {
+      });
+    } else {
+      setState(() {
         _selectedUncatKeys.remove(key);
-      }
-    });
+      });
+    }
+  }
+
+  Future<bool> _promptForUncatSelection(
+    String key,
+    BudgetSuggestionModel suggestion,
+  ) async {
+    final currentName = _uncatResolvedName(key, suggestion);
+    final currentAmount = _uncatAmountOverrides[key] ??
+        suggestion.weeklySuggested.toStringAsFixed(2);
+    final result = await _showUncategorizedEditor(
+      title: suggestion.categoryName,
+      initialName: currentName,
+      initialAmount: currentAmount,
+    );
+    if (result == null) return false;
+    _applyUncatOverrides(
+      key: key,
+      suggestion: suggestion,
+      name: result.name,
+      amount: result.amount,
+    );
+    return true;
+  }
+
+  void _toggleRecurringExpanded() {
+    setState(() => _recurringExpanded = !_recurringExpanded);
   }
 
   List<BudgetSuggestionModel> _categorySuggestions() {
     final base = _suggestions
         .where((s) => !s.isUncategorizedGroup && !s.hasRecurring)
         .toList(growable: false);
-    if (!widget.editMode || _existingBudgetMap.isEmpty) {
-      return base;
-    }
-    final existingIds = _existingBudgetMap.keys.toSet();
-    return base
-        .where(
-          (s) => s.categoryId == null || !existingIds.contains(s.categoryId),
-        )
-        .toList(growable: false);
-  }
-
-  List<BudgetSuggestionModel> _existingBudgetSuggestions() {
-    if (!widget.editMode || _existingBudgetMap.isEmpty) return const [];
-    final existingIds = _existingBudgetMap.keys.toSet();
-    final list = _suggestions
-        .where(
-          (s) =>
-              !s.isUncategorizedGroup &&
-              existingIds.contains(s.categoryId) &&
-              !s.hasRecurring,
-        )
-        .toList();
-    list.sort((a, b) => a.categoryName.compareTo(b.categoryName));
-    return list;
-  }
-
-  Widget _buildExistingBudgetsCard(List<BudgetSuggestionModel> items) {
-    final maxHeight = min(items.length * 118.0, 420.0);
-    return Card(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: true,
-          leading: const Icon(Icons.account_balance_wallet_outlined),
-          title: const Text('Current budgets'),
-          subtitle: const Text(
-            'Edit saved categories below. Uncheck to remove from your plan.',
-            style: TextStyle(fontSize: 12),
-          ),
-          children: [
-            SizedBox(
-              height: maxHeight,
-              child: ListView.builder(
-                padding: EdgeInsets.zero,
-                itemCount: items.length,
-                physics: const BouncingScrollPhysics(),
-                itemBuilder: (context, index) {
-                  final row = _buildCategoryRow(items[index]);
-                  return Column(
-                    children: [
-                      row,
-                      if (index != items.length - 1) const Divider(height: 1),
-                    ],
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    return base;
   }
 
   Widget _buildUnifiedBudgetCard({
@@ -647,15 +725,45 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       return const SizedBox.shrink();
     }
 
-    final entries = <_UnifiedRowEntry>[
-      ...recurring.map(_UnifiedRowEntry.recurring),
-    ];
-    if (hasRecurring && hasCategories) {
-      entries.add(const _UnifiedRowEntry.divider());
+    final sections = <Widget>[];
+    if (hasRecurring) {
+      sections.add(_buildRecurringHeader(recurring));
+      if (_recurringExpanded) {
+        sections.add(const Divider(height: 1));
+        for (var i = 0; i < recurring.length; i++) {
+          sections.add(_buildRecurringRow(recurring[i]));
+          if (i != recurring.length - 1) {
+            sections.add(const Divider(height: 1));
+          }
+        }
+      }
     }
-    entries.addAll(combinedRows.map(_UnifiedRowEntry.category));
 
-    final maxHeight = min(entries.length * 120.0, 560.0);
+    if (hasRecurring && hasCategories) {
+      if (sections.isNotEmpty) {
+        sections.add(const SizedBox(height: 4));
+      }
+      sections.add(const _WeeklyExpenditureDivider());
+    }
+
+    for (var i = 0; i < combinedRows.length; i++) {
+      final row = combinedRows[i];
+      sections.add(
+        row.isUncategorized
+            ? _buildUncategorizedRow(row.suggestion)
+            : _buildCategoryRow(row.suggestion),
+      );
+      if (i != combinedRows.length - 1) {
+        sections.add(const Divider(height: 1));
+      }
+    }
+
+    final recurringRowEstimate =
+        hasRecurring ? 1 + (_recurringExpanded ? recurring.length : 0) : 0;
+    final estimatedRows = recurringRowEstimate +
+        (hasRecurring && hasCategories ? 1 : 0) +
+        combinedRows.length;
+    final maxHeight = min(max(estimatedRows, 1) * 120.0, 560.0);
 
     return Card(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
@@ -691,38 +799,10 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
           const Divider(height: 1),
           SizedBox(
             height: maxHeight,
-            child: ListView.builder(
+            child: ListView(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              itemCount: entries.length,
               physics: const BouncingScrollPhysics(),
-              itemBuilder: (context, index) {
-                final entry = entries[index];
-                late final Widget row;
-                switch (entry.type) {
-                  case _UnifiedRowType.recurring:
-                    row = _buildRecurringRow(entry.recurring!);
-                    break;
-                  case _UnifiedRowType.category:
-                    row = entry.category!.isUncategorized
-                        ? _buildUncategorizedRow(entry.category!.suggestion)
-                        : _buildCategoryRow(entry.category!.suggestion);
-                    break;
-                  case _UnifiedRowType.divider:
-                    row = const _WeeklyExpenditureDivider();
-                    break;
-                }
-                final isLast = index == entries.length - 1;
-                final showStandardDivider =
-                    entry.type != _UnifiedRowType.divider &&
-                    !isLast &&
-                    entries[index + 1].type != _UnifiedRowType.divider;
-                return Column(
-                  children: [
-                    row,
-                    if (showStandardDivider) const Divider(height: 1),
-                  ],
-                );
-              },
+              children: sections,
             ),
           ),
         ],
@@ -855,6 +935,54 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     return rows;
   }
 
+  Widget _buildRecurringHeader(List<_RecurringBudgetItem> items) {
+    final recurringIds =
+        items.map((item) => item.recurringId).whereType<int>().toSet();
+    final selectedCount = _selectedRecurringIds
+        .where((id) => recurringIds.contains(id))
+        .length;
+    final total = recurringIds.length;
+    final subtitle = total == 0
+        ? 'No recurring expenses detected yet.'
+        : '$selectedCount of $total in your plan · tap to ${_recurringExpanded ? 'hide' : 'show'}';
+    final title = widget.editMode
+        ? 'Recurring essentials'
+        : 'Recurring essentials (auto-selected)';
+
+    return InkWell(
+      onTap: _toggleRecurringExpanded,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Row(
+          children: [
+            Icon(
+              Icons.autorenew,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                ],
+              ),
+            ),
+            Icon(_recurringExpanded ? Icons.expand_less : Icons.expand_more),
+          ],
+        ),
+      ),
+    );
+  }
+
   String _categoryEmoji(BudgetSuggestionModel suggestion) {
     if (suggestion.isUncategorizedGroup) {
       return CategoryEmojiHelper.uncategorizedEmoji;
@@ -930,10 +1058,24 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       initialAmount: currentAmount,
     );
     if (result == null) return;
-    final normalizedAmount = _parseAmount(result.amount).toStringAsFixed(2);
+    _applyUncatOverrides(
+      key: key,
+      suggestion: suggestion,
+      name: result.name,
+      amount: result.amount,
+    );
+  }
+
+  void _applyUncatOverrides({
+    required String key,
+    required BudgetSuggestionModel suggestion,
+    required String name,
+    required String amount,
+  }) {
+    final normalizedAmount = _parseAmount(amount).toStringAsFixed(2);
     final defaultAmount = suggestion.weeklySuggested.toStringAsFixed(2);
     setState(() {
-      final trimmedName = result.name.trim();
+      final trimmedName = name.trim();
       if (trimmedName.isEmpty || trimmedName == suggestion.categoryName) {
         _uncatNameOverrides.remove(key);
       } else {
@@ -1185,8 +1327,11 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                   Checkbox(
                     value: selected,
                     visualDensity: VisualDensity.compact,
-                    onChanged: (v) =>
-                        _handleUncatToggle(key: key, checked: v ?? false),
+                onChanged: (v) => _handleUncatToggle(
+                  key: key,
+                  suggestion: s,
+                  checked: v ?? false,
+                ),
                   ),
                 ],
               ),
@@ -1365,24 +1510,6 @@ class _UncatEditResult {
   final String name;
   final String amount;
   const _UncatEditResult({required this.name, required this.amount});
-}
-
-enum _UnifiedRowType { recurring, category, divider }
-
-class _UnifiedRowEntry {
-  final _UnifiedRowType type;
-  final _RecurringBudgetItem? recurring;
-  final _CombinedCategoryRow? category;
-
-  const _UnifiedRowEntry._(this.type, {this.recurring, this.category});
-
-  const _UnifiedRowEntry.recurring(_RecurringBudgetItem item)
-    : this._(_UnifiedRowType.recurring, recurring: item);
-
-  const _UnifiedRowEntry.category(_CombinedCategoryRow row)
-    : this._(_UnifiedRowType.category, category: row);
-
-  const _UnifiedRowEntry.divider() : this._(_UnifiedRowType.divider);
 }
 
 class _RecurringBudgetItem {

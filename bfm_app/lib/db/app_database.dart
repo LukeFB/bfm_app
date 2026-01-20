@@ -50,7 +50,7 @@ class AppDatabase {
     // Open the database with version and an onUpgrade callback
     return await openDatabase(
       path,
-      version: 17,
+      version: 19,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },
@@ -106,6 +106,12 @@ class AppDatabase {
         await _recreateAlertsTable(db);
       }
     }
+    if (!await hasCol('alerts', 'amount')) {
+      await db.execute('ALTER TABLE alerts ADD COLUMN amount REAL;');
+    }
+    if (!await hasCol('alerts', 'due_date')) {
+      await db.execute('ALTER TABLE alerts ADD COLUMN due_date TEXT;');
+    }
     if (!await hasTable('events')) {
       await _createEvents(db);
     } else {
@@ -148,6 +154,9 @@ class AppDatabase {
     }
     if (!await hasCol('budgets', 'label')) {
       await db.execute('ALTER TABLE budgets ADD COLUMN label TEXT;');
+    }
+    if (!await hasCol('budgets', 'uncategorized_key')) {
+      await db.execute('ALTER TABLE budgets ADD COLUMN uncategorized_key TEXT;');
     }
 
     await _createGoalProgressLog(db);
@@ -335,6 +344,7 @@ class AppDatabase {
         category_id INTEGER,
         goal_id INTEGER,
         label TEXT,
+        uncategorized_key TEXT,
         weekly_limit REAL NOT NULL,
         period_start TEXT NOT NULL,
         period_end TEXT,
@@ -362,6 +372,7 @@ class AppDatabase {
         id,
         category_id,
         label,
+        uncategorized_key,
         weekly_limit,
         period_start,
         period_end,
@@ -371,6 +382,7 @@ class AppDatabase {
       SELECT
         id,
         category_id,
+        NULL,
         NULL,
         weekly_limit,
         period_start,
@@ -439,6 +451,8 @@ class AppDatabase {
         message TEXT,
         icon TEXT,
         recurring_transaction_id INTEGER,
+        amount REAL,
+        due_date TEXT,
         lead_time_days INTEGER NOT NULL DEFAULT 3,
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -456,6 +470,8 @@ class AppDatabase {
         title,
         message,
         icon,
+        amount,
+        due_date,
         created_at
       )
       SELECT
@@ -463,6 +479,8 @@ class AppDatabase {
         text,
         text,
         icon,
+        NULL,
+        NULL,
         datetime('now')
       FROM alerts_old;
     ''');
