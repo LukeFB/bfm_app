@@ -51,6 +51,7 @@ dependencies:
   shared_preferences: ^2.2.2
   flutter_secure_storage: ^9.2.2
   crypto: ^3.0.3
+  csv: ^6.0.0
 
   local_auth: ^2.3.0 # Device authentication
   flutter_web_auth_2: ^4.1.0  # for handling Akahu OAuth web flow
@@ -87,7 +88,8 @@ flutter:
   uses-material-design: true
 
   assets:
-      - assets/referrals.json
+    - assets/referrals.json
+    - assets/data/nzfcc_categories.csv
     
   # BFM fonts go here
 

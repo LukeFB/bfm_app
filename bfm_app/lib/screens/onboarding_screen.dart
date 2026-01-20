@@ -10,17 +10,16 @@
 /// ---------------------------------------------------------------------------
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:bfm_app/models/onboarding_response.dart';
+import 'package:bfm_app/services/bank_service.dart';
 import 'package:bfm_app/services/onboarding_store.dart';
 
 class OnboardingScreen extends StatefulWidget {
   final String onCompleteRoute;
 
-  const OnboardingScreen({
-    super.key,
-    this.onCompleteRoute = '/budget/build',
-  });
+  const OnboardingScreen({super.key, this.onCompleteRoute = '/budget/build'});
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -34,11 +33,29 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final _referrerCtrl = TextEditingController();
   final _reasonCtrl = TextEditingController();
   final _situationCtrl = TextEditingController();
+  final _bankAppTokenCtrl = TextEditingController();
+  final _bankUserTokenCtrl = TextEditingController();
   final OnboardingStore _store = OnboardingStore();
 
   int _currentPage = 0;
   bool _saving = false;
   bool _loadingTriggered = false;
+  bool _bankConnecting = false;
+  bool _bankConnected = false;
+  String? _bankConnectError;
+
+  @override
+  void initState() {
+    super.initState();
+    _hydrateBankStatus();
+  }
+
+  Future<void> _hydrateBankStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final connected = prefs.getBool('bank_connected') ?? false;
+    if (!mounted) return;
+    setState(() => _bankConnected = connected);
+  }
 
   @override
   void dispose() {
@@ -49,6 +66,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     _referrerCtrl.dispose();
     _reasonCtrl.dispose();
     _situationCtrl.dispose();
+    _bankAppTokenCtrl.dispose();
+    _bankUserTokenCtrl.dispose();
     super.dispose();
   }
 
@@ -56,8 +75,22 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Widget build(BuildContext context) {
     final pages = _buildPages(context);
     final totalPages = pages.length;
-    final isLastPage = _currentPage >= totalPages - 1;
-    final isLoadingPage = isLastPage;
+    final lastPageIndex = totalPages - 1;
+    final bankConnectIndex = totalPages >= 2 ? totalPages - 2 : 0;
+    final isLastPage = _currentPage >= lastPageIndex;
+    final isLoadingPage = _currentPage == lastPageIndex;
+    final isBankConnectPage = _currentPage == bankConnectIndex;
+    final isProcessing = _saving || _bankConnecting;
+    final nextLabel = isLoadingPage
+        ? 'Start using Moni'
+        : isBankConnectPage
+        ? (_bankConnected ? 'Continue' : 'Connect bank')
+        : 'Next';
+    final nextIcon = isLoadingPage
+        ? Icons.rocket_launch
+        : isBankConnectPage
+        ? Icons.link
+        : Icons.arrow_forward;
 
     return Scaffold(
       appBar: AppBar(
@@ -72,10 +105,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             Expanded(
               child: PageView(
                 controller: _pageController,
+                physics: const NeverScrollableScrollPhysics(),
                 onPageChanged: (index) {
                   setState(() => _currentPage = index);
-                  final lastIndex = pages.length - 1;
-                  if (index == lastIndex) {
+                  if (index == lastPageIndex) {
                     _startFakeLoading();
                   }
                 },
@@ -90,27 +123,25 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     TextButton.icon(
                       icon: const Icon(Icons.arrow_back),
                       label: const Text('Back'),
-                      onPressed: _saving || _currentPage == 0
+                      onPressed: isProcessing || _currentPage == 0
                           ? null
                           : () => _pageController.previousPage(
-                                duration: const Duration(milliseconds: 250),
-                                curve: Curves.easeInOut,
-                              ),
+                              duration: const Duration(milliseconds: 250),
+                              curve: Curves.easeInOut,
+                            ),
                     ),
                     const Spacer(),
                     FilledButton.icon(
-                      icon: Icon(
-                        isLastPage ? Icons.rocket_launch : Icons.arrow_forward,
-                      ),
-                      label: Text(isLastPage ? 'Start using Moni' : 'Next'),
-                      onPressed: _saving
+                      icon: Icon(nextIcon),
+                      label: Text(nextLabel),
+                      onPressed: isProcessing
                           ? null
-                          : () => _handleNext(totalPages, isLastPage),
+                          : () => _handleNext(isLastPage, bankConnectIndex),
                     ),
                   ],
                 ),
               ),
-            if (_saving) const LinearProgressIndicator(minHeight: 2),
+            if (isProcessing) const LinearProgressIndicator(minHeight: 2),
           ],
         ),
       ),
@@ -121,9 +152,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final questionSteps = _questionSteps();
     final questionPages = questionSteps.map(_buildQuestionPage).toList();
     final loadingPage = _buildLoadingPage(context);
+    final bankConnectPage = _buildBankConnectPage(context);
     return [
       ...questionPages,
       _buildPrivacyPage(context),
+      bankConnectPage,
       loadingPage,
     ];
   }
@@ -132,7 +165,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     return [
       _QuestionStep(
         title: 'Tell us about yourself',
-        description: 'Age, gender, and location help us tailor tips to your life stage.',
+        description:
+            'Age, gender, and location help us tailor tips to your life stage.',
         groupedFields: [
           _FieldConfig(
             controller: _ageCtrl,
@@ -162,8 +196,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         showInfo: false,
       ),
       _QuestionStep(
-        title: 'Tell us a little about your situation and why you want to use Moni',
-        description: 'Helps the coach focus advice on what matters most to you.',
+        title:
+            'Tell us a little about your situation and why you want to use Moni',
+        description:
+            'Helps the coach focus advice on what matters most to you.',
         controller: _reasonCtrl,
         fieldLabel: 'Share anything helpful',
         hint:
@@ -241,6 +277,69 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
+  Widget _buildBankConnectPage(BuildContext context) {
+    final theme = Theme.of(context);
+    return _OnboardingPageShell(
+      title: 'Connect your bank',
+      description:
+          'Paste the Akahu tokens we shared so Moni can securely pull your transactions.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_bankConnected)
+            const _InfoBanner(
+              icon: Icons.check_circle_outline,
+              message:
+                  'Your bank is already connected. Tap Continue to keep going.',
+            )
+          else ...[
+            const Text(
+              'These tokens only ever talk to Akahu so we can fetch your data for budgeting.',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _bankAppTokenCtrl,
+              enabled: !_bankConnecting,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'App Token (X-Akahu-Id)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _bankUserTokenCtrl,
+              enabled: !_bankConnecting,
+              autocorrect: false,
+              enableSuggestions: false,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'User Token (Bearer)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'We store them securely on your device and you can update them later in Settings.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
+          if (_bankConnectError != null) ...[
+            const SizedBox(height: 16),
+            Text(
+              _bankConnectError!,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.error,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildLoadingPage(BuildContext context) {
     return _OnboardingPageShell(
       title: 'Almost there...',
@@ -250,15 +349,74 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  void _handleNext(int totalPages, bool isLastPage) {
+  void _handleNext(bool isLastPage, int bankConnectIndex) {
+    if (_currentPage == bankConnectIndex) {
+      if (_bankConnected) {
+        _pageController.nextPage(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeInOut,
+        );
+      } else {
+        _handleBankConnect();
+      }
+      return;
+    }
+
     if (isLastPage) {
       _startFakeLoading();
       return;
     }
+
     _pageController.nextPage(
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeInOut,
     );
+  }
+
+  Future<void> _handleBankConnect() async {
+    if (_bankConnecting) return;
+
+    final appToken = _bankAppTokenCtrl.text.trim();
+    final userToken = _bankUserTokenCtrl.text.trim();
+
+    if (appToken.isEmpty || userToken.isEmpty) {
+      setState(() {
+        _bankConnectError = 'Enter both tokens to continue.';
+      });
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _bankConnecting = true;
+      _bankConnectError = null;
+    });
+
+    try {
+      await BankService.connect(appToken: appToken, userToken: userToken);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _bankConnecting = false;
+        _bankConnected = true;
+      });
+      await _pageController.nextPage(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
+      );
+    } catch (err) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _bankConnecting = false;
+        _bankConnectError = err is ArgumentError
+            ? err.message ?? 'Unable to connect. Check your tokens.'
+            : 'Unable to connect. Double-check your tokens and try again.';
+      });
+    }
   }
 
   void _startFakeLoading() {

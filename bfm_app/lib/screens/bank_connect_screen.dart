@@ -18,10 +18,8 @@
 ///     budget builder on success.
 /// ---------------------------------------------------------------------------
 
-import 'package:bfm_app/services/secure_credential_store.dart';
-import 'package:bfm_app/services/transaction_sync_service.dart';
+import 'package:bfm_app/services/bank_service.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 /// Simple form that handles bank credential onboarding.
 class BankConnectScreen extends StatefulWidget {
@@ -48,16 +46,7 @@ class _BankConnectScreenState extends State<BankConnectScreen> {
         throw Exception('Please enter both tokens.');
       }
 
-      await SecureCredentialStore()
-          .saveAkahuTokens(appToken: appToken, userToken: userToken);
-
-      // Mark connected
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('bank_connected', true);
-      await prefs.remove('last_sync_at');
-
-      // Trigger initial sync pipeline
-      await TransactionSyncService().syncNow();
+      await BankService.connect(appToken: appToken, userToken: userToken);
 
       if (!mounted) return;
 
@@ -66,9 +55,9 @@ class _BankConnectScreenState extends State<BankConnectScreen> {
     } catch (e) {
       debugPrint("Bank connect error: $e");
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: $e")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Error: $e")));
     }
   }
 

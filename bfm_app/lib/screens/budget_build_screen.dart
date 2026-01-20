@@ -36,6 +36,7 @@ import 'package:bfm_app/services/budget_analysis_service.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
+import 'package:bfm_app/utils/category_emoji_helper.dart';
 
 /// Main UI for selecting suggested categories and setting weekly limits.
 class BudgetBuildScreen extends StatefulWidget {
@@ -61,11 +62,10 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   final Set<int> _selectedRecurringIds = {};
   Map<int, _RecurringBudgetItem> _recurringItemLookup = {};
   Map<int, BudgetModel> _existingBudgetMap = {};
-  final Map<String, TextEditingController> _uncatInputCtrls = {};
-  final Map<String, TextEditingController> _uncatAmountCtrls = {};
   final Set<String> _selectedUncatKeys = {};
   final Map<String, String> _uncatNameOverrides = {};
   final Map<String, String> _uncatAmountOverrides = {};
+  CategoryEmojiHelper? _emojiHelper;
 
   static const double _kWeeksPerMonth = 4.345; // convert monthly -> weekly
 
@@ -90,7 +90,8 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     };
     final previousRecurringSelection = Set<int>.from(_selectedRecurringIds);
     final previousRecurringAmounts = <int, String>{
-      for (final entry in _recurringAmountCtrls.entries) entry.key: entry.value.text,
+      for (final entry in _recurringAmountCtrls.entries)
+        entry.key: entry.value.text,
     };
     setState(() => _loading = true);
 
@@ -100,6 +101,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       minWeekly: 5.0,
     );
     final recurringItems = await _fetchRecurringBudgetItems();
+    final emojiHelper = await CategoryEmojiHelper.ensureLoaded();
     final recurringLookup = <int, _RecurringBudgetItem>{};
     for (final item in recurringItems) {
       final rid = item.recurringId;
@@ -227,6 +229,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
         ..clear()
         ..addAll(restoredRecurringSelection);
       _existingBudgetMap = widget.editMode ? existingBudgets : {};
+      _emojiHelper = emojiHelper;
       _loading = false;
     });
 
@@ -241,12 +244,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       c.dispose();
     }
     for (final c in _recurringAmountCtrls.values) {
-      c.dispose();
-    }
-    for (final c in _uncatInputCtrls.values) {
-      c.dispose();
-    }
-    for (final c in _uncatAmountCtrls.values) {
       c.dispose();
     }
     super.dispose();
@@ -377,13 +374,16 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
           : r.amount / _kWeeksPerMonth;
       final description = (r.description ?? '').trim();
       final categoryLabel = (names[r.categoryId] ?? '').trim();
-      final hasCategory = categoryLabel.isNotEmpty &&
+      final hasCategory =
+          categoryLabel.isNotEmpty &&
           categoryLabel.toLowerCase() != 'uncategorized';
-      final fallbackName =
-          description.isNotEmpty ? description : 'Recurring expense';
+      final fallbackName = description.isNotEmpty
+          ? description
+          : 'Recurring expense';
       final label = hasCategory ? categoryLabel : fallbackName;
-      final transactionName =
-          hasCategory && description.isNotEmpty ? description : null;
+      final transactionName = hasCategory && description.isNotEmpty
+          ? description
+          : null;
       return _RecurringBudgetItem(
         recurringId: r.id,
         categoryId: r.categoryId,
@@ -436,7 +436,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                     child: Text(
                       widget.editMode
                           ? 'Existing budget categories are pre-selected. Adjust the weekly amounts below.'
-                          : 'We detected your average weekly expenses over the last 4 months and suggested budgets below. Select everything that applies.',
+                          : 'Select the essential expenses you would like to budget for.',
                       style: const TextStyle(fontSize: 13, color: Colors.grey),
                     ),
                   ),
@@ -448,13 +448,13 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                     children: [
                       if (existingBudgetSuggestions.isNotEmpty)
                         _buildExistingBudgetsCard(existingBudgetSuggestions),
-                      if (_recurringItems.isNotEmpty)
-                        _buildRecurringExpansion(_recurringItems),
-                      if (uncatSuggestions.isNotEmpty ||
+                      if (_recurringItems.isNotEmpty ||
+                          uncatSuggestions.isNotEmpty ||
                           categorySuggestions.isNotEmpty)
-                        _buildCombinedCategoryExpansion(
-                          uncatSuggestions,
-                          categorySuggestions,
+                        _buildUnifiedBudgetCard(
+                          recurring: _recurringItems,
+                          uncat: uncatSuggestions,
+                          categories: categorySuggestions,
                         ),
                     ],
                   ),
@@ -501,16 +501,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   }
 
   void _pruneUncatControllers(Set<String> keep) {
-    void prune(Map<String, TextEditingController> map) {
-      final removeKeys = map.keys.where((key) => !keep.contains(key)).toList();
-      for (final key in removeKeys) {
-        map[key]?.dispose();
-        map.remove(key);
-      }
-    }
-
-    prune(_uncatInputCtrls);
-    prune(_uncatAmountCtrls);
     _uncatNameOverrides.removeWhere((k, _) => !keep.contains(k));
     _uncatAmountOverrides.removeWhere((k, _) => !keep.contains(k));
     _selectedUncatKeys.removeWhere((k) => !keep.contains(k));
@@ -531,7 +521,8 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     for (final entry in lookup.entries) {
       final id = entry.key;
       final existing = _recurringAmountCtrls[id];
-      final defaultText = previousAmounts[id] ??
+      final defaultText =
+          previousAmounts[id] ??
           existing?.text ??
           entry.value.weeklyAmount.toStringAsFixed(2);
       if (existing == null) {
@@ -550,22 +541,8 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     return 'uncat-${s.hashCode}';
   }
 
-  TextEditingController _uncatAmountController(
-    String key,
-    BudgetSuggestionModel s,
-  ) {
-    return _uncatAmountCtrls.putIfAbsent(
-      key,
-      () => TextEditingController(
-        text: _uncatAmountOverrides[key] ??
-            s.weeklySuggested.toStringAsFixed(2),
-      ),
-    );
-  }
-
   double _uncatAmountValue(String key, BudgetSuggestionModel suggestion) {
-    final text =
-        _uncatAmountOverrides[key] ?? _uncatAmountCtrls[key]?.text ?? '';
+    final text = _uncatAmountOverrides[key] ?? '';
     final resolved = text.trim().isEmpty
         ? suggestion.weeklySuggested.toStringAsFixed(2)
         : text;
@@ -580,10 +557,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
 
   bool _isUncatSelected(String key) => _selectedUncatKeys.contains(key);
 
-  void _handleUncatToggle({
-    required String key,
-    required bool checked,
-  }) {
+  void _handleUncatToggle({required String key, required bool checked}) {
     setState(() {
       if (checked) {
         _selectedUncatKeys.add(key);
@@ -624,7 +598,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   }
 
   Widget _buildExistingBudgetsCard(List<BudgetSuggestionModel> items) {
-    final maxHeight = min(items.length * 130.0, 420.0);
+    final maxHeight = min(items.length * 118.0, 420.0);
     return Card(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       child: Theme(
@@ -661,40 +635,97 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     );
   }
 
-  Widget _buildRecurringExpansion(List<_RecurringBudgetItem> items) {
-    final maxHeight = min(items.length * 118.0, 360.0);
+  Widget _buildUnifiedBudgetCard({
+    required List<_RecurringBudgetItem> recurring,
+    required List<BudgetSuggestionModel> uncat,
+    required List<BudgetSuggestionModel> categories,
+  }) {
+    final combinedRows = _combinedCategoryRows(uncat, categories);
+    final hasRecurring = recurring.isNotEmpty;
+    final hasCategories = combinedRows.isNotEmpty;
+    if (!hasRecurring && !hasCategories) {
+      return const SizedBox.shrink();
+    }
+
+    final entries = <_UnifiedRowEntry>[
+      ...recurring.map(_UnifiedRowEntry.recurring),
+    ];
+    if (hasRecurring && hasCategories) {
+      entries.add(const _UnifiedRowEntry.divider());
+    }
+    entries.addAll(combinedRows.map(_UnifiedRowEntry.category));
+
+    final maxHeight = min(entries.length * 120.0, 560.0);
+
     return Card(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: true,
-          leading: const Icon(Icons.autorenew),
-          title: const Text('Recurring payments'),
-          subtitle: const Text(
-            'Turn detected weekly/monthly bills into a budget line.',
-            style: TextStyle(fontSize: 12),
-          ),
-          children: [
-            SizedBox(
-              height: maxHeight,
-              child: ListView.builder(
-                padding: EdgeInsets.zero,
-                itemCount: items.length,
-                physics: const BouncingScrollPhysics(),
-                itemBuilder: (context, index) {
-                  final row = _buildRecurringRow(items[index]);
-                  return Column(
-                    children: [
-                      row,
-                      if (index != items.length - 1) const Divider(height: 1),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.tune, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Text(
+                        'Select the essential expenses you would like to budget for.',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Hold to edit and name transactions.',
+                        style: TextStyle(fontSize: 12, color: Colors.black54),
+                      ),
                     ],
-                  );
-                },
-              ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+          const Divider(height: 1),
+          SizedBox(
+            height: maxHeight,
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemCount: entries.length,
+              physics: const BouncingScrollPhysics(),
+              itemBuilder: (context, index) {
+                final entry = entries[index];
+                late final Widget row;
+                switch (entry.type) {
+                  case _UnifiedRowType.recurring:
+                    row = _buildRecurringRow(entry.recurring!);
+                    break;
+                  case _UnifiedRowType.category:
+                    row = entry.category!.isUncategorized
+                        ? _buildUncategorizedRow(entry.category!.suggestion)
+                        : _buildCategoryRow(entry.category!.suggestion);
+                    break;
+                  case _UnifiedRowType.divider:
+                    row = const _WeeklyExpenditureDivider();
+                    break;
+                }
+                final isLast = index == entries.length - 1;
+                final showStandardDivider =
+                    entry.type != _UnifiedRowType.divider &&
+                    !isLast &&
+                    entries[index + 1].type != _UnifiedRowType.divider;
+                return Column(
+                  children: [
+                    row,
+                    if (showStandardDivider) const Divider(height: 1),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -703,89 +734,81 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     final rid = item.recurringId;
     if (rid == null) return const SizedBox.shrink();
     final alreadyAdded = _selectedRecurringIds.contains(rid);
-    final weeklyText = item.weeklyAmount.toStringAsFixed(2);
     final paymentLabel = item.frequency == 'monthly'
         ? 'Monthly payment: \$${item.amount.toStringAsFixed(2)}'
         : 'Weekly payment: \$${item.amount.toStringAsFixed(2)}';
-    final weeklyLine = item.frequency == 'monthly'
-        ? 'Budget weekly limit: ≈ \$${weeklyText}'
-        : 'Budget weekly limit: \$${weeklyText}';
+    final weeklyLimit = _recurringAmountValue(rid, item).toStringAsFixed(2);
+    final weeklyLine = 'Weekly limit: \$${weeklyLimit}';
 
     final showCategoryFirst = item.label.trim().isNotEmpty;
-    final primaryName =
-        showCategoryFirst ? item.label : (item.transactionName ?? item.label);
+    final primaryName = showCategoryFirst
+        ? item.label
+        : (item.transactionName ?? item.label);
     final rawSecondary = showCategoryFirst ? item.transactionName : null;
-    final secondaryName = (rawSecondary != null &&
+    final secondaryName =
+        (rawSecondary != null &&
             rawSecondary.trim().isNotEmpty &&
-            rawSecondary.trim().toLowerCase() != primaryName.trim().toLowerCase())
+            rawSecondary.trim().toLowerCase() !=
+                primaryName.trim().toLowerCase())
         ? rawSecondary
         : null;
-    final controller = _recurringAmountController(rid, item);
+    final emoji = _recurringEmoji(item);
 
-    return Column(
-      children: [
-        ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          leading: Checkbox(
-            value: alreadyAdded,
-            onChanged: (v) => _toggleRecurringSelection(item, v ?? false),
-          ),
-          title: Column(
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onLongPress: () => _editRecurringAmount(item),
+        child: Container(
+          decoration: _rowDecoration(alreadyAdded),
+          padding: const EdgeInsets.all(12),
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                primaryName,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              if (secondaryName != null && secondaryName.trim().isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    secondaryName,
-                    style: const TextStyle(fontSize: 12, color: Colors.black54),
-                  ),
+              Text(emoji, style: const TextStyle(fontSize: 24)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      primaryName,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    if (secondaryName != null &&
+                        secondaryName.trim().isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          secondaryName,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.black54,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                    Text(paymentLabel, style: const TextStyle(fontSize: 12)),
+                    Text(
+                      weeklyLine,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ],
                 ),
+              ),
+              const SizedBox(width: 8),
+              Checkbox(
+                value: alreadyAdded,
+                visualDensity: VisualDensity.compact,
+                onChanged: (v) => _toggleRecurringSelection(item, v ?? false),
+              ),
             ],
           ),
-          subtitle: Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '$paymentLabel • ${item.frequencyLabel}',
-                  style: const TextStyle(fontSize: 12),
-                ),
-                Text(
-                  weeklyLine,
-                  style: const TextStyle(fontSize: 12, color: Colors.black54),
-                ),
-              ],
-            ),
-          ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          child: TextField(
-            controller: controller,
-            enabled: alreadyAdded,
-            keyboardType: const TextInputType.numberWithOptions(
-              signed: false,
-              decimal: true,
-            ),
-            decoration: InputDecoration(
-              labelText: 'Weekly budget',
-              prefixText: '\$',
-              helperText: alreadyAdded
-                  ? 'Adjust the weekly limit if needed.'
-                  : 'Select to include in your budget',
-              border: const OutlineInputBorder(),
-            ),
-            onChanged: (_) => setState(() {}),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -797,9 +820,8 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
         _selectedRecurringIds.add(rid);
         _recurringAmountCtrls.putIfAbsent(
           rid,
-          () => TextEditingController(
-            text: item.weeklyAmount.toStringAsFixed(2),
-          ),
+          () =>
+              TextEditingController(text: item.weeklyAmount.toStringAsFixed(2)),
         );
       } else {
         _selectedRecurringIds.remove(rid);
@@ -807,17 +829,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     });
   }
 
-  TextEditingController _recurringAmountController(
-    int id,
-    _RecurringBudgetItem item,
-  ) {
-    return _recurringAmountCtrls.putIfAbsent(
-      id,
-      () => TextEditingController(text: item.weeklyAmount.toStringAsFixed(2)),
-    );
-  }
-
-  Widget _buildCombinedCategoryExpansion(
+  List<_CombinedCategoryRow> _combinedCategoryRows(
     List<BudgetSuggestionModel> uncat,
     List<BudgetSuggestionModel> items,
   ) {
@@ -840,238 +852,409 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
         b.suggestion.categoryName.toLowerCase(),
       );
     });
-    if (rows.isEmpty) return const SizedBox.shrink();
-    final maxHeight = min(rows.length * 140.0, 520.0);
-    return Card(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: true,
-          leading: const Icon(Icons.checklist_outlined),
-          title: Text(
-            widget.editMode
-                ? 'Categories & uncategorized transactions'
-                : 'Suggested categories & uncategorized items',
-          ),
-          subtitle: const Text(
-            'Select categories to budget or assign uncategorized rows below.',
-            style: TextStyle(fontSize: 12),
-          ),
-          children: [
-            SizedBox(
-              height: maxHeight,
-              child: ListView.builder(
-                padding: EdgeInsets.zero,
-                itemCount: rows.length,
-                physics: const BouncingScrollPhysics(),
-                itemBuilder: (context, index) {
-                  final entry = rows[index];
-                  final row = entry.isUncategorized
-                      ? _buildUncategorizedRow(entry.suggestion)
-                      : _buildCategoryRow(entry.suggestion);
-                  return Column(
-                    children: [
-                      row,
-                      if (index != rows.length - 1) const Divider(height: 1),
-                    ],
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
+    return rows;
+  }
+
+  String _categoryEmoji(BudgetSuggestionModel suggestion) {
+    if (suggestion.isUncategorizedGroup) {
+      return CategoryEmojiHelper.uncategorizedEmoji;
+    }
+    return _emojiHelper?.emojiForName(suggestion.categoryName) ??
+        CategoryEmojiHelper.defaultEmoji;
+  }
+
+  String _recurringEmoji(_RecurringBudgetItem item) {
+    final label = item.label.trim().isNotEmpty
+        ? item.label
+        : (item.transactionName ?? 'Recurring expense');
+    return _emojiHelper?.emojiForName(label) ??
+        CategoryEmojiHelper.defaultEmoji;
+  }
+
+  BoxDecoration _rowDecoration(bool isSelected) {
+    final scheme = Theme.of(context).colorScheme;
+    return BoxDecoration(
+      color: isSelected
+          ? scheme.primary.withOpacity(0.08)
+          : scheme.surfaceVariant.withOpacity(0.2),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(
+        color: isSelected ? scheme.primary.withOpacity(0.35) : Colors.black12,
       ),
     );
   }
 
+  Future<void> _editRecurringAmount(_RecurringBudgetItem item) async {
+    final rid = item.recurringId;
+    if (rid == null) return;
+    final controller = _ensureRecurringAmountController(rid, item);
+    final initial = controller.text.trim().isEmpty
+        ? item.weeklyAmount.toStringAsFixed(2)
+        : controller.text;
+    final updated = await _showAmountEditor(
+      title: item.label,
+      initialValue: initial,
+      helperText: 'Set the weekly limit for this recurring budget.',
+    );
+    if (updated == null) return;
+    setState(() {
+      controller.text = _parseAmount(updated).toStringAsFixed(2);
+    });
+  }
+
+  Future<void> _editCategoryAmount(BudgetSuggestionModel s) async {
+    final controller = _amountCtrls[s.categoryId];
+    if (controller == null) return;
+    final updated = await _showAmountEditor(
+      title: s.categoryName,
+      initialValue: controller.text,
+      helperText: 'Set the weekly limit for this category.',
+    );
+    if (updated == null) return;
+    setState(() {
+      controller.text = _parseAmount(updated).toStringAsFixed(2);
+    });
+  }
+
+  Future<void> _editUncategorizedItem(
+    String key,
+    BudgetSuggestionModel suggestion,
+  ) async {
+    final currentName = _uncatResolvedName(key, suggestion);
+    final currentAmount =
+        _uncatAmountOverrides[key] ??
+        suggestion.weeklySuggested.toStringAsFixed(2);
+    final result = await _showUncategorizedEditor(
+      title: suggestion.categoryName,
+      initialName: currentName,
+      initialAmount: currentAmount,
+    );
+    if (result == null) return;
+    final normalizedAmount = _parseAmount(result.amount).toStringAsFixed(2);
+    final defaultAmount = suggestion.weeklySuggested.toStringAsFixed(2);
+    setState(() {
+      final trimmedName = result.name.trim();
+      if (trimmedName.isEmpty || trimmedName == suggestion.categoryName) {
+        _uncatNameOverrides.remove(key);
+      } else {
+        _uncatNameOverrides[key] = trimmedName;
+      }
+      if (normalizedAmount == defaultAmount) {
+        _uncatAmountOverrides.remove(key);
+      } else {
+        _uncatAmountOverrides[key] = normalizedAmount;
+      }
+    });
+  }
+
+  Future<String?> _showAmountEditor({
+    required String title,
+    required String initialValue,
+    String? helperText,
+  }) async {
+    final controller = TextEditingController(text: initialValue);
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 16,
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.black26,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+              if (helperText != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  helperText,
+                  style: const TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+              ],
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                keyboardType: const TextInputType.numberWithOptions(
+                  signed: false,
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Weekly limit',
+                  prefixText: '\$',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(sheetContext),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: () =>
+                        Navigator.pop(sheetContext, controller.text.trim()),
+                    child: const Text('Save'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
+    return result;
+  }
+
+  Future<_UncatEditResult?> _showUncategorizedEditor({
+    required String title,
+    required String initialName,
+    required String initialAmount,
+  }) async {
+    final nameController = TextEditingController(text: initialName);
+    final amountController = TextEditingController(text: initialAmount);
+    final result = await showModalBottomSheet<_UncatEditResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 16,
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.black26,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Edit budget',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Budget name',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: amountController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  signed: false,
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Weekly limit',
+                  prefixText: '\$',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(sheetContext),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(
+                      sheetContext,
+                      _UncatEditResult(
+                        name: nameController.text,
+                        amount: amountController.text,
+                      ),
+                    ),
+                    child: const Text('Save'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      nameController.dispose();
+      amountController.dispose();
+    });
+    return result;
+  }
+
   Widget _buildUncategorizedRow(BudgetSuggestionModel s) {
     final key = _uncatKey(s);
-    final controller = _uncatInputCtrls.putIfAbsent(
-      key,
-      () => TextEditingController(text: _uncatNameOverrides[key] ?? ''),
-    );
-    final amountCtrl = _uncatAmountController(key, s);
+    final selected = _isUncatSelected(key);
+    final emoji = CategoryEmojiHelper.uncategorizedEmoji;
+    final amount = _uncatAmountValue(key, s);
+    final displayName = _uncatResolvedName(key, s);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Column(
-        children: [
-          ListTile(
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 8,
-            ),
-            leading: Checkbox(
-              value: _isUncatSelected(key),
-              onChanged: (v) => _handleUncatToggle(
-                key: key,
-                checked: v ?? false,
-              ),
-            ),
-            title: Text(
-              s.categoryName,
-              style: const TextStyle(
-                fontWeight: FontWeight.w600,
-                color: Colors.orange,
-              ),
-            ),
-            subtitle: Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(
-                'Weekly suggested: \$${s.weeklySuggested.toStringAsFixed(2)} • tx: ${s.txCount}',
-                style: const TextStyle(fontSize: 12),
-              ),
-            ),
-            trailing: const SizedBox(
-              width: 48,
-              child: Center(
-                child: Icon(Icons.info_outline, size: 18, color: Colors.orange),
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: controller,
-                    decoration: const InputDecoration(
-                      labelText: 'Name this budget (optional)',
-                      border: OutlineInputBorder(),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onLongPress: () => _editUncategorizedItem(key, s),
+        child: Container(
+          decoration: _rowDecoration(selected),
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(emoji, style: const TextStyle(fontSize: 24)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          displayName,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Weekly suggested: \$${s.weeklySuggested.toStringAsFixed(2)} • tx: ${s.txCount}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.black54,
+                          ),
+                        ),
+                        if ((s.description ?? '').trim().isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              'Top match: ${s.description}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.black45,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Suggested weekly limit: \$${amount.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.black54,
+                          ),
+                        ),
+                      ],
                     ),
-                    onChanged: (value) =>
-                        setState(() => _uncatNameOverrides[key] = value),
                   ),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(72, 0, 16, 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: amountCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      signed: false,
-                      decimal: true,
-                    ),
-                    decoration: const InputDecoration(
-                      labelText: 'Weekly limit',
-                      prefixText: '\$',
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (value) =>
-                        setState(() => _uncatAmountOverrides[key] = value),
+                  const SizedBox(width: 8),
+                  Checkbox(
+                    value: selected,
+                    visualDensity: VisualDensity.compact,
+                    onChanged: (v) =>
+                        _handleUncatToggle(key: key, checked: v ?? false),
                   ),
-                ),
-                const SizedBox(width: 8),
-                _StepperButtons(
-                  enabled: true,
-                  onMinus: () {
-                    final v = _parseAmount(amountCtrl.text);
-                    final rounded = _roundTo(v, 1);
-                    final next = max(0.0, rounded - 1.0);
-                    setState(() {
-                      amountCtrl.text = next.toStringAsFixed(2);
-                      _uncatAmountOverrides[key] = amountCtrl.text;
-                    });
-                  },
-                  onPlus: () {
-                    final v = _parseAmount(amountCtrl.text);
-                    final rounded = _roundTo(v, 1);
-                    final next = rounded + 1.0;
-                    setState(() {
-                      amountCtrl.text = next.toStringAsFixed(2);
-                      _uncatAmountOverrides[key] = amountCtrl.text;
-                    });
-                  },
-                ),
-              ],
-            ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Hold to name this budget',
+                style: TextStyle(fontSize: 11, color: Colors.black45),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildCategoryRow(BudgetSuggestionModel s) {
     final selected = _selected[s.categoryId] ?? false;
-    final ctrl = _amountCtrls[s.categoryId]!;
+    final emoji = _categoryEmoji(s);
+    final ctrl = _amountCtrls[s.categoryId];
+    final amountLabel = ctrl != null
+        ? _parseAmount(ctrl.text).toStringAsFixed(2)
+        : null;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Column(
-        children: [
-          ListTile(
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 8,
-            ),
-            leading: Checkbox(
-              value: selected,
-              onChanged: (v) =>
-                  setState(() => _selected[s.categoryId] = v ?? false),
-            ),
-            title: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    s.categoryName,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onLongPress: () => _editCategoryAmount(s),
+        child: Container(
+          decoration: _rowDecoration(selected),
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(emoji, style: const TextStyle(fontSize: 24)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      s.categoryName,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      amountLabel != null
+                          ? 'Weekly limit: \$${amountLabel}'
+                          : 'Weekly suggested: \$${s.weeklySuggested.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            subtitle: Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(
-                'Weekly suggested: \$${s.weeklySuggested.toStringAsFixed(2)} • usage: ${s.usageCount} • tx: ${s.txCount}',
-                style: const TextStyle(fontSize: 12),
               ),
-            ),
+              const SizedBox(width: 8),
+              Checkbox(
+                value: selected,
+                visualDensity: VisualDensity.compact,
+                onChanged: (v) =>
+                    setState(() => _selected[s.categoryId] = v ?? false),
+              ),
+            ],
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(72, 0, 16, 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: ctrl,
-                    enabled: selected,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      signed: false,
-                      decimal: true,
-                    ),
-                    decoration: const InputDecoration(
-                      labelText: 'Weekly limit',
-                      prefixText: '\$',
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                _StepperButtons(
-                  enabled: selected,
-                  onMinus: () {
-                    final v = _parseAmount(ctrl.text);
-                    final rounded = _roundTo(v, 1);
-                    final next = max(0.0, rounded - 1.0);
-                    setState(() => ctrl.text = next.toStringAsFixed(2));
-                  },
-                  onPlus: () {
-                    final v = _parseAmount(ctrl.text);
-                    final rounded = _roundTo(v, 1);
-                    final next = rounded + 1.0;
-                    setState(() => ctrl.text = next.toStringAsFixed(2));
-                  },
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -1106,36 +1289,44 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
 
   double _recurringAmountValue(int rid, _RecurringBudgetItem item) {
     final text = _recurringAmountCtrls[rid]?.text ?? '';
-    final resolved =
-        text.trim().isEmpty ? item.weeklyAmount.toStringAsFixed(2) : text;
+    final resolved = text.trim().isEmpty
+        ? item.weeklyAmount.toStringAsFixed(2)
+        : text;
     return _parseAmount(resolved);
+  }
+
+  TextEditingController _ensureRecurringAmountController(
+    int id,
+    _RecurringBudgetItem item,
+  ) {
+    return _recurringAmountCtrls.putIfAbsent(
+      id,
+      () => TextEditingController(text: item.weeklyAmount.toStringAsFixed(2)),
+    );
   }
 }
 
-/// +/- buttons that nudge the weekly amount by \$1 increments.
-class _StepperButtons extends StatelessWidget {
-  final bool enabled;
-  final VoidCallback onMinus;
-  final VoidCallback onPlus;
-  const _StepperButtons({
-    required this.enabled,
-    required this.onMinus,
-    required this.onPlus,
-  });
+class _WeeklyExpenditureDivider extends StatelessWidget {
+  const _WeeklyExpenditureDivider();
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        IconButton(
-          icon: const Icon(Icons.remove_circle_outline),
-          onPressed: enabled ? onMinus : null,
-        ),
-        IconButton(
-          icon: const Icon(Icons.add_circle_outline),
-          onPressed: enabled ? onPlus : null,
-        ),
-      ],
+    final textStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+      fontSize: 12,
+      letterSpacing: 0.4,
+      color: Colors.black54,
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+      child: Row(
+        children: [
+          Expanded(child: Container(height: 1, color: Colors.black12)),
+          const SizedBox(width: 12),
+          Text('your average weekly expenditure', style: textStyle),
+          const SizedBox(width: 12),
+          Expanded(child: Container(height: 1, color: Colors.black12)),
+        ],
+      ),
     );
   }
 }
@@ -1168,6 +1359,30 @@ class _CombinedCategoryRow {
     required this.suggestion,
     required this.isUncategorized,
   });
+}
+
+class _UncatEditResult {
+  final String name;
+  final String amount;
+  const _UncatEditResult({required this.name, required this.amount});
+}
+
+enum _UnifiedRowType { recurring, category, divider }
+
+class _UnifiedRowEntry {
+  final _UnifiedRowType type;
+  final _RecurringBudgetItem? recurring;
+  final _CombinedCategoryRow? category;
+
+  const _UnifiedRowEntry._(this.type, {this.recurring, this.category});
+
+  const _UnifiedRowEntry.recurring(_RecurringBudgetItem item)
+    : this._(_UnifiedRowType.recurring, recurring: item);
+
+  const _UnifiedRowEntry.category(_CombinedCategoryRow row)
+    : this._(_UnifiedRowType.category, category: row);
+
+  const _UnifiedRowEntry.divider() : this._(_UnifiedRowType.divider);
 }
 
 class _RecurringBudgetItem {

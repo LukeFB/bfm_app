@@ -19,10 +19,36 @@ import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/services/secure_credential_store.dart';
+import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Coordinates cleanup when the user disconnects their bank.
 class BankService {
+  /// Connects Akahu tokens, flips the bank_connected flag, and optionally kicks
+  /// off an initial sync pipeline.
+  static Future<void> connect({
+    required String appToken,
+    required String userToken,
+    bool triggerInitialSync = true,
+  }) async {
+    if (appToken.isEmpty || userToken.isEmpty) {
+      throw ArgumentError('Both Akahu tokens are required.');
+    }
+
+    await SecureCredentialStore().saveAkahuTokens(
+      appToken: appToken,
+      userToken: userToken,
+    );
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('bank_connected', true);
+    await prefs.remove('last_sync_at');
+
+    if (triggerInitialSync) {
+      await TransactionSyncService().syncNow();
+    }
+  }
+
   /// Disconnects the current bank session by:
   /// - Clearing transactions, recurring rows, and budgets via repositories
   ///   (keeps repository-level hooks consistent).
