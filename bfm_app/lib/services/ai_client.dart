@@ -19,6 +19,7 @@
 /// ---------------------------------------------------------------------------
 
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:bfm_app/services/api_key_store.dart';
@@ -28,11 +29,14 @@ import 'package:bfm_app/services/context_builder.dart';
 /// private context before sending the latest chat history.
 class AiClient {
   static const String _openAiUrl = 'https://api.openai.com/v1/chat/completions';
+  static const Duration _requestTimeout = Duration(seconds: 45);
 
-  // TODO: gpt-5-mini
-  static const String _model = 'gpt-4o-mini';
-  static const double _temperature = 0.7;
-  static const int _maxTokens = 800; // Cost control
+  static const String _model = 'gpt-5-mini';
+  // GPT-5 mini currently only supports the default temperature value.
+  static const double _temperature = 1.0;
+  static const int _maxTokens = 1200; // Cost control
+  static const String _reasoningEffort = 'low';
+  static const int _retryTurnLimit = 6;
 
   // TODO: refine with stakeholders as needed (BFM policy)
   static const String _systemPrompt = '''
@@ -43,7 +47,7 @@ Don’t: give personalised financial, legal, tax, investment, or medical advice;
 
 Tone: warm, inclusive, down-to-earth NZ English (Kia ora / light te reo where natural). Use “we” language. Respect Māori whānau and Pacific/family obligations (incl. remittances) as valid.
 
-Style: brief empathy → 1–3 clarifying questions → 1–3 practical next steps → ask permission to go deeper. Short paragraphs, avoid overwhelming lists, minimal emojis.
+Style: brief empathy → 2–3 clarifying questions (default) → 1 short next step. Ask permission before giving options. Keep replies under ~120 words unless the user explicitly asks for detail. Short paragraphs, avoid overwhelming lists, minimal emojis.
 
 Safety/escalation: If essentials are unaffordable, urgent enforcement, scam/identity risk, violence/financial control, severe distress, self-harm:
 - prioritise safety, validate feelings, encourage immediate human help.
@@ -79,14 +83,50 @@ First chat defaults: ask preferred name, student status, what they want help wit
       ...recentTurns,
     ];
 
+    final data = await _requestCompletion(messages, apiKey);
+    var content = _extractAssistantText(data);
+    if (content == null || content.trim().isEmpty) {
+      final shouldRetry = _hasLengthFinishReason(data);
+      if (shouldRetry && recentTurns.isNotEmpty) {
+        final trimmedTurns = recentTurns.length > _retryTurnLimit
+            ? recentTurns.sublist(recentTurns.length - _retryTurnLimit)
+            : recentTurns;
+        final retryMessages = <Map<String, String>>[
+          {'role': 'system', 'content': _systemPrompt},
+          {'role': 'system', 'content': contextStr},
+          ...trimmedTurns,
+        ];
+        final retryData = await _requestCompletion(retryMessages, apiKey);
+        content = _extractAssistantText(retryData);
+        if (content == null || content.trim().isEmpty) {
+          debugPrint(
+            'OpenAI empty assistant content. Raw response: ${_clip(jsonEncode(retryData), 4000)}',
+          );
+        }
+      } else {
+        debugPrint(
+          'OpenAI empty assistant content. Raw response: ${_clip(jsonEncode(data), 4000)}',
+        );
+      }
+    }
+
+    return (content != null && content.trim().isNotEmpty)
+        ? content.trim()
+        : 'Kia ora — I’m here. How can I help today?';
+  }
+
+  Future<Map<String, dynamic>> _requestCompletion(
+    List<Map<String, String>> messages,
+    String apiKey,
+  ) async {
     final body = <String, dynamic>{
       'model': _model,
       'messages': messages,
       'temperature': _temperature,
+      'max_completion_tokens': _maxTokens,
+      'reasoning_effort': _reasoningEffort,
     };
-    body['max_tokens'] = _maxTokens;
 
-    // retry
     http.Response res;
     int attempt = 0;
     while (true) {
@@ -100,7 +140,7 @@ First chat defaults: ask preferred name, student status, what they want help wit
             },
             body: jsonEncode(body),
           )
-          .timeout(const Duration(seconds: 25));
+          .timeout(_requestTimeout);
       if (res.statusCode == 429 || res.statusCode >= 500) {
         if (attempt < 3) {
           await Future.delayed(Duration(milliseconds: 300 * attempt * attempt));
@@ -121,15 +161,122 @@ First chat defaults: ask preferred name, student status, what they want help wit
         throw Exception('OpenAI error ${res.statusCode}: ${res.body}');
       }
     }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
 
-    final data = jsonDecode(res.body) as Map<String, dynamic>;
-    final choices = (data['choices'] as List?) ?? const [];
-    final content = choices.isNotEmpty
-        ? (choices.first as Map)['message']['content'] as String?
-        : null;
+  bool _hasLengthFinishReason(Map<String, dynamic> data) {
+    final choices = data['choices'];
+    if (choices is! List) return false;
+    for (final choice in choices) {
+      if (choice is Map && choice['finish_reason'] == 'length') return true;
+    }
+    return false;
+  }
+  String? _extractAssistantText(Map<String, dynamic> data) {
+    final choices = data['choices'];
+    if (choices is List) {
+      for (final choice in choices) {
+        final text = _extractChoiceText(choice);
+        if (_hasContent(text)) return text;
+      }
+    }
 
-    return (content != null && content.trim().isNotEmpty)
-        ? content.trim()
-        : 'Kia ora — I’m here. How can I help today?';
+    final altKeys = [
+      'output',
+      'content',
+      'response',
+      'result',
+      'message',
+      'messages',
+      'text',
+      'output_text',
+    ];
+    for (final key in altKeys) {
+      if (data.containsKey(key)) {
+        final altText = _stringifyContent(data[key]).trim();
+        if (altText.isNotEmpty) return altText;
+      }
+    }
+    return null;
+  }
+
+  bool _hasContent(String? value) {
+    return value != null && value.trim().isNotEmpty;
+  }
+
+  String? _extractChoiceText(dynamic choice) {
+    if (choice is! Map) return null;
+    final messageText = _extractMessageText(choice['message']);
+    if (_hasContent(messageText)) {
+      return messageText;
+    }
+    final choiceText = _stringifyContent(choice['text']).trim();
+    if (choiceText.isNotEmpty) return choiceText;
+    final outputText = _stringifyContent(choice['output']).trim();
+    if (outputText.isNotEmpty) return outputText;
+    final contentText = _stringifyContent(choice['content']).trim();
+    if (contentText.isNotEmpty) return contentText;
+    final deltaText = _stringifyContent(choice['delta']).trim();
+    if (deltaText.isNotEmpty) return deltaText;
+    return null;
+  }
+
+  String? _extractMessageText(dynamic message) {
+    if (message is! Map) return null;
+    final text = _stringifyContent(message['content']).trim();
+    if (text.isNotEmpty) return text;
+    final outputText = _stringifyContent(message['output_text']).trim();
+    if (outputText.isNotEmpty) return outputText;
+    final altText = _stringifyContent(message['text']).trim();
+    if (altText.isNotEmpty) return altText;
+    final refusal = _stringifyContent(message['refusal']).trim();
+    return refusal.isNotEmpty ? refusal : null;
+  }
+
+  String _stringifyContent(dynamic value) {
+    if (value == null) return '';
+    if (value is String) return value;
+    if (value is num || value is bool) return value.toString();
+    if (value is List) {
+      final buffer = StringBuffer();
+      for (final item in value) {
+        buffer.write(_stringifyContent(item));
+      }
+      return buffer.toString();
+    }
+    if (value is Map) {
+      final keysToCheck = [
+        'value',
+        'text',
+        'content',
+        'parts',
+        'output_text',
+        'refusal'
+      ];
+      for (final key in keysToCheck) {
+        if (value.containsKey(key)) {
+          final text = _stringifyContent(value[key]);
+          if (text.isNotEmpty) return text;
+        }
+      }
+      if (value.containsKey('type')) {
+        final type = value['type'];
+        if (type == 'output_text' || type == 'input_text' || type == 'text') {
+          final text = _stringifyContent(value['text']);
+          if (text.isNotEmpty) return text;
+        }
+      }
+      final buffer = StringBuffer();
+      value.forEach((_, dynamic v) {
+        buffer.write(_stringifyContent(v));
+      });
+      return buffer.toString();
+    }
+    return '';
+  }
+
+  String _clip(String text, int maxChars) {
+    if (text.length <= maxChars) return text;
+    return '${text.substring(0, maxChars - 1)}…';
   }
 }
