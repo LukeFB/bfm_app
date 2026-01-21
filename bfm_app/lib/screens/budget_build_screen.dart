@@ -149,6 +149,8 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
         if (budget == null) continue;
         existingRecurringSelection.add(rid);
         recurringBudgetPrefills[rid] = budget.weeklyLimit.toStringAsFixed(2);
+        existingBudgets.remove(item.categoryId);
+        existingBudgetNames.remove(item.categoryId);
       }
     }
 
@@ -708,7 +710,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
 
   List<BudgetSuggestionModel> _categorySuggestions() {
     final base = _suggestions
-        .where((s) => !s.isUncategorizedGroup && !s.hasRecurring)
+        .where((s) => !s.isUncategorizedGroup)
         .toList(growable: false);
     return base;
   }
@@ -927,15 +929,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   }
 
   Widget _buildRecurringHeader(List<_RecurringBudgetItem> items) {
-    final recurringIds =
-        items.map((item) => item.recurringId).whereType<int>().toSet();
-    final total = recurringIds.length;
-    final subtitle = total == 0
-        ? 'No recurring expenses detected yet.'
-        : 'We detected these subscriptions.';
-    final title = widget.editMode
-        ? 'Recurring essentials'
-        : 'Recurring essentials (auto-selected)';
+    final title = 'Subscriptions';
 
     return InkWell(
       onTap: _toggleRecurringExpanded,
@@ -955,11 +949,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                   Text(
                     title,
                     style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(fontSize: 12, color: Colors.black54),
                   ),
                 ],
               ),

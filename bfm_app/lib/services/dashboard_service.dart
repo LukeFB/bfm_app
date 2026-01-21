@@ -32,6 +32,7 @@ import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/repositories/alert_repository.dart';
 import 'package:bfm_app/repositories/tip_repository.dart';
+import 'package:bfm_app/utils/category_emoji_helper.dart';
 
 /// Aggregates all database work needed to populate the dashboard.
 class DashboardService {
@@ -162,13 +163,16 @@ class DashboardService {
     RecurringTransactionModel recurring,
     Map<int, String> categoryNames,
   ) {
-    final categoryLabel =
-        (categoryNames[recurring.categoryId]?.trim() ?? '');
-    final hasCategory = categoryLabel.isNotEmpty &&
-        categoryLabel.toLowerCase() != 'uncategorized';
-    if (hasCategory) return categoryLabel;
-    final desc = (recurring.description ?? '').trim();
-    return desc.isNotEmpty ? desc : 'Recurring expense';
+    final descFirstWord = _firstWord(recurring.description);
+    if (descFirstWord.isNotEmpty) return descFirstWord;
+
+    final categoryLabel = categoryNames[recurring.categoryId];
+    final categoryFirstWord = _firstWord(categoryLabel);
+    if (categoryFirstWord.isNotEmpty &&
+        categoryFirstWord.toLowerCase() != 'uncategorized') {
+      return categoryFirstWord;
+    }
+    return 'Subscription';
   }
 
   /// Expenses for this week that should reduce "Left to spend".
@@ -243,6 +247,7 @@ class DashboardService {
     final categoryNames = await CategoryRepository.getNamesByIds(
       recurringMap.values.map((r) => r.categoryId),
     );
+    final emojiHelper = await CategoryEmojiHelper.ensureLoaded();
 
     final now = DateTime.now();
     final alerts = <String>[];
@@ -265,9 +270,18 @@ class DashboardService {
       final desc = alert.title.trim().isEmpty
           ? _recurringDisplayName(recurring, categoryNames)
           : alert.title.trim();
-      final prefix = alert.icon ?? '🔔';
+      final rawCategory = categoryNames[recurring.categoryId] ?? '';
+      final emojiSource = rawCategory.trim().isNotEmpty
+          ? rawCategory
+          : (recurring.description ?? desc);
+      final prefix = emojiHelper?.emojiForName(emojiSource) ??
+          CategoryEmojiHelper.defaultEmoji;
       final dueLabel = _dueLabel(due);
-      alerts.add('$prefix $desc · $dueLabel');
+      final amountLabel = _currency(recurring.amount);
+      final freqLabel = recurring.frequency.toLowerCase() == 'monthly'
+          ? 'monthly'
+          : 'weekly';
+      alerts.add('$prefix $desc · $dueLabel · $amountLabel / $freqLabel');
     }
 
     return alerts;
@@ -301,26 +315,6 @@ class DashboardService {
     }).toList();
   }
 
-  static String _friendlyDate(DateTime date) {
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec'
-    ];
-    final month = months[date.month - 1];
-    final day = date.day.toString().padLeft(2, '0');
-    return '$day $month ${date.year}';
-  }
-
   static String _currency(double value) {
     final decimals = value.abs() >= 100 ? 0 : 2;
     return '\$${value.toStringAsFixed(decimals)}';
@@ -332,13 +326,13 @@ class DashboardService {
     final normalizedDue = DateTime(due.year, due.month, due.day);
     final delta = normalizedDue.difference(normalizedToday).inDays;
     if (delta < 0) {
-      return 'Overdue · ${_friendlyDate(due)}';
+      return 'Overdue';
     } else if (delta == 0) {
       return 'Due today';
     } else if (delta == 1) {
       return 'Due tomorrow';
     }
-    return 'Due in $delta days · ${_friendlyDate(due)}';
+    return 'Due in $delta days';
   }
 
   /// Discretionary weekly budget shown in the header:
@@ -395,5 +389,13 @@ class DashboardService {
       map[catId] = limit;
     }
     return map;
+  }
+
+  static String _firstWord(String? raw) {
+    if (raw == null) return '';
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    final match = RegExp(r'\S+').stringMatch(trimmed);
+    return match ?? '';
   }
 }

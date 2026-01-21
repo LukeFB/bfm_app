@@ -139,71 +139,42 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Alerts'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Re-run detection',
-            onPressed: _load,
-          ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-                    children: [
-                      Text(
-                        'Select the payments you want alerts for',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'We’ll remind you a few days before they’re due.',
-                        style: TextStyle(fontSize: 14, color: Colors.black87),
-                      ),
-                      const SizedBox(height: 16),
-                      _buildAlertsSection(),
-                    ],
-                  ),
-                ),
-                SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                    child: FilledButton.icon(
-                      icon: _saving
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.check),
-                      onPressed: _saving ? null : _finishAndSave,
-                      label: Text(_saving ? 'Saving...' : 'Finish'),
-                    ),
-                  ),
-                ),
-              ],
+    return WillPopScope(
+      onWillPop: () async {
+        await _saveAlerts(showToast: false);
+        return true;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Alerts'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Re-run detection',
+              onPressed: _load,
             ),
-    );
-  }
-
-  Future<void> _finishAndSave() async {
-    await _saveAlerts(showToast: false);
-    if (!mounted) return;
-    Navigator.pushNamedAndRemoveUntil(
-      context,
-      '/dashboard',
-      (route) => false,
+          ],
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+                children: [
+                  Text(
+                    'Select the payments you want alerts for',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'We’ll remind you a few days before they’re due.',
+                    style: TextStyle(fontSize: 14, color: Colors.black87),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildAlertsSection(),
+                  const SizedBox(height: 32),
+                ],
+              ),
+      ),
     );
   }
 
@@ -222,8 +193,9 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
         final customTitle = controller?.text.trim() ?? '';
         final fallback = _displayNameForItem(recurring);
         final title = customTitle.isNotEmpty ? customTitle : fallback;
-        final icon =
-            recurring.frequency.toLowerCase() == 'monthly' ? '📅' : '🔁';
+        final emojiSource = customTitle.isNotEmpty ? customTitle : fallback;
+        final icon = _emojiHelper?.emojiForName(emojiSource) ??
+            CategoryEmojiHelper.defaultEmoji;
         final message = 'Due soon for \$${recurring.amount.toStringAsFixed(2)}';
         await AlertRepository.upsertRecurringAlert(
           recurringId: id,
@@ -292,9 +264,9 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
                 (alert) => Column(
                   children: [
                     ListTile(
-                      leading: Icon(
-                        Icons.notifications_active_outlined,
-                        color: Theme.of(context).colorScheme.primary,
+                      leading: Text(
+                        _manualAlertEmoji(alert),
+                        style: const TextStyle(fontSize: 24),
                       ),
                       title: Text(alert.title),
                       subtitle: Text(_manualAlertSubtitle(alert)),
@@ -443,12 +415,25 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
     RecurringTransactionModel item,
     Map<int, String> names,
   ) {
-    final categoryLabel = (names[item.categoryId]?.trim() ?? '');
-    final hasCategory = categoryLabel.isNotEmpty &&
-        categoryLabel.toLowerCase() != 'uncategorized';
-    if (hasCategory) return categoryLabel;
-    final desc = (item.description ?? '').trim();
-    return desc.isNotEmpty ? desc : 'Recurring expense';
+    final descFirstWord = _firstWord(item.description);
+    if (descFirstWord.isNotEmpty) return descFirstWord;
+
+    final categoryLabel = names[item.categoryId];
+    final categoryFirstWord = _firstWord(categoryLabel);
+    if (categoryFirstWord.isNotEmpty &&
+        categoryFirstWord.toLowerCase() != 'uncategorized') {
+      return categoryFirstWord;
+    }
+
+    return 'Subscription';
+  }
+
+  static String _firstWord(String? raw) {
+    if (raw == null) return '';
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    final match = RegExp(r'\S+').stringMatch(trimmed);
+    return match ?? '';
   }
 
   Widget _buildRecurringTile(RecurringTransactionModel item) {
@@ -458,23 +443,23 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
     _nameCtrls.putIfAbsent(id, () => TextEditingController(text: fallback));
     final dueLabel = _dueLabel(item);
     final selected = _selected[id] ?? false;
-    final categoryName =
-        _categoryNames[item.categoryId]?.trim().isNotEmpty == true
-            ? _categoryNames[item.categoryId]!
-            : fallback;
-    final emoji =
-        _emojiHelper?.emojiForName(categoryName) ??
+    final categoryLabel = _categoryNames[item.categoryId] ?? '';
+    final emojiSource = categoryLabel.trim().isNotEmpty
+        ? categoryLabel
+        : (item.description ?? fallback);
+    final emoji = _emojiHelper?.emojiForName(emojiSource) ??
         CategoryEmojiHelper.defaultEmoji;
 
     return CheckboxListTile(
       value: selected,
       onChanged: (value) => _toggleSelection(id, value ?? false),
-      title: Text('$emoji $fallback'),
+      title: Text(fallback),
       subtitle: Text(
-        '$dueLabel • \$${item.amount.toStringAsFixed(2)} / ${item.frequency}',
+        '$dueLabel · \$${item.amount.toStringAsFixed(2)} / ${item.frequency}',
       ),
-      secondary: Icon(
-        selected ? Icons.notifications_active : Icons.notifications_none,
+      secondary: Text(
+        emoji,
+        style: const TextStyle(fontSize: 24),
       ),
     );
   }
@@ -491,22 +476,16 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
       final normalizedDue = DateTime(due.year, due.month, due.day);
       final delta = normalizedDue.difference(normalizedToday).inDays;
       if (delta < 0) {
-        return 'Overdue • ${_formatDate(normalizedDue)}';
+        return 'Overdue';
       } else if (delta == 0) {
         return 'Due today';
       } else if (delta == 1) {
         return 'Due tomorrow';
       }
-      return 'Due in $delta days • ${_formatDate(normalizedDue)}';
+      return 'Due in $delta days';
     } catch (_) {
       return 'Next due: ${item.nextDueDate}';
     }
-  }
-
-  String _formatDate(DateTime date) {
-    final day = date.day.toString().padLeft(2, '0');
-    final month = date.month.toString().padLeft(2, '0');
-    return '$day/$month';
   }
 
   int _compareAlertsByDueDate(AlertModel a, AlertModel b) {
@@ -524,19 +503,27 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
     return '$dueLabel$amountLabel';
   }
 
+  String _manualAlertEmoji(AlertModel alert) {
+    final source =
+        alert.title.trim().isNotEmpty ? alert.title : (alert.message ?? '');
+    return _emojiHelper?.emojiForName(source) ??
+        alert.icon ??
+        CategoryEmojiHelper.defaultEmoji;
+  }
+
   String _manualDueLabel(DateTime due) {
     final today = DateTime.now();
     final normalizedToday = DateTime(today.year, today.month, today.day);
     final normalizedDue = DateTime(due.year, due.month, due.day);
     final delta = normalizedDue.difference(normalizedToday).inDays;
     if (delta < 0) {
-      return 'Overdue · ${_formatDate(normalizedDue)}';
+      return 'Overdue';
     } else if (delta == 0) {
       return 'Due today';
     } else if (delta == 1) {
       return 'Due tomorrow';
     }
-    return 'Due in $delta days · ${_formatDate(normalizedDue)}';
+    return 'Due in $delta days';
   }
 
   String _formatCurrency(double value) {

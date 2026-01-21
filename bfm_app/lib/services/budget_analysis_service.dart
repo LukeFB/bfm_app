@@ -29,6 +29,8 @@ import 'package:bfm_app/utils/description_normalizer.dart';
 
 /// Houses all budget-related analytics (recurring detection + suggestions).
 class BudgetAnalysisService {
+  static const double _kWeeksPerMonth = 4.345;
+  static const double _kNearZeroThreshold = 0.5;
 
   // -------------------- recurring detection --------------------
 
@@ -84,10 +86,31 @@ class BudgetAnalysisService {
 
     // Recurring categories
     final recurring = await RecurringRepository.getAll();
-    final recurringCatIds = recurring
-        .where((r) => r.transactionType == 'expense')
-        .map((r) => r.categoryId)
-        .toSet();
+    final recurringExpenses = recurring
+        .where((r) => r.transactionType.toLowerCase() == 'expense')
+        .toList();
+    final recurringWeeklyByCategory = <int, double>{};
+    final recurringWeeklyByDescription = <String, double>{};
+
+    for (final bill in recurringExpenses) {
+      final weeklyAmount = _roundToCents(_weeklyRecurringAmount(bill));
+      if (weeklyAmount <= 0) continue;
+
+      recurringWeeklyByCategory.update(
+        bill.categoryId,
+        (value) => _roundToCents(value + weeklyAmount),
+        ifAbsent: () => weeklyAmount,
+      );
+
+      final descKey = _normalizedDescriptionKey(bill.description);
+      if (descKey != null) {
+        recurringWeeklyByDescription.update(
+          descKey,
+          (value) => _roundToCents(value + weeklyAmount),
+          ifAbsent: () => weeklyAmount,
+        );
+      }
+    }
 
     // Normal categories (excluding Uncategorized)
     final catRows = await db.rawQuery('''
@@ -115,15 +138,21 @@ class BudgetAnalysisService {
       final int usageCount = (r['usage_count'] as num?)?.toInt() ?? 0;
       final int txCount = (r['tx_count'] as num?)?.toInt() ?? 0;
       final double totalSpent = (r['total_spent'] as num?)?.toDouble() ?? 0.0;
-      final double weeklySuggested = totalSpent / weeks;
-
-      final bool hasRecurring = catId != null && recurringCatIds.contains(catId);
+      final double rawWeeklySuggested = totalSpent / weeks;
+      final double recurringWeekly =
+          catId != null ? (recurringWeeklyByCategory[catId] ?? 0.0) : 0.0;
+      final bool hasRecurring = recurringWeekly > 0;
+      final double netWeeklyRaw = rawWeeklySuggested - recurringWeekly;
+      final double weeklySuggested = _roundToCents(
+        netWeeklyRaw < 0 ? 0.0 : netWeeklyRaw,
+      );
+      if (weeklySuggested <= _kNearZeroThreshold) continue;
       if (!hasRecurring && weeklySuggested < minWeekly) continue;
 
       out.add(BudgetSuggestionModel(
         categoryId: catId,
         categoryName: name,
-        weeklySuggested: double.parse(weeklySuggested.toStringAsFixed(2)),
+        weeklySuggested: weeklySuggested,
         usageCount: usageCount,
         txCount: txCount,
         hasRecurring: hasRecurring,
@@ -153,14 +182,22 @@ class BudgetAnalysisService {
 
       final txCount = (r['tx_count'] as num?)?.toInt() ?? 0;
       final totalSpent = (r['total_spent'] as num?)?.toDouble() ?? 0.0;
-      final double weeklySuggested = totalSpent / weeks;
+      final double rawWeeklySuggested = totalSpent / weeks;
+      final descKey = _normalizedDescriptionKey(desc);
+      final double recurringWeekly =
+          descKey != null ? (recurringWeeklyByDescription[descKey] ?? 0.0) : 0.0;
+      final double netWeeklyRaw = rawWeeklySuggested - recurringWeekly;
+      final double weeklySuggested = _roundToCents(
+        netWeeklyRaw < 0 ? 0.0 : netWeeklyRaw,
+      );
 
+      if (weeklySuggested <= _kNearZeroThreshold) continue;
       if (weeklySuggested < minWeekly) continue;
 
       out.add(BudgetSuggestionModel(
         categoryId: null,
         categoryName: desc,
-        weeklySuggested: double.parse(weeklySuggested.toStringAsFixed(2)),
+        weeklySuggested: weeklySuggested,
         usageCount: 0,
         txCount: txCount,
         hasRecurring: false,
@@ -209,6 +246,23 @@ class BudgetAnalysisService {
         DescriptionNormalizer.normalizeMerchant(txn.merchantName, txn.description);
     final descKey = merchantLabel.isEmpty ? catKey : merchantLabel;
     return '$catKey::$descKey';
+  }
+
+  static double _roundToCents(double value) =>
+      double.parse(value.toStringAsFixed(2));
+
+  static double _weeklyRecurringAmount(RecurringTransactionModel bill) {
+    final freq = bill.frequency.trim().toLowerCase();
+    final amount = bill.amount.abs();
+    if (freq == 'weekly') return amount;
+    if (freq == 'monthly') return amount / _kWeeksPerMonth;
+    return 0.0;
+  }
+
+  static String? _normalizedDescriptionKey(String? raw) {
+    if (raw == null) return null;
+    final normalized = DescriptionNormalizer.normalizeDescription(raw);
+    return normalized.isEmpty ? null : normalized;
   }
 
   /// Returns true when two amounts are within the provided percentage, used to
