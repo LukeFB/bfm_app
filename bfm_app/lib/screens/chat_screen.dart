@@ -36,6 +36,7 @@ import 'package:bfm_app/repositories/referral_repository.dart';
 import 'package:bfm_app/services/ai_client.dart';
 import 'package:bfm_app/services/api_key_store.dart';
 import 'package:bfm_app/services/chat_action_extractor.dart';
+import 'package:bfm_app/services/alert_notification_service.dart';
 import 'package:bfm_app/services/chat_constants.dart';
 import 'package:bfm_app/services/chat_storage.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -447,7 +448,13 @@ class _ChatScreenState extends State<ChatScreen> {
         amount: form.amount,
         dueDate: form.dueDate,
       );
-      await AlertRepository.insert(alert);
+      final id = await AlertRepository.insert(alert);
+      try {
+        await AlertNotificationService.instance
+            .schedule(alert.copyWith(id: id));
+      } catch (err) {
+        debugPrint('Alert scheduling failed: $err');
+      }
       final chatText = form.amount != null
           ? "I’ll remind you about ${form.title} on ${_friendlyDate(form.dueDate)} for ${_formatCurrency(form.amount!)}."
           : "I’ll remind you about ${form.title} on ${_friendlyDate(form.dueDate)}.";

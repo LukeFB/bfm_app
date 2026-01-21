@@ -50,7 +50,7 @@ class AppDatabase {
     // Open the database with version and an onUpgrade callback
     return await openDatabase(
       path,
-      version: 19,
+      version: 20,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },
@@ -158,6 +158,14 @@ class AppDatabase {
     if (!await hasCol('budgets', 'uncategorized_key')) {
       await db.execute('ALTER TABLE budgets ADD COLUMN uncategorized_key TEXT;');
     }
+    if (!await hasCol('budgets', 'recurring_transaction_id')) {
+      await db.execute(
+        'ALTER TABLE budgets ADD COLUMN recurring_transaction_id INTEGER;',
+      );
+    }
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_budgets_recurring_transaction_id ON budgets(recurring_transaction_id);',
+    );
 
     await _createGoalProgressLog(db);
 
@@ -345,13 +353,15 @@ class AppDatabase {
         goal_id INTEGER,
         label TEXT,
         uncategorized_key TEXT,
+        recurring_transaction_id INTEGER,
         weekly_limit REAL NOT NULL,
         period_start TEXT NOT NULL,
         period_end TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(category_id) REFERENCES categories(id),
-        FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE
+        FOREIGN KEY(goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+        FOREIGN KEY(recurring_transaction_id) REFERENCES recurring_transactions(id)
       );
     ''');
     await db.execute(
@@ -359,6 +369,9 @@ class AppDatabase {
     );
     await db.execute(
       'CREATE UNIQUE INDEX IF NOT EXISTS ux_budgets_goal_id ON budgets(goal_id) WHERE goal_id IS NOT NULL;',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_budgets_recurring_transaction_id ON budgets(recurring_transaction_id);',
     );
   }
 
@@ -377,7 +390,8 @@ class AppDatabase {
         period_start,
         period_end,
         created_at,
-        updated_at
+        updated_at,
+        recurring_transaction_id
       )
       SELECT
         id,
@@ -388,7 +402,8 @@ class AppDatabase {
         period_start,
         period_end,
         created_at,
-        updated_at
+        updated_at,
+        NULL
       FROM budgets_old;
     ''');
     await db.execute('DROP TABLE budgets_old;');

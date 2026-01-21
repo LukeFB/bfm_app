@@ -5,6 +5,7 @@ import 'package:bfm_app/repositories/alert_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/services/budget_analysis_service.dart';
+import 'package:bfm_app/services/alert_notification_service.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
 import 'package:bfm_app/widgets/manual_alert_sheet.dart';
 
@@ -18,6 +19,7 @@ class BudgetRecurringScreen extends StatefulWidget {
 
 class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
   bool _loading = true;
+  // ignore: unused_field
   bool _saving = false;
   List<RecurringTransactionModel> _recurring = [];
   final Map<int, bool> _selected = {};
@@ -137,8 +139,12 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
     return ad.compareTo(bd);
   }
 
+  bool get _isOnboarding =>
+      (ModalRoute.of(context)?.settings.arguments as bool?) ?? false;
+
   @override
   Widget build(BuildContext context) {
+    final onboarding = _isOnboarding;
     return WillPopScope(
       onWillPop: () async {
         await _saveAlerts(showToast: false);
@@ -146,14 +152,22 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
+          automaticallyImplyLeading: !onboarding,
           title: const Text('Alerts'),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'Re-run detection',
-              onPressed: _load,
-            ),
-          ],
+          actions: onboarding
+              ? [
+                  TextButton(
+                    onPressed: _saving ? null : _finishOnboarding,
+                    child: _saving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Finish'),
+                  ),
+                ]
+              : null,
         ),
         body: _loading
             ? const Center(child: CircularProgressIndicator())
@@ -223,6 +237,16 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
         ),
       );
     }
+  }
+
+  Future<void> _finishOnboarding() async {
+    await _saveAlerts();
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      '/dashboard',
+      (route) => false,
+    );
   }
 
   Widget _buildAlertsSection() {
@@ -354,6 +378,12 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
       dueDate: form.dueDate,
     );
     final id = await AlertRepository.insert(alert);
+    try {
+      await AlertNotificationService.instance
+          .schedule(alert.copyWith(id: id));
+    } catch (err) {
+      debugPrint('Alert scheduling failed: $err');
+    }
     if (!mounted) return;
     setState(() {
       _manualAlerts
@@ -383,6 +413,11 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
       message: form.note ?? alert.message,
     );
     await AlertRepository.update(updated);
+    try {
+      await AlertNotificationService.instance.schedule(updated);
+    } catch (err) {
+      debugPrint('Alert reschedule failed: $err');
+    }
     if (!mounted) return;
     setState(() {
       final idx = _manualAlerts.indexWhere((a) => a.id == alert.id);
@@ -399,6 +434,11 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
   Future<void> _deleteManualAlert(AlertModel alert) async {
     if (alert.id == null) return;
     await AlertRepository.delete(alert.id!);
+    try {
+      await AlertNotificationService.instance.cancel(alert.id!);
+    } catch (err) {
+      debugPrint('Alert cancel failed: $err');
+    }
     if (!mounted) return;
     setState(() {
       _manualAlerts.removeWhere((a) => a.id == alert.id);

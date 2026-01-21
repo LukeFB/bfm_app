@@ -119,14 +119,20 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
         .toSet();
 
     Map<int, BudgetModel> existingBudgets = {};
+    Map<int, BudgetModel> existingRecurringBudgets = {};
     Map<int, String> existingBudgetNames = {};
     Map<String, BudgetModel> existingUncatBudgets = {};
     if (widget.editMode) {
       final budgets = await BudgetRepository.getAll();
-      existingBudgets = {
-        for (final b in budgets.where((b) => b.categoryId != null))
-          b.categoryId!: b,
-      };
+      for (final budget in budgets) {
+        final catId = budget.categoryId;
+        final recurringId = budget.recurringTransactionId;
+        if (recurringId != null) {
+          existingRecurringBudgets[recurringId] = budget;
+        } else if (catId != null) {
+          existingBudgets[catId] = budget;
+        }
+      }
       if (existingBudgets.isNotEmpty) {
         existingBudgetNames = await CategoryRepository.getNamesByIds(
           existingBudgets.keys,
@@ -141,16 +147,20 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
 
     final existingRecurringSelection = <int>{};
     final recurringBudgetPrefills = <int, String>{};
-    if (widget.editMode && existingBudgets.isNotEmpty) {
+    if (widget.editMode) {
       for (final item in recurringItems) {
         final rid = item.recurringId;
         if (rid == null) continue;
-        final budget = existingBudgets[item.categoryId];
+        BudgetModel? budget = existingRecurringBudgets[rid];
+        budget ??= existingBudgets[item.categoryId];
         if (budget == null) continue;
         existingRecurringSelection.add(rid);
         recurringBudgetPrefills[rid] = budget.weeklyLimit.toStringAsFixed(2);
-        existingBudgets.remove(item.categoryId);
-        existingBudgetNames.remove(item.categoryId);
+        existingRecurringBudgets.remove(rid);
+        if (budget.recurringTransactionId == null) {
+          existingBudgets.remove(item.categoryId);
+          existingBudgetNames.remove(item.categoryId);
+        }
       }
     }
 
@@ -391,6 +401,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       if (weeklyLimit <= 0) continue;
       final m = BudgetModel(
         categoryId: item.categoryId,
+        recurringTransactionId: rid,
         weeklyLimit: weeklyLimit,
         periodStart: periodStart,
       );
@@ -456,7 +467,11 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
         (route) => false,
       );
     } else {
-      Navigator.pushReplacementNamed(context, '/alerts/manage');
+      Navigator.pushReplacementNamed(
+        context,
+        '/alerts/manage',
+        arguments: true,
+      );
     }
   }
 

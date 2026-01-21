@@ -37,6 +37,8 @@
 	<!--FaceID-->
 	<key>NSFaceIDUsageDescription</key>
 	<string>Used to unlock the app with Face ID or device passcode</string>
+	<key>NSUserNotificationUsageDescription</key>
+	<string>We send reminders for upcoming bills and alerts you configure.</string>
 
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
