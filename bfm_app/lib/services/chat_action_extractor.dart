@@ -23,6 +23,7 @@ Valid action types:
 Rules:
 - When the user mentions an upcoming bill, payment, invoice, or repair they need to cover, emit BOTH a `goal` action (for saving the amount) and an `alert` action (to remind them before it is due). Infer due dates or use due_in_days when only a timeframe is provided.
 - Never invent amounts; reuse the user’s numbers. Keep amounts positive.
+- If the user has not named the goal/alert/budget, set "title" to "goal", "alert", or "budget" (do not copy the user's request wording).
 
 Return ONLY valid JSON using this shape:
 [

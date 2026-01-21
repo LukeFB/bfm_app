@@ -168,6 +168,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() {
       _sending = true;
+      _pendingActions.clear();
+      _actionLoading = false;
     });
 
     // Append the user message to the UI and persist
@@ -194,6 +196,7 @@ class _ChatScreenState extends State<ChatScreen> {
       unawaited(_detectActions(
         _buildRecentTurns(),
         lastUserMessage: lastUserText,
+        lastAssistantMessage: replyWithLinks,
       ));
     } catch (e) {
       // Friendly error bubble (keeps your style)
@@ -213,13 +216,22 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _detectActions(
     List<Map<String, String>> turns, {
     String? lastUserMessage,
+    String? lastAssistantMessage,
   }) async {
     if (!_hasApiKey) return;
     setState(() => _actionLoading = true);
     var actions = await _actionExtractor.identifyActions(turns);
+    actions = _ensurePromptedGoal(actions, lastUserMessage, lastAssistantMessage);
+    actions = _ensureAlertCoverage(actions, lastUserMessage);
     actions = _ensureBillCoverage(actions, lastUserMessage);
-    actions = _filterActionsForUtterance(actions, lastUserMessage);
+    actions = _filterActionsForUtterance(
+      actions,
+      lastUserMessage,
+      lastAssistantMessage: lastAssistantMessage,
+    );
+    actions = _ensureAlertCoverage(actions, lastUserMessage);
     actions = _ensureBillCoverage(actions, lastUserMessage);
+    actions = _normalizeActionTitles(actions, lastUserMessage);
     if (!mounted) return;
     setState(() {
       _actionLoading = false;
@@ -236,16 +248,19 @@ class _ChatScreenState extends State<ChatScreen> {
     if (userText == null) return actions;
     final normalized = userText.toLowerCase();
     if (!_mentionsBill(normalized)) return actions;
+    final alertOnly = _wantsAlertOnly(normalized);
 
     final result = List<ChatSuggestedAction>.from(actions);
     final hasGoal = result.any((a) => a.type == ChatActionType.goal);
     final hasAlert = result.any((a) => a.type == ChatActionType.alert);
     final extractedAmount = _extractAmountFromText(userText);
+    final extractedDueInDays = _extractDueInDaysFromText(userText);
     final existingAmount = _firstAmount(result);
     final existingDueDate = _firstDueDate(result);
-    final existingDueInDays = _firstDueInDays(result);
+    final existingDueInDays =
+        _firstDueInDays(result) ?? extractedDueInDays;
 
-    if (!hasGoal) {
+    if (!hasGoal && !alertOnly) {
       result.add(
         ChatSuggestedAction(
           type: ChatActionType.goal,
@@ -272,17 +287,89 @@ class _ChatScreenState extends State<ChatScreen> {
     return result;
   }
 
-  List<ChatSuggestedAction> _filterActionsForUtterance(
+  List<ChatSuggestedAction> _ensureAlertCoverage(
     List<ChatSuggestedAction> actions,
     String? userText,
   ) {
+    if (userText == null) return actions;
+    final normalized = userText.toLowerCase();
+    if (!_mentionsAlert(normalized)) return actions;
+    final result = List<ChatSuggestedAction>.from(actions);
+    final hasAlert = result.any((a) => a.type == ChatActionType.alert);
+    if (hasAlert) return result;
+    final extractedAmount = _extractAmountFromText(userText);
+    final extractedDueInDays = _extractDueInDaysFromText(userText);
+    result.add(
+      ChatSuggestedAction(
+        type: ChatActionType.alert,
+        amount: extractedAmount,
+        dueInDays: extractedDueInDays,
+      ),
+    );
+    return result;
+  }
+
+  List<ChatSuggestedAction> _ensurePromptedGoal(
+    List<ChatSuggestedAction> actions,
+    String? userText,
+    String? assistantText,
+  ) {
+    if (userText == null || assistantText == null) return actions;
+    if (!_assistantPromptedAction(assistantText.toLowerCase(), ChatActionType.goal)) {
+      return actions;
+    }
+    final hasGoal = actions.any((action) => action.type == ChatActionType.goal);
+    if (hasGoal) return actions;
+    final title = _looksLikeName(userText) ? userText.trim() : null;
+    final amount = _extractAmountFromText(userText);
+    final dueInDays = _extractDueInDaysFromText(userText);
+    final result = List<ChatSuggestedAction>.from(actions);
+    result.add(
+      ChatSuggestedAction(
+        type: ChatActionType.goal,
+        title: title,
+        description: userText,
+        amount: amount,
+        dueInDays: dueInDays,
+      ),
+    );
+    return result;
+  }
+
+  List<ChatSuggestedAction> _filterActionsForUtterance(
+    List<ChatSuggestedAction> actions,
+    String? userText, {
+    String? lastAssistantMessage,
+  }) {
     if (actions.isEmpty) return actions;
     final normalized = userText?.toLowerCase() ?? '';
+    final alertOnly = _wantsAlertOnly(normalized);
     final wantsAlert = _mentionsAlert(normalized) || _mentionsBill(normalized);
-    final wantsGoal = _mentionsGoal(normalized) || _mentionsBill(normalized);
+    final wantsGoal =
+        _mentionsGoal(normalized) || (_mentionsBill(normalized) && !alertOnly);
+    final assistantText = lastAssistantMessage?.toLowerCase() ?? '';
+    final promptedGoal =
+        _assistantPromptedAction(assistantText, ChatActionType.goal);
+    final promptedAlert =
+        _assistantPromptedAction(assistantText, ChatActionType.alert);
+    final promptedBudget =
+        _assistantPromptedAction(assistantText, ChatActionType.budget);
     return actions.where((action) {
-      if (action.type == ChatActionType.alert && !wantsAlert) return false;
-      if (action.type == ChatActionType.goal && !wantsGoal) return false;
+      if (action.type == ChatActionType.alert &&
+          !wantsAlert &&
+          !promptedAlert) {
+        return false;
+      }
+      if (action.type == ChatActionType.goal &&
+          !wantsGoal &&
+          !promptedGoal) {
+        return false;
+      }
+      if (action.type == ChatActionType.budget &&
+          !_mentionsBudget(normalized) &&
+          !promptedBudget) {
+        return false;
+      }
       return true;
     }).toList();
   }
@@ -360,17 +447,32 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  void _dismissLinkedActions(
+    ChatSuggestedAction action, {
+    ChatSuggestedAction? linkedAlert,
+  }) {
+    setState(() {
+      _pendingActions.remove(action);
+      if (linkedAlert != null) {
+        _pendingActions.remove(linkedAlert);
+      }
+    });
+  }
+
   void _setSavingAction(bool value) {
     if (!mounted) return;
     setState(() => _savingAction = value);
   }
 
-  Future<void> _handleActionTap(ChatSuggestedAction action) async {
+  Future<void> _handleActionTap(
+    ChatSuggestedAction action, {
+    ChatSuggestedAction? linkedAlert,
+  }) async {
     if (_savingAction) return;
     _ActionOutcome? outcome;
     switch (action.type) {
       case ChatActionType.goal:
-        outcome = await _showGoalSheet(action);
+        outcome = await _showGoalSheet(action, alertSuggestion: linkedAlert);
         break;
       case ChatActionType.budget:
         outcome = await _showBudgetSheet(action);
@@ -380,23 +482,44 @@ class _ChatScreenState extends State<ChatScreen> {
         break;
     }
     if (outcome == null) return;
-    _dismissAction(action);
+    _dismissLinkedActions(action, linkedAlert: linkedAlert);
     _showSnack(outcome.snackText);
     await _appendConfirmationMessage(outcome.chatText);
   }
 
-  Future<_ActionOutcome?> _showGoalSheet(ChatSuggestedAction action) async {
+  Future<_ActionOutcome?> _showGoalSheet(
+    ChatSuggestedAction action, {
+    ChatSuggestedAction? alertSuggestion,
+  }) async {
     if (!mounted) return null;
-    return showModalBottomSheet<_ActionOutcome>(
+    final candidateName = (action.title ?? action.categoryName)?.trim();
+    final hasName = candidateName != null &&
+        candidateName.isNotEmpty &&
+        !_isGenericGoalName(candidateName);
+    String? defaultName;
+    if (!hasName) {
+      try {
+        defaultName = await _nextGoalName();
+      } catch (_) {
+        defaultName = 'Goal 1';
+      }
+    }
+    if (!mounted) return null;
+    return showDialog<_ActionOutcome>(
       context: context,
-      isScrollControlled: true,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
-        ),
-        child: _GoalSheet(
-          action: action,
-          onSavingChanged: _setSavingAction,
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        child: SingleChildScrollView(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          ),
+          child: _GoalSheet(
+            action: action,
+            onSavingChanged: _setSavingAction,
+            alertSuggestion: alertSuggestion,
+            initialName: defaultName,
+            selectNameOnOpen: !hasName,
+          ),
         ),
       ),
     );
@@ -405,17 +528,34 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<_ActionOutcome?> _showBudgetSheet(ChatSuggestedAction action) async {
     final categoryNames = await _loadCategoryNames();
     if (!mounted) return null;
-    return showModalBottomSheet<_ActionOutcome>(
+    final candidateName = (action.categoryName ?? action.title)?.trim();
+    final hasName = candidateName != null &&
+        candidateName.isNotEmpty &&
+        !_isGenericBudgetName(candidateName);
+    String? defaultName;
+    if (!hasName) {
+      try {
+        defaultName = await _nextBudgetName();
+      } catch (_) {
+        defaultName = 'Budget 1';
+      }
+    }
+    if (!mounted) return null;
+    return showDialog<_ActionOutcome>(
       context: context,
-      isScrollControlled: true,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
-        ),
-        child: _BudgetSheet(
-          action: action,
-          categories: categoryNames,
-          onSavingChanged: _setSavingAction,
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        child: SingleChildScrollView(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          ),
+          child: _BudgetSheet(
+            action: action,
+            categories: categoryNames,
+            onSavingChanged: _setSavingAction,
+            initialName: defaultName,
+            selectNameOnOpen: !hasName,
+          ),
         ),
       ),
     );
@@ -427,13 +567,26 @@ class _ChatScreenState extends State<ChatScreen> {
         (action.dueInDays != null
             ? DateTime.now().add(Duration(days: action.dueInDays!.clamp(0, 365)))
             : null);
-    final form = await showManualAlertSheet(
+    final candidateTitle = action.title?.trim();
+    final hasTitle = candidateTitle != null &&
+        candidateTitle.isNotEmpty &&
+        !_isGenericAlertName(candidateTitle);
+    String? defaultTitle;
+    if (!hasTitle) {
+      try {
+        defaultTitle = await _nextAlertName();
+      } catch (_) {
+        defaultTitle = 'Alert 1';
+      }
+    }
+    final form = await showManualAlertDialog(
       context: context,
-      initialTitle: action.title ?? action.description ?? '',
+      initialTitle: hasTitle ? action.title : defaultTitle,
       initialAmount: action.amount,
       initialDueDate: initialDue,
       initialNote: action.note,
       headerLabel: 'Create alert',
+      selectTitleOnOpen: !hasTitle,
     );
     if (form == null) return null;
     _setSavingAction(true);
@@ -498,6 +651,16 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Renders chat history, the message composer, and clear/send controls.
   @override
   Widget build(BuildContext context) {
+    final lastAssistantIndex =
+        _messages.lastIndexWhere((msg) => msg.role == ChatRole.assistant);
+    final linkedAlert = _firstActionOfType(
+      ChatActionType.alert,
+      _pendingActions,
+    );
+    final hasGoal = _pendingActions.any((action) => action.type == ChatActionType.goal);
+    final inlineActions = (hasGoal && linkedAlert != null)
+        ? _pendingActions.where((action) => action.type != ChatActionType.alert).toList()
+        : _pendingActions;
     return Scaffold(
       backgroundColor: Colors.white, // keep your background color
       appBar: AppBar(
@@ -520,39 +683,49 @@ class _ChatScreenState extends State<ChatScreen> {
               itemBuilder: (context, index) {
                 final msg = _messages[index];
                 final isUser = msg.role == ChatRole.user;
-                return Align(
-                  alignment:
-                      isUser ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Bubble(
-                    margin: const BubbleEdges.only(top: 10),
-                    nip: isUser
-                        ? BubbleNip.rightBottom
-                        : BubbleNip.leftBottom, // tail position
-                    color: isUser ? Colors.blue[200]! : bfmBeige,
-                    child: MarkdownBody(
-                      data: msg.content,
-                      styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-                        p: const TextStyle(fontSize: 14),
+                final showInlineActions = !isUser &&
+                    index == lastAssistantIndex &&
+                    (inlineActions.isNotEmpty || _actionLoading);
+                return Column(
+                  crossAxisAlignment:
+                      isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                  children: [
+                    Align(
+                      alignment:
+                          isUser ? Alignment.centerRight : Alignment.centerLeft,
+                      child: Bubble(
+                        margin: const BubbleEdges.only(top: 10),
+                        nip: isUser
+                            ? BubbleNip.rightBottom
+                            : BubbleNip.leftBottom, // tail position
+                        color: isUser ? Colors.blue[200]! : bfmBeige,
+                        child: MarkdownBody(
+                          data: msg.content,
+                          styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+                            p: const TextStyle(fontSize: 14),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                    if (showInlineActions)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: _InlineActionStrip(
+                          actions: inlineActions,
+                          loading: _actionLoading,
+                          saving: _savingAction,
+                          onCreate: _handleActionTap,
+                          onDismiss: _dismissLinkedActions,
+                          linkedAlert: linkedAlert,
+                        ),
+                      ),
+                  ],
                 );
               },
               separatorBuilder: (context, index) =>
                   const SizedBox(height: 4), // spacing between bubbles
             ),
           ),
-          if (_pendingActions.isNotEmpty || _actionLoading)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: _ActionSuggestionStrip(
-                actions: _pendingActions,
-                loading: _actionLoading,
-                saving: _savingAction,
-                onCreate: _handleActionTap,
-                onDismiss: _dismissAction,
-              ),
-            ),
           Padding(
             padding: const EdgeInsets.all(8),
             child: Row(
@@ -595,10 +768,16 @@ class _ChatScreenState extends State<ChatScreen> {
 class _GoalSheet extends StatefulWidget {
   final ChatSuggestedAction action;
   final ValueChanged<bool> onSavingChanged;
+  final ChatSuggestedAction? alertSuggestion;
+  final String? initialName;
+  final bool selectNameOnOpen;
 
   const _GoalSheet({
     required this.action,
     required this.onSavingChanged,
+    this.alertSuggestion,
+    this.initialName,
+    this.selectNameOnOpen = false,
   });
 
   @override
@@ -609,21 +788,30 @@ class _GoalSheetState extends State<_GoalSheet> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _amountCtrl;
   late final TextEditingController _weeklyCtrl;
+  DateTime? _alertDueDate;
   String? _error;
   bool _saving = false;
+  bool _createAlert = false;
 
   @override
   void initState() {
     super.initState();
     _nameCtrl = TextEditingController(
-      text: widget.action.title ?? widget.action.categoryName ?? '',
+      text:
+          widget.initialName ?? widget.action.title ?? widget.action.categoryName ?? '',
     );
+    if (widget.selectNameOnOpen && _nameCtrl.text.isNotEmpty) {
+      _nameCtrl.selection =
+          TextSelection(baseOffset: 0, extentOffset: _nameCtrl.text.length);
+    }
     _amountCtrl = TextEditingController(
       text: _prefillAmount(widget.action.amount),
     );
     _weeklyCtrl = TextEditingController(
       text: _prefillAmount(widget.action.weeklyAmount ?? widget.action.amount),
     );
+    _createAlert = widget.alertSuggestion != null;
+    _alertDueDate = _initialAlertDate(widget.alertSuggestion);
   }
 
   @override
@@ -645,6 +833,12 @@ class _GoalSheetState extends State<_GoalSheet> {
       });
       return;
     }
+    if (_createAlert && _alertDueDate == null) {
+      setState(() {
+        _error = 'Choose a due date for the alert.';
+      });
+      return;
+    }
 
     setState(() {
       _saving = true;
@@ -659,12 +853,23 @@ class _GoalSheetState extends State<_GoalSheet> {
           weeklyContribution: weekly,
         ),
       );
+      if (_createAlert) {
+        await _createGoalAlert(
+          name,
+          targetAmount: target,
+          dueDate: _alertDueDate!,
+          suggestion: widget.alertSuggestion,
+        );
+      }
       if (!mounted) return;
+      final alertSuffix = _createAlert
+          ? ' and an alert for ${_friendlyDate(_alertDueDate!)}.'
+          : '.';
       Navigator.of(context).pop(
         _ActionOutcome(
           snackText: "Saved goal '$name'",
           chatText:
-              "Locked in a savings goal called $name for ${_formatCurrency(target)} with ${_formatCurrency(weekly)} weekly contributions.",
+              "Locked in a savings goal called $name for ${_formatCurrency(target)} with ${_formatCurrency(weekly)} weekly contributions$alertSuffix",
         ),
       );
     } catch (_) {
@@ -694,6 +899,7 @@ class _GoalSheetState extends State<_GoalSheet> {
           const SizedBox(height: 12),
           TextField(
             controller: _nameCtrl,
+            autofocus: widget.selectNameOnOpen,
             decoration: const InputDecoration(labelText: 'Goal name'),
           ),
           const SizedBox(height: 12),
@@ -714,6 +920,35 @@ class _GoalSheetState extends State<_GoalSheet> {
               prefixText: '\$',
             ),
           ),
+          const SizedBox(height: 16),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Create alert'),
+            value: _createAlert,
+            onChanged: (value) {
+              setState(() {
+                _createAlert = value;
+                if (value && _alertDueDate == null) {
+                  _alertDueDate = DateTime.now().add(const Duration(days: 7));
+                }
+              });
+            },
+          ),
+          if (_createAlert)
+            GestureDetector(
+              onTap: _pickAlertDate,
+              child: InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Alert date',
+                  border: OutlineInputBorder(),
+                ),
+                child: Text(
+                  _alertDueDate == null
+                      ? 'Tap to select'
+                      : _friendlyDate(_alertDueDate!),
+                ),
+              ),
+            ),
           if (_error != null) ...[
             const SizedBox(height: 8),
             Text(
@@ -740,17 +975,67 @@ class _GoalSheetState extends State<_GoalSheet> {
       ),
     );
   }
+
+  DateTime? _initialAlertDate(ChatSuggestedAction? suggestion) {
+    if (suggestion == null) return null;
+    if (suggestion.dueDate != null) return suggestion.dueDate;
+    if (suggestion.dueInDays != null) {
+      return DateTime.now()
+          .add(Duration(days: suggestion.dueInDays!.clamp(0, 365)));
+    }
+    return null;
+  }
+
+  Future<void> _pickAlertDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _alertDueDate ?? now.add(const Duration(days: 7)),
+      firstDate: now,
+      lastDate: DateTime(now.year + 2),
+    );
+    if (picked != null) {
+      setState(() => _alertDueDate = picked);
+    }
+  }
+
+  Future<void> _createGoalAlert(
+    String goalName, {
+    required double targetAmount,
+    required DateTime dueDate,
+    ChatSuggestedAction? suggestion,
+  }) async {
+    final amount = suggestion?.amount ?? targetAmount;
+    final alert = AlertModel(
+      title: goalName,
+      message: 'Due ${_friendlyDate(dueDate)}'
+          '${amount > 0 ? ' for ${_formatCurrency(amount)}' : ''}',
+      icon: '⏰',
+      amount: amount > 0 ? amount : null,
+      dueDate: dueDate,
+    );
+    final id = await AlertRepository.insert(alert);
+    try {
+      await AlertNotificationService.instance.schedule(alert.copyWith(id: id));
+    } catch (err) {
+      debugPrint('Alert scheduling failed: $err');
+    }
+  }
 }
 
 class _BudgetSheet extends StatefulWidget {
   final ChatSuggestedAction action;
   final List<String> categories;
   final ValueChanged<bool> onSavingChanged;
+  final String? initialName;
+  final bool selectNameOnOpen;
 
   const _BudgetSheet({
     required this.action,
     required this.categories,
     required this.onSavingChanged,
+    this.initialName,
+    this.selectNameOnOpen = false,
   });
 
   @override
@@ -766,8 +1051,13 @@ class _BudgetSheetState extends State<_BudgetSheet> {
   @override
   void initState() {
     super.initState();
-    final initialCategory = widget.action.categoryName ?? widget.action.title ?? '';
+    final initialCategory =
+        widget.initialName ?? widget.action.categoryName ?? widget.action.title ?? '';
     _nameCtrl = TextEditingController(text: initialCategory);
+    if (widget.selectNameOnOpen && _nameCtrl.text.isNotEmpty) {
+      _nameCtrl.selection =
+          TextSelection(baseOffset: 0, extentOffset: _nameCtrl.text.length);
+    }
     _amountCtrl = TextEditingController(
       text: _prefillAmount(widget.action.weeklyAmount ?? widget.action.amount),
     );
@@ -839,6 +1129,7 @@ class _BudgetSheetState extends State<_BudgetSheet> {
           const SizedBox(height: 12),
           TextField(
             controller: _nameCtrl,
+            autofocus: widget.selectNameOnOpen,
             decoration: const InputDecoration(
               labelText: 'Budget name',
             ),
@@ -887,160 +1178,180 @@ class _ActionOutcome {
   const _ActionOutcome({required this.snackText, required this.chatText});
 }
 
-class _ActionSuggestionStrip extends StatelessWidget {
+typedef ActionTapHandler = void Function(
+  ChatSuggestedAction action, {
+  ChatSuggestedAction? linkedAlert,
+});
+
+class _InlineActionStrip extends StatelessWidget {
   final List<ChatSuggestedAction> actions;
   final bool loading;
   final bool saving;
-  final ValueChanged<ChatSuggestedAction> onCreate;
-  final ValueChanged<ChatSuggestedAction> onDismiss;
+  final ActionTapHandler onCreate;
+  final void Function(ChatSuggestedAction action,
+      {ChatSuggestedAction? linkedAlert}) onDismiss;
+  final ChatSuggestedAction? linkedAlert;
 
-  const _ActionSuggestionStrip({
+  const _InlineActionStrip({
     required this.actions,
     required this.loading,
     required this.saving,
     required this.onCreate,
     required this.onDismiss,
+    this.linkedAlert,
   });
 
   @override
   Widget build(BuildContext context) {
     if (actions.isEmpty && !loading) return const SizedBox.shrink();
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (loading)
           const Padding(
-            padding: EdgeInsets.symmetric(vertical: 4),
+            padding: EdgeInsets.only(bottom: 6),
             child: LinearProgressIndicator(minHeight: 2),
           ),
-        ...actions.map(
-          (action) => _ActionCard(
-            action: action,
-            saving: saving,
-            onCreate: onCreate,
-            onDismiss: onDismiss,
-          ),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: actions
+              .map(
+                (action) => _InlineActionBubble(
+                  action: action,
+                  saving: saving,
+                  onCreate: onCreate,
+                  onDismiss: onDismiss,
+                  linkedAlert: linkedAlert,
+                ),
+              )
+              .toList(),
         ),
       ],
     );
   }
 }
 
-class _ActionCard extends StatelessWidget {
+class _InlineActionBubble extends StatelessWidget {
   final ChatSuggestedAction action;
   final bool saving;
-  final ValueChanged<ChatSuggestedAction> onCreate;
-  final ValueChanged<ChatSuggestedAction> onDismiss;
+  final ActionTapHandler onCreate;
+  final void Function(ChatSuggestedAction action,
+      {ChatSuggestedAction? linkedAlert}) onDismiss;
+  final ChatSuggestedAction? linkedAlert;
 
-  const _ActionCard({
+  const _InlineActionBubble({
     required this.action,
     required this.saving,
     required this.onCreate,
     required this.onDismiss,
+    this.linkedAlert,
   });
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final chips = _buildChips(context);
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    action.displayLabel,
-                    style: theme.textTheme.titleMedium,
-                  ),
+    final label = _inlineActionLabel(action);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: saving
+            ? null
+            : () => onCreate(
+                  action,
+                  linkedAlert: _linkedAlertFor(action),
                 ),
-                IconButton(
-                  tooltip: 'Dismiss',
-                  icon: const Icon(Icons.close),
-                  onPressed: () => onDismiss(action),
+        onLongPress: saving
+            ? null
+            : () => onDismiss(
+                  action,
+                  linkedAlert: _linkedAlertFor(action),
                 ),
-              ],
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade300),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 12),
             ),
-            if (action.description != null &&
-                action.description!.trim().isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  action.description!.trim(),
-                  style: theme.textTheme.bodyMedium,
-                ),
-              ),
-            if (chips.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: chips,
-                ),
-              ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton(
-                onPressed: saving ? null : () => onCreate(action),
-                child: Text(_ctaLabel(action.type, saving)),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  List<Widget> _buildChips(BuildContext context) {
-    final entries = <String>[];
-    if (action.type == ChatActionType.budget &&
-        action.categoryName?.isNotEmpty == true) {
-      entries.add(action.categoryName!.trim());
-    }
-    if (action.amount != null &&
-        action.amount! > 0 &&
-        action.type != ChatActionType.budget) {
-      entries.add('Amount ${_formatCurrency(action.amount!)}');
-    }
-    if (action.weeklyAmount != null && action.weeklyAmount! > 0) {
-      entries.add('Weekly ${_formatCurrency(action.weeklyAmount!)}');
-    }
-    final due = _dueLabelForAction(action);
-    if (due != null) entries.add(due);
-
-    return entries
-        .map(
-          (text) => Chip(
-            label: Text(
-              text,
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-        )
-        .toList();
-  }
-
-  String _ctaLabel(ChatActionType type, bool saving) {
-    if (saving) return 'Saving...';
-    switch (type) {
-      case ChatActionType.goal:
-        return 'Create goal';
-      case ChatActionType.budget:
-        return 'Create budget';
-      case ChatActionType.alert:
-        return 'Create alert';
-    }
+  ChatSuggestedAction? _linkedAlertFor(ChatSuggestedAction action) {
+    if (action.type != ChatActionType.goal) return null;
+    return linkedAlert;
   }
 }
 
 String _formatCurrency(double value) {
   final decimals = value.abs() >= 100 ? 0 : 2;
   return '\$${value.toStringAsFixed(decimals)}';
+}
+
+String _inlineActionLabel(ChatSuggestedAction action) {
+  final amount = action.amount ?? action.weeklyAmount;
+  final amountLabel =
+      amount != null && amount > 0 ? '${_formatCurrency(amount)} ' : '';
+  switch (action.type) {
+    case ChatActionType.goal:
+      return 'Create ${amountLabel}goal';
+    case ChatActionType.budget:
+      return 'Create ${amountLabel}budget';
+    case ChatActionType.alert:
+      return 'Create ${amountLabel}alert';
+  }
+}
+
+ChatSuggestedAction? _firstActionOfType(
+  ChatActionType type,
+  List<ChatSuggestedAction> actions,
+) {
+  for (final action in actions) {
+    if (action.type == type) return action;
+  }
+  return null;
+}
+
+Future<String> _nextGoalName() async {
+  final goals = await GoalRepository.getAll();
+  return _nextIndexedName('Goal', goals.map((g) => g.name));
+}
+
+Future<String> _nextAlertName() async {
+  final alerts = await AlertRepository.getAll();
+  return _nextIndexedName('Alert', alerts.map((a) => a.title));
+}
+
+Future<String> _nextBudgetName() async {
+  final budgets = await BudgetRepository.getAll();
+  final labels = budgets
+      .where((b) => b.goalId == null)
+      .map((b) => b.label ?? '');
+  return _nextIndexedName('Budget', labels);
+}
+
+String _nextIndexedName(String base, Iterable<String?> names) {
+  final pattern = RegExp('^${RegExp.escape(base)}\\s*(\\d+)\$',
+      caseSensitive: false);
+  var maxIndex = 0;
+  for (final name in names) {
+    if (name == null) continue;
+    final match = pattern.firstMatch(name.trim());
+    if (match == null) continue;
+    final value = int.tryParse(match.group(1)!);
+    if (value != null && value > maxIndex) {
+      maxIndex = value;
+    }
+  }
+  return '$base ${maxIndex + 1}';
 }
 
 String _friendlyDate(DateTime date) {
@@ -1061,18 +1372,6 @@ String _friendlyDate(DateTime date) {
   final month = months[date.month - 1];
   final day = date.day.toString().padLeft(2, '0');
   return '$day $month ${date.year}';
-}
-
-String? _dueLabelForAction(ChatSuggestedAction action) {
-  if (action.dueDate != null) {
-    return 'Due ${_friendlyDate(action.dueDate!)}';
-  }
-  final days = action.dueInDays;
-  if (days == null) return null;
-  if (days == 0) return 'Due today';
-  if (days == 1) return 'Due tomorrow';
-  if (days < 0) return null;
-  return 'Due in $days days';
 }
 
 double _parseCurrency(String raw) {
@@ -1099,7 +1398,7 @@ String _currentMondayIso() {
 
 bool _mentionsBill(String text) {
   final pattern =
-      RegExp(r'\b(bill|invoice|repair|mechanic|dentist|fine|payment|rent|warrant|wof|rego)\b');
+      RegExp(r'\b(bill(?:s)?|invoice|repair|mechanic|dentist|fine|payment|rent|warrant|wof|rego)\b');
   return pattern.hasMatch(text);
 }
 
@@ -1115,6 +1414,163 @@ bool _mentionsGoal(String text) {
   return pattern.hasMatch(text);
 }
 
+bool _mentionsBudget(String text) {
+  final pattern = RegExp(r'\b(budget|weekly limit|spend limit)\b');
+  return pattern.hasMatch(text);
+}
+
+bool _wantsAlertOnly(String text) {
+  return _mentionsAlert(text) && !_mentionsGoal(text);
+}
+
+bool _assistantPromptedAction(String text, ChatActionType type) {
+  if (text.isEmpty) return false;
+  switch (type) {
+    case ChatActionType.goal:
+      return RegExp(
+        r'\b(create goal|goal name|call this goal|name this goal|goal)\b',
+      ).hasMatch(text);
+    case ChatActionType.budget:
+      return RegExp(r'\b(create budget|budget name|weekly limit|budget)\b')
+          .hasMatch(text);
+    case ChatActionType.alert:
+      return RegExp(r'\b(create alert|remind|reminder|alert)\b')
+          .hasMatch(text);
+  }
+}
+
+bool _looksLikeName(String text) {
+  final trimmed = text.trim();
+  if (trimmed.isEmpty) return false;
+  final lower = trimmed.toLowerCase();
+  if (RegExp(r'^\d+(\.\d+)?$').hasMatch(lower)) return false;
+  if (RegExp(r'\b(in\s+)?\d+\s*(day|days|week|weeks|month|months)\b')
+      .hasMatch(lower)) {
+    return false;
+  }
+  if (lower.contains('today') ||
+      lower.contains('tomorrow') ||
+      lower.contains('next week') ||
+      lower.contains('next month')) {
+    return false;
+  }
+  return RegExp(r'[a-zA-Z]').hasMatch(trimmed);
+}
+
+ChatSuggestedAction _normalizeActionTitle(ChatSuggestedAction action) {
+  final rawTitle = action.title?.trim();
+  if (rawTitle == null || rawTitle.isEmpty) return action;
+  switch (action.type) {
+    case ChatActionType.goal:
+      if (_isGenericGoalName(rawTitle)) {
+        return action.copyWith(title: 'goal');
+      }
+      break;
+    case ChatActionType.alert:
+      if (_isGenericAlertName(rawTitle)) {
+        return action.copyWith(title: 'alert');
+      }
+      break;
+    case ChatActionType.budget:
+      if (_isGenericBudgetName(rawTitle)) {
+        return action.copyWith(title: 'budget');
+      }
+      break;
+  }
+  return action;
+}
+
+List<ChatSuggestedAction> _normalizeActionTitles(
+  List<ChatSuggestedAction> actions,
+  String? userText,
+) {
+  if (actions.isEmpty) return actions;
+  return actions
+      .map(
+        (action) => _normalizeTitleForAction(
+          action,
+          userText,
+        ),
+      )
+      .toList();
+}
+
+ChatSuggestedAction _normalizeTitleForAction(
+  ChatSuggestedAction action,
+  String? userText,
+) {
+  final rawTitle = action.title?.trim();
+  final typeWord = action.type.name;
+  if (rawTitle == null || rawTitle.isEmpty) {
+    return action.copyWith(title: typeWord);
+  }
+  final lowerTitle = rawTitle.toLowerCase();
+  if (_isGenericTypeLabel(lowerTitle, typeWord)) {
+    return action.copyWith(title: typeWord);
+  }
+  final hasTypeWord =
+      RegExp(r'\b' + RegExp.escape(typeWord) + r'\b').hasMatch(lowerTitle);
+  final userNamed = _userProvidedExplicitName(userText, action.type);
+  if (hasTypeWord && !userNamed) {
+    return action.copyWith(title: typeWord);
+  }
+  return action;
+}
+
+bool _isGenericGoalName(String name) {
+  final normalized = name.trim().toLowerCase();
+  if (normalized.isEmpty) return true;
+  return _isGenericTypeLabel(normalized, 'goal') ||
+      normalized == 'savings goal' ||
+      normalized == 'upcoming bill';
+}
+
+bool _isGenericAlertName(String name) {
+  final normalized = name.trim().toLowerCase();
+  if (normalized.isEmpty) return true;
+  return _isGenericTypeLabel(normalized, 'alert') || normalized == 'reminder';
+}
+
+bool _isGenericBudgetName(String name) {
+  final normalized = name.trim().toLowerCase();
+  if (normalized.isEmpty) return true;
+  return _isGenericTypeLabel(normalized, 'budget');
+}
+
+bool _isGenericTypeLabel(String normalized, String typeWord) {
+  return normalized == typeWord;
+}
+
+bool _userProvidedExplicitName(String? text, ChatActionType type) {
+  if (text == null || text.trim().isEmpty) return false;
+  final normalized = text.toLowerCase();
+  final namePhrases = [
+    r'\bcall it\b',
+    r'\bname it\b',
+    r'\blabel it\b',
+    r'\btitle it\b',
+    r'\bcalled\b',
+    r'\bnamed\b',
+  ];
+  for (final phrase in namePhrases) {
+    if (RegExp(phrase).hasMatch(normalized)) {
+      return true;
+    }
+  }
+  final typeWord = type.name;
+  if (RegExp(r'\b' + RegExp.escape(typeWord) + r'\b').hasMatch(normalized) &&
+      (normalized.contains('called') || normalized.contains('named'))) {
+    return true;
+  }
+  if (type == ChatActionType.alert) {
+    if (RegExp(r'\breminder\b').hasMatch(normalized) &&
+        (normalized.contains('called') || normalized.contains('named'))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 double? _extractAmountFromText(String text) {
   final cleaned = text.replaceAll(',', '');
   final match = RegExp(r'\$?\s*([0-9]+(?:\.[0-9]{1,2})?)').firstMatch(cleaned);
@@ -1122,6 +1578,26 @@ double? _extractAmountFromText(String text) {
   final value = double.tryParse(match.group(1)!);
   if (value == null || value <= 0) return null;
   return value;
+}
+
+int? _extractDueInDaysFromText(String text) {
+  final normalized = text.toLowerCase();
+  final dayMatch =
+      RegExp(r'\b(?:in\s+)?(\d{1,3})\s*(day|days)\b').firstMatch(normalized);
+  if (dayMatch != null) {
+    final days = int.tryParse(dayMatch.group(1)!);
+    if (days != null && days >= 0) return days;
+  }
+  final weekMatch =
+      RegExp(r'\b(?:in\s+)?(\d{1,3})\s*(week|weeks)\b').firstMatch(normalized);
+  if (weekMatch != null) {
+    final weeks = int.tryParse(weekMatch.group(1)!);
+    if (weeks != null && weeks >= 0) return weeks * 7;
+  }
+  if (normalized.contains('tomorrow')) return 1;
+  if (normalized.contains('today')) return 0;
+  if (normalized.contains('next week')) return 7;
+  return null;
 }
 
 double? _firstAmount(List<ChatSuggestedAction> actions) {

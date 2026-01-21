@@ -23,6 +23,7 @@ Future<ManualAlertFormData?> showManualAlertSheet({
   DateTime? initialDueDate,
   String? initialNote,
   String headerLabel = 'Create alert',
+  bool selectTitleOnOpen = false,
 }) {
   return showModalBottomSheet<ManualAlertFormData>(
     context: context,
@@ -37,6 +38,38 @@ Future<ManualAlertFormData?> showManualAlertSheet({
         initialAmount: initialAmount,
         initialDueDate: initialDueDate,
         initialNote: initialNote,
+        selectTitleOnOpen: selectTitleOnOpen,
+      ),
+    ),
+  );
+}
+
+/// Opens a centered dialog for editing manual alert details.
+Future<ManualAlertFormData?> showManualAlertDialog({
+  required BuildContext context,
+  String? initialTitle,
+  double? initialAmount,
+  DateTime? initialDueDate,
+  String? initialNote,
+  String headerLabel = 'Create alert',
+  bool selectTitleOnOpen = false,
+}) {
+  return showDialog<ManualAlertFormData>(
+    context: context,
+    builder: (ctx) => Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      child: SingleChildScrollView(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(ctx).viewInsets.bottom,
+        ),
+        child: _ManualAlertSheet(
+          headerLabel: headerLabel,
+          initialTitle: initialTitle,
+          initialAmount: initialAmount,
+          initialDueDate: initialDueDate,
+          initialNote: initialNote,
+          selectTitleOnOpen: selectTitleOnOpen,
+        ),
       ),
     ),
   );
@@ -48,6 +81,7 @@ class _ManualAlertSheet extends StatefulWidget {
   final double? initialAmount;
   final DateTime? initialDueDate;
   final String? initialNote;
+  final bool selectTitleOnOpen;
 
   const _ManualAlertSheet({
     required this.headerLabel,
@@ -55,6 +89,7 @@ class _ManualAlertSheet extends StatefulWidget {
     this.initialAmount,
     this.initialDueDate,
     this.initialNote,
+    this.selectTitleOnOpen = false,
   });
 
   @override
@@ -72,6 +107,10 @@ class _ManualAlertSheetState extends State<_ManualAlertSheet> {
   void initState() {
     super.initState();
     _titleCtrl = TextEditingController(text: widget.initialTitle ?? '');
+    if (widget.selectTitleOnOpen && _titleCtrl.text.isNotEmpty) {
+      _titleCtrl.selection =
+          TextSelection(baseOffset: 0, extentOffset: _titleCtrl.text.length);
+    }
     _amountCtrl = TextEditingController(
       text: _prefillAmount(widget.initialAmount),
     );
@@ -102,6 +141,7 @@ class _ManualAlertSheetState extends State<_ManualAlertSheet> {
           const SizedBox(height: 12),
           TextField(
             controller: _titleCtrl,
+            autofocus: widget.selectTitleOnOpen,
             decoration: const InputDecoration(labelText: 'Alert title'),
           ),
           const SizedBox(height: 12),
