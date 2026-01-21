@@ -68,61 +68,59 @@ class _GoalsScreenState extends State<GoalsScreen> {
           if (goals.isEmpty) {
             return const Center(child: Text("No goals yet. Add one!"));
           }
-          return ListView.builder(
-            itemCount: goals.length,
-            itemBuilder: (context, index) {
-              final goal = goals[index];
-              final goalName = goal.name.trim().isEmpty ? 'Goal' : goal.name;
-              return Card(
-                margin: const EdgeInsets.all(8),
-                child: ListTile(
-                  title: Text(goalName,
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text("Goal amount: \$${goal.amount.toStringAsFixed(2)}"),
-                      Text(
-                        "Weekly contribution: \$${goal.weeklyContribution.toStringAsFixed(2)}/wk",
-                      ),
-                      const SizedBox(height: 8),
-                      LinearProgressIndicator(
-                        value: goal.progressFraction,
-                        minHeight: 6,
-                        backgroundColor: Colors.grey.shade300,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        goal.progressLabel(),
-                        style: const TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton.icon(
-                          onPressed: () => _showContributeDialog(goal),
-                          icon: const Icon(Icons.savings_outlined, size: 16),
-                          label: const Text("Contribute"),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: Text(
+                  "Hold a goal card to edit, contribute, or delete.",
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: goals.length,
+                  itemBuilder: (context, index) {
+                    final goal = goals[index];
+                    final goalName =
+                        goal.name.trim().isEmpty ? 'Goal' : goal.name;
+                    return Card(
+                      margin: const EdgeInsets.all(8),
+                      child: ListTile(
+                        onLongPress: () => _showGoalActionsSheet(goal),
+                        title: Text(goalName,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                                "Goal amount: \$${goal.amount.toStringAsFixed(2)}"),
+                            Text(
+                              "Weekly contribution: \$${goal.weeklyContribution.toStringAsFixed(2)}/wk",
+                            ),
+                            const SizedBox(height: 8),
+                            LinearProgressIndicator(
+                              value: goal.progressFraction,
+                              minHeight: 6,
+                              backgroundColor: Colors.grey.shade300,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              goal.progressLabel(),
+                              style: const TextStyle(
+                                  fontSize: 12, color: Colors.grey),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
-                  trailing: PopupMenuButton<String>(
-                    onSelected: (choice) {
-                      if (choice == 'edit') {
-                        _showEditGoalDialog(goal);
-                      } else if (choice == 'delete') {
-                        _deleteGoal(goal.id!);
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(value: 'edit', child: Text("Edit")),
-                      const PopupMenuItem(value: 'delete', child: Text("Delete")),
-                    ],
-                  ),
+                    );
+                  },
                 ),
-              );
-            },
+              ),
+            ],
           );
         },
       ),
@@ -253,6 +251,50 @@ class _GoalsScreenState extends State<GoalsScreen> {
   Future<void> _deleteGoal(int id) async {
     await GoalRepository.delete(id);
     _refreshGoals();
+  }
+
+  /// Reveals goal actions through a long-press bottom sheet.
+  void _showGoalActionsSheet(GoalModel goal) {
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.savings_outlined),
+              title: const Text("Contribute"),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                _showContributeDialog(goal);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text("Edit"),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                _showEditGoalDialog(goal);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text(
+                "Delete",
+                style: TextStyle(color: Colors.red),
+              ),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                final goalId = goal.id;
+                if (goalId != null) {
+                  _deleteGoal(goalId);
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// Collects a manual contribution amount, applies it to the goal, writes a

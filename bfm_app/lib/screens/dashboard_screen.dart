@@ -43,6 +43,8 @@ import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/tip_model.dart';
 import 'package:bfm_app/models/transaction_model.dart';
 import 'package:bfm_app/services/content_sync_service.dart';
+import 'package:bfm_app/services/weekly_overview_service.dart';
+import 'package:bfm_app/widgets/weekly_overview_sheet.dart';
 
 const Color bfmBlue = Color(0xFF005494); // TODO: make a themes file
 const Color bfmOrange = Color(0xFFFF6934);
@@ -59,6 +61,7 @@ class DashboardScreen extends StatefulWidget {
 /// Manages refresh logic, route awareness, and UI helpers for dashboard data.
 class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
   late Future<DashData> _future;
+  bool _weeklyOverviewCheckInFlight = false;
 
   /// Bootstraps the dashboard load as soon as the widget mounts.
   @override
@@ -118,7 +121,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
     final leftToSpend = discWeeklyBudget - spentThisWeek;
 
-    return DashData(
+    final data = DashData(
       leftToSpendThisWeek: leftToSpend,
       totalWeeklyBudget: discWeeklyBudget, // income - budgets
       primaryGoal: goal,
@@ -127,6 +130,8 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       featuredTip: tip,
       events: events,
     );
+    _scheduleWeeklyOverviewCheck();
+    return data;
   }
 
   /// Triggers a rebuild by swapping the Future.
@@ -251,6 +256,36 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to update transaction: $err')),
       );
+    }
+  }
+
+  void _scheduleWeeklyOverviewCheck() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeShowWeeklyOverview();
+    });
+  }
+
+  Future<void> _maybeShowWeeklyOverview() async {
+    if (_weeklyOverviewCheckInFlight || !mounted) return;
+    _weeklyOverviewCheckInFlight = true;
+    try {
+      final payload = await WeeklyOverviewService.buildPayloadIfEligible();
+      if (payload == null || !mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => WeeklyOverviewSheet(
+            payload: payload,
+            onFinish: () async {
+              if (!mounted) return;
+              await _refresh();
+            },
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+      await WeeklyOverviewService.markOverviewHandled(payload.weekStart);
+    } finally {
+      _weeklyOverviewCheckInFlight = false;
     }
   }
 

@@ -15,6 +15,7 @@
 import 'dart:convert';
 
 import 'package:bfm_app/models/goal_model.dart';
+import 'package:bfm_app/models/weekly_overview_summary.dart';
 
 /// Summarises a single category's budget vs spend for a week.
 class CategoryWeeklySummary {
@@ -92,6 +93,7 @@ class WeeklyInsightsReport {
   final double totalIncome;
   final bool metBudget;
   final List<GoalWeeklyOutcome> goalOutcomes;
+  final WeeklyOverviewSummary? overviewSummary;
 
   const WeeklyInsightsReport({
     required this.weekStart,
@@ -103,6 +105,7 @@ class WeeklyInsightsReport {
     required this.totalIncome,
     required this.metBudget,
     required this.goalOutcomes,
+    this.overviewSummary,
   });
 
   /// Human readable label (YYYY-MM-DD → YYYY-MM-DD).
@@ -130,6 +133,8 @@ class WeeklyInsightsReport {
         'totalIncome': totalIncome,
         'metBudget': metBudget,
         'goalOutcomes': goalOutcomes.map((g) => g.toJson()).toList(),
+        if (overviewSummary != null)
+          'overviewSummary': overviewSummary!.toJson(),
       };
 
   /// Hydrates a report from JSON, parsing nested category/goal lists safely.
@@ -151,6 +156,7 @@ class WeeklyInsightsReport {
                 GoalWeeklyOutcome.fromJson((e as Map).cast<String, dynamic>()))
             .toList() ??
         const <GoalWeeklyOutcome>[];
+    final overviewJson = json['overviewSummary'] as Map<String, dynamic>?;
     return WeeklyInsightsReport(
       weekStart: parseDate(json['weekStart'] as String?),
       weekEnd: parseDate(json['weekEnd'] as String?),
@@ -161,6 +167,9 @@ class WeeklyInsightsReport {
       totalIncome: (json['totalIncome'] as num?)?.toDouble() ?? 0.0,
       metBudget: json['metBudget'] as bool? ?? false,
       goalOutcomes: goalList,
+      overviewSummary: overviewJson == null
+          ? null
+          : WeeklyOverviewSummary.fromJson(overviewJson),
     );
   }
 

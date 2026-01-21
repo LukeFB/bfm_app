@@ -17,6 +17,8 @@
 import 'package:bfm_app/screens/onboarding_screen.dart';
 import 'package:bfm_app/services/api_key_store.dart';
 import 'package:bfm_app/services/bank_service.dart';
+import 'package:bfm_app/services/weekly_overview_service.dart';
+import 'package:bfm_app/widgets/weekly_overview_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -32,12 +34,55 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _apiKeyCtrl = TextEditingController();
   String _apiKeyStatus = '';
+  bool _openingWeeklyOverview = false;
 
   /// Boots the API key load as soon as the screen mounts.
   @override
   void initState() {
     super.initState();
     _loadApiKey();
+  }
+
+  Future<void> _openWeeklyOverviewFromSettings() async {
+    if (_openingWeeklyOverview) return;
+    setState(() => _openingWeeklyOverview = true);
+    final scaffold = ScaffoldMessenger.of(context);
+    try {
+      final payload = await WeeklyOverviewService.buildPayloadForLastWeek();
+      if (!mounted) return;
+      if (payload == null) {
+        scaffold.showSnackBar(
+          const SnackBar(
+            content: Text(
+              "Last week's overview isn't ready yet. Try again after transactions sync.",
+            ),
+          ),
+        );
+        return;
+      }
+      final navigator = Navigator.of(context);
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => WeeklyOverviewSheet(
+            payload: payload,
+            onFinish: () async {
+              navigator.pushNamedAndRemoveUntil('/dashboard', (route) => false);
+            },
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+      await WeeklyOverviewService.markOverviewHandled(payload.weekStart);
+    } catch (err) {
+      if (!mounted) return;
+      scaffold.showSnackBar(
+        SnackBar(content: Text('Unable to load weekly overview: $err')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _openingWeeklyOverview = false);
+      }
+    }
   }
 
   /// Loads the stored API key, pre-fills the text field, and updates the inline
@@ -169,6 +214,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: const Text('Replay onboarding tour'),
             subtitle: const Text('Restart the welcome questions and tips without touching your bank link.'),
             onTap: () => _replayOnboarding(context),
+          ),
+
+          ListTile(
+            leading: const Icon(Icons.insights_outlined),
+            title: const Text("Weekly overview (last week)"),
+            subtitle: const Text('Review budgets, spend, and goal top-ups for the previous week.'),
+            trailing: _openingWeeklyOverview
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : null,
+            onTap: _openingWeeklyOverview ? null : _openWeeklyOverviewFromSettings,
           ),
 
           // --- Disconnect Bank ---

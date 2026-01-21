@@ -797,7 +797,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                       ),
                       SizedBox(height: 4),
                       Text(
-                        'Hold to edit and name budgets.',
+                        'Hold to edit budgets.',
                         style: TextStyle(fontSize: 12, color: Colors.black54),
                       ),
                     ],
@@ -1166,86 +1166,86 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   }) async {
     final nameController = TextEditingController(text: initialName);
     final amountController = TextEditingController(text: initialAmount);
-    final result = await showModalBottomSheet<_UncatEditResult>(
+    final nameFocusNode = FocusNode();
+    var hasSelectedNameText = false;
+    void selectAllNameText() {
+      nameController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: nameController.text.length,
+      );
+    }
+
+    selectAllNameText();
+    nameFocusNode.addListener(() {
+      if (nameFocusNode.hasFocus && !hasSelectedNameText) {
+        hasSelectedNameText = true;
+        selectAllNameText();
+      }
+    });
+    final resolvedTitle =
+        title.trim().isEmpty ? 'Edit budget' : title.trim();
+    final result = await showDialog<_UncatEditResult>(
       context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 16,
-            bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 24,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(
+            resolvedTitle,
+            style: const TextStyle(fontWeight: FontWeight.w600),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.black26,
-                    borderRadius: BorderRadius.circular(999),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  controller: nameController,
+                  focusNode: nameFocusNode,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Name this budget',
+                    border: OutlineInputBorder(),
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Edit budget',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Budget name',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: amountController,
-                keyboardType: const TextInputType.numberWithOptions(
-                  signed: false,
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(
-                  labelText: 'Weekly limit',
-                  prefixText: '\$',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(sheetContext),
-                    child: const Text('Cancel'),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: amountController,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    signed: false,
+                    decimal: true,
                   ),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    onPressed: () => Navigator.pop(
-                      sheetContext,
-                      _UncatEditResult(
-                        name: nameController.text,
-                        amount: amountController.text,
-                      ),
-                    ),
-                    child: const Text('Save'),
+                  decoration: const InputDecoration(
+                    labelText: 'Weekly limit',
+                    prefixText: '\$',
+                    border: OutlineInputBorder(),
                   ),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
+          actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(
+                dialogContext,
+                _UncatEditResult(
+                  name: nameController.text,
+                  amount: amountController.text,
+                ),
+              ),
+              child: const Text('Save'),
+            ),
+          ],
         );
       },
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       nameController.dispose();
       amountController.dispose();
+      nameFocusNode.dispose();
     });
     return result;
   }
@@ -1314,10 +1314,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                 ],
               ),
               const SizedBox(height: 6),
-              const Text(
-                'Hold to name this budget',
-                style: TextStyle(fontSize: 11, color: Colors.black45),
-              ),
             ],
           ),
         ),

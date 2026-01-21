@@ -398,4 +398,73 @@ class TransactionRepository {
   /// Formats a DateTime as YYYY-MM-DD so SQL comparisons stay consistent.
   static String _iso(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+
+  /// Expense totals grouped by normalized uncategorized key (description).
+  static Future<Map<String, double>> sumExpensesByUncategorizedKeyBetween(
+      DateTime start, DateTime end) async {
+    final db = await AppDatabase.instance.database;
+    final rows = await db.query(
+      'transactions',
+      columns: ['description', 'amount'],
+      where:
+          "type='expense' AND excluded = 0 AND category_id IS NULL AND date BETWEEN ? AND ?",
+      whereArgs: [_iso(start), _iso(end)],
+    );
+    final map = <String, double>{};
+    for (final row in rows) {
+      final desc = (row['description'] as String?) ?? '';
+      final key = _normalizeText(desc);
+      if (key.isEmpty) continue;
+      final amount = (row['amount'] as num?)?.toDouble().abs() ?? 0.0;
+      map[key] = (map[key] ?? 0) + amount;
+    }
+    return map;
+  }
+
+  /// Friendly descriptions for uncategorized keys within the provided range.
+  static Future<Map<String, String>> getDisplayNamesForUncategorizedKeys(
+    Set<String> keys,
+    DateTime start,
+    DateTime end,
+  ) async {
+    if (keys.isEmpty) return const {};
+    final db = await AppDatabase.instance.database;
+    final rows = await db.query(
+      'transactions',
+      columns: ['description'],
+      where:
+          "type='expense' AND excluded = 0 AND category_id IS NULL AND date BETWEEN ? AND ?",
+      whereArgs: [_iso(start), _iso(end)],
+      orderBy: 'date DESC',
+    );
+    final result = <String, String>{};
+    for (final row in rows) {
+      final desc = (row['description'] as String?) ?? '';
+      if (desc.trim().isEmpty) continue;
+      final key = _normalizeText(desc);
+      if (keys.contains(key) && !result.containsKey(key)) {
+        result[key] = desc;
+        if (result.length == keys.length) break;
+      }
+    }
+    return result;
+  }
+
+  /// Returns true when at least one non-excluded transaction exists for `day`.
+  static Future<bool> hasTransactionsOn(DateTime day) async {
+    final db = await AppDatabase.instance.database;
+    final normalized = DateTime(day.year, day.month, day.day);
+    final target = _iso(normalized);
+    final rows = await db.rawQuery(
+      '''
+      SELECT 1
+      FROM transactions
+      WHERE date = ?
+        AND excluded = 0
+      LIMIT 1
+      ''',
+      [target],
+    );
+    return rows.isNotEmpty;
+  }
 }
