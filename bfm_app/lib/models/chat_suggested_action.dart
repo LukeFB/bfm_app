@@ -170,9 +170,14 @@ class ChatSuggestedAction {
   static double? _double(dynamic value) {
     if (value == null) return null;
     if (value is num) return value.toDouble();
-    final parsed =
-        double.tryParse(value.toString().replaceAll(RegExp(r'[^0-9\.\-]'), ''));
-    return parsed;
+    final text = value.toString().trim();
+    if (text.isEmpty) return null;
+    final match =
+        RegExp(r'([0-9]+(?:\.[0-9]{1,2})?)\s*([kK])?').firstMatch(text);
+    if (match == null) return null;
+    final base = double.tryParse(match.group(1)!);
+    if (base == null) return null;
+    return match.group(2) == null ? base : base * 1000;
   }
 
   static int? _int(dynamic value) {

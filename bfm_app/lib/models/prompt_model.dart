@@ -42,6 +42,7 @@ class PromptModel {
     bool includeReports = true,
     bool includeEvents = true,
     bool includeAlerts = true,
+    bool includeRecurring = true,
   }) async {
     final buffer = StringBuffer();
     buffer.writeln("### USER CONTEXT ###\n");
@@ -72,6 +73,10 @@ class PromptModel {
 
     if (includeAlerts) {
       buffer.writeln(await _buildAlertContext());
+    }
+
+    if (includeRecurring) {
+      buffer.writeln(await _buildRecurringContext());
     }
 
     buffer.writeln("End of context.\n");
@@ -486,6 +491,7 @@ class PromptModel {
 
     final totalBudget = (parsed['totalBudget'] as num?)?.toDouble();
     final totalSpent = (parsed['totalSpent'] as num?)?.toDouble();
+    final totalIncome = (parsed['totalIncome'] as num?)?.toDouble();
     final metBudget = parsed['metBudget'] as bool? ?? false;
     List<Map<String, dynamic>> parseCatList(dynamic raw) {
       return (raw as List?)
@@ -539,6 +545,11 @@ class PromptModel {
         " (${metBudget ? 'on track' : 'over plan'}).",
       );
     }
+    if (totalIncome != null) {
+      buffer.writeln(
+        "- Income \$${totalIncome.toStringAsFixed(0)} for the week.",
+      );
+    }
     final catDetails = catSpendSummary();
     if (catDetails.isNotEmpty) buffer.writeln(catDetails);
     buffer.writeln();
@@ -566,6 +577,50 @@ class PromptModel {
           ? message
           : (title.isNotEmpty ? title : 'Alert');
       buffer.writeln("- $icon $display");
+    }
+    buffer.writeln();
+    return buffer.toString();
+  }
+
+  Future<String> _buildRecurringContext() async {
+    final rows = await _db.query(
+      'recurring_transactions',
+      columns: [
+        'description',
+        'amount',
+        'frequency',
+        'next_due_date',
+        'transaction_type',
+      ],
+      orderBy: 'updated_at DESC, created_at DESC',
+      limit: 12,
+    );
+    if (rows.isEmpty) {
+      return "No recurring payments recorded.\n";
+    }
+    final buffer = StringBuffer("Recurring payments:\n");
+    String fmtDate(dynamic value) {
+      if (value == null) return '';
+      final date = DateTime.tryParse(value.toString());
+      if (date == null) return value.toString();
+      return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
+    }
+    for (final row in rows) {
+      final description = (row['description'] ?? 'Recurring payment').toString();
+      final amount = (row['amount'] as num?)?.toDouble();
+      final frequency = (row['frequency'] ?? '').toString();
+      final nextDue = fmtDate(row['next_due_date']);
+      final type = (row['transaction_type'] ?? '').toString();
+      final amountText =
+          amount != null ? '\$${amount.toStringAsFixed(amount >= 100 ? 0 : 2)}' : '';
+      final pieces = <String>[
+        description,
+        if (amountText.isNotEmpty) amountText,
+        if (frequency.isNotEmpty) frequency,
+        if (nextDue.isNotEmpty) 'next due $nextDue',
+        if (type.isNotEmpty) type,
+      ];
+      buffer.writeln("- ${pieces.join(' • ')}");
     }
     buffer.writeln();
     return buffer.toString();

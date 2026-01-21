@@ -1480,6 +1480,7 @@ ChatSuggestedAction _normalizeActionTitle(ChatSuggestedAction action) {
   return action;
 }
 
+
 List<ChatSuggestedAction> _normalizeActionTitles(
   List<ChatSuggestedAction> actions,
   String? userText,
@@ -1573,11 +1574,23 @@ bool _userProvidedExplicitName(String? text, ChatActionType type) {
 
 double? _extractAmountFromText(String text) {
   final cleaned = text.replaceAll(',', '');
-  final match = RegExp(r'\$?\s*([0-9]+(?:\.[0-9]{1,2})?)').firstMatch(cleaned);
-  if (match == null) return null;
-  final value = double.tryParse(match.group(1)!);
-  if (value == null || value <= 0) return null;
-  return value;
+  final matches = RegExp(r'(\$)?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*([kK])?')
+      .allMatches(cleaned);
+  for (final match in matches) {
+    final value = double.tryParse(match.group(2) ?? '');
+    if (value == null || value <= 0) continue;
+    final suffix = match.group(3);
+    final hasCurrency = match.group(1) != null;
+    final tail = cleaned.substring(match.end).toLowerCase();
+    final hasTimeUnit = RegExp(r'^\s*(day|days|week|weeks|month|months|year|years)\b')
+        .hasMatch(tail);
+    if (hasTimeUnit && !hasCurrency) {
+      continue;
+    }
+    final amount = suffix == null ? value : value * 1000;
+    return amount;
+  }
+  return null;
 }
 
 int? _extractDueInDaysFromText(String text) {
