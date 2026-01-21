@@ -78,7 +78,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   @override
   void initState() {
     super.initState();
-    _recurringExpanded = widget.editMode;
+    _recurringExpanded = false;
     _load();
   }
 
@@ -374,15 +374,13 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   double _roundTo(double x, double step) =>
       (step <= 0) ? x : (x / step).round() * step;
 
-  /// Persists every selected category as a budget row (clearing old ones when
-  /// in edit mode) and routes back to the dashboard.
+  /// Persists every selected category as a budget row (clearing old ones first
+  /// so replays replace the plan) and routes back to the dashboard.
   Future<void> _saveSelected() async {
     final periodStart = _mondayOfThisWeek();
     int saved = 0;
 
-    if (widget.editMode) {
-      await BudgetRepository.clearAll();
-    }
+    await BudgetRepository.clearAll();
 
     for (final rid in _selectedRecurringIds) {
       final item = _recurringItemLookup[rid];
@@ -522,7 +520,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          widget.editMode ? 'Review & Edit Budget' : 'Build Your Weekly Budget',
+          widget.editMode ? 'Review & Edit Budget' : 'Build your weekly budget',
         ),
         actions: [
           IconButton(
@@ -536,18 +534,20 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      widget.editMode
-                          ? 'Existing budget categories are pre-selected. Adjust the weekly amounts below.'
-                          : 'Select the essential expenses you would like to budget for.',
-                      style: const TextStyle(fontSize: 13, color: Colors.grey),
+                if (!widget.editMode)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Select the essential expenses you would like to budget for.',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey,
+                        ),
+                      ),
                     ),
                   ),
-                ),
                 const Divider(height: 1),
                 Expanded(
                   child: ListView(
@@ -758,13 +758,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
       }
     }
 
-    final recurringRowEstimate =
-        hasRecurring ? 1 + (_recurringExpanded ? recurring.length : 0) : 0;
-    final estimatedRows = recurringRowEstimate +
-        (hasRecurring && hasCategories ? 1 : 0) +
-        combinedRows.length;
-    final maxHeight = min(max(estimatedRows, 1) * 120.0, 560.0);
-
     return Card(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       child: Column(
@@ -787,7 +780,7 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                       ),
                       SizedBox(height: 4),
                       Text(
-                        'Hold to edit and name transactions.',
+                        'Hold to edit and name budgets.',
                         style: TextStyle(fontSize: 12, color: Colors.black54),
                       ),
                     ],
@@ -797,11 +790,9 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
             ),
           ),
           const Divider(height: 1),
-          SizedBox(
-            height: maxHeight,
-            child: ListView(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              physics: const BouncingScrollPhysics(),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
               children: sections,
             ),
           ),
@@ -938,13 +929,10 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   Widget _buildRecurringHeader(List<_RecurringBudgetItem> items) {
     final recurringIds =
         items.map((item) => item.recurringId).whereType<int>().toSet();
-    final selectedCount = _selectedRecurringIds
-        .where((id) => recurringIds.contains(id))
-        .length;
     final total = recurringIds.length;
     final subtitle = total == 0
         ? 'No recurring expenses detected yet.'
-        : '$selectedCount of $total in your plan · tap to ${_recurringExpanded ? 'hide' : 'show'}';
+        : 'We detected these subscriptions.';
     final title = widget.editMode
         ? 'Recurring essentials'
         : 'Recurring essentials (auto-selected)';
@@ -1261,9 +1249,15 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   Widget _buildUncategorizedRow(BudgetSuggestionModel s) {
     final key = _uncatKey(s);
     final selected = _isUncatSelected(key);
-    final emoji = CategoryEmojiHelper.uncategorizedEmoji;
     final amount = _uncatAmountValue(key, s);
     final displayName = _uncatResolvedName(key, s);
+    final emojiSource = displayName.trim().isNotEmpty
+        ? displayName
+        : (s.description ?? '').trim();
+    final emoji = (emojiSource.isNotEmpty
+            ? _emojiHelper?.emojiForName(emojiSource)
+            : null) ??
+        CategoryEmojiHelper.uncategorizedEmoji;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: GestureDetector(
@@ -1292,26 +1286,6 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
                           ),
                         ),
                         const SizedBox(height: 2),
-                        Text(
-                          'Weekly suggested: \$${s.weeklySuggested.toStringAsFixed(2)} • tx: ${s.txCount}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.black54,
-                          ),
-                        ),
-                        if ((s.description ?? '').trim().isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Text(
-                              'Top match: ${s.description}',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: Colors.black45,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
                         const SizedBox(height: 4),
                         Text(
                           'Suggested weekly limit: \$${amount.toStringAsFixed(2)}',
