@@ -1,7 +1,9 @@
 import 'dart:convert';
 
+import 'package:bfm_app/models/chat_message.dart';
 import 'package:bfm_app/models/chat_suggested_action.dart';
 import 'package:bfm_app/services/api_key_store.dart';
+import 'package:bfm_app/services/chat_storage.dart';
 import 'package:http/http.dart' as http;
 
 /// Calls OpenAI with a lightweight instruction to detect structured follow-up
@@ -22,6 +24,8 @@ Valid action types:
 
 Rules:
 - When the user mentions an upcoming bill, payment, invoice, or repair they need to cover, emit BOTH a `goal` action (for saving the amount) and an `alert` action (to remind them before it is due). Infer due dates or use due_in_days when only a timeframe is provided.
+- If the user asks for a goal with a timeline (specific date, or number of days/weeks/months), emit BOTH a goal and an alert unless they explicitly ask for only one.
+- If a goal has an amount and timeline, compute weekly_amount using: weekly_amount = amount / max(weeks, 1). Weeks = days / 7. Use 30 days per month, 365 days per year. Round to 2 decimals.
 - Never invent amounts; reuse the user’s numbers. Keep amounts positive.
 - If the user has not named the goal/alert/budget, set "title" to "goal", "alert", or "budget" (do not copy the user's request wording).
 
@@ -46,19 +50,33 @@ Return ONLY valid JSON using this shape:
 ''';
 
   Future<List<ChatSuggestedAction>> identifyActions(
-      List<Map<String, String>> recentTurns) async {
+    List<Map<String, String>> recentTurns, {
+    String? assistantReply,
+  }) async {
     final apiKey = await ApiKeyStore.get();
     if (apiKey == null || apiKey.isEmpty) {
       return const [];
     }
 
     final todayLabel = _todayLabel();
+    final memory = await _buildConversationMemory();
     final messages = <Map<String, String>>[
       {
         'role': 'system',
         'content':
             'Today is $todayLabel. Use today’s date when reasoning about due dates or pay cycles.',
       },
+      if (memory.isNotEmpty)
+        {
+          'role': 'system',
+          'content': 'Conversation memory (older context):\n$memory',
+        },
+      if (assistantReply != null && assistantReply.trim().isNotEmpty)
+        {
+          'role': 'system',
+          'content':
+              'Latest assistant reply (use this to extract structured actions if needed):\n${assistantReply.trim()}',
+        },
       {'role': 'system', 'content': _systemPrompt},
       ...recentTurns,
       {
@@ -103,6 +121,37 @@ Return ONLY valid JSON using this shape:
     } catch (_) {
       return const [];
     }
+  }
+
+  Future<String> _buildConversationMemory({int maxBullets = 8}) async {
+    final all = await ChatStorage().loadAllMessages();
+    if (all.isEmpty) return '';
+    const keepTail = 6;
+    final head = (all.length > keepTail)
+        ? all.sublist(0, all.length - keepTail)
+        : const <ChatMessage>[];
+    final tail = all.takeLast(keepTail).toList();
+    final bullets = <String>[];
+    if (head.isNotEmpty) {
+      for (final m in head) {
+        if (m.role != ChatRole.user) continue;
+        final clipped = _clip(m.content, 140);
+        if (clipped.isNotEmpty) bullets.add('• $clipped');
+        if (bullets.length >= maxBullets - 2) break;
+      }
+    }
+    for (final m in tail) {
+      if (m.role == ChatRole.user) {
+        bullets.add('• recent_user: ${_clip(m.content, 140)}');
+      }
+      if (bullets.length >= maxBullets) break;
+    }
+    return bullets.join('\n');
+  }
+
+  String _clip(String s, int max) {
+    final t = s.trim().replaceAll('\n', ' ');
+    return (t.length <= max) ? t : '${t.substring(0, max - 1)}…';
   }
 
   String _todayLabel() {
@@ -225,5 +274,13 @@ Return ONLY valid JSON using this shape:
       return buffer.toString();
     }
     return '';
+  }
+}
+
+extension _TakeLast<E> on List<E> {
+  Iterable<E> takeLast(int n) {
+    if (n <= 0) return const Iterable.empty();
+    if (length <= n) return this;
+    return sublist(length - n);
   }
 }

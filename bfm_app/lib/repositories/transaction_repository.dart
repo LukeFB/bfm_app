@@ -119,6 +119,7 @@ class TransactionRepository {
 
   /// Sums expenses grouped by category between the provided dates. Returns a
   /// map keyed by category id (nullable for uncategorized).
+  /// Excludes transfers (type = 'transfer').
   static Future<Map<int?, double>> sumExpensesByCategoryBetween(
       DateTime start, DateTime end) async {
     final db = await AppDatabase.instance.database;
@@ -140,6 +141,7 @@ class TransactionRepository {
   }
 
   /// Totals income transactions between the provided dates.
+  /// Excludes transfers (type = 'transfer').
   static Future<double> sumIncomeBetween(
       DateTime start, DateTime end) async {
     final db = await AppDatabase.instance.database;
@@ -155,9 +157,19 @@ class TransactionRepository {
   }
 
   /// Returns transactions between the provided dates sorted by newest first.
+  /// Excludes transfers (type = 'transfer') by default.
   static Future<List<TransactionModel>> getBetween(
-      DateTime start, DateTime end) async {
+      DateTime start, DateTime end, {bool excludeTransfers = true}) async {
     final db = await AppDatabase.instance.database;
+    if (excludeTransfers) {
+      final rows = await db.query(
+        'transactions',
+        where: "date BETWEEN ? AND ? AND type != 'transfer'",
+        whereArgs: [_iso(start), _iso(end)],
+        orderBy: 'date DESC',
+      );
+      return rows.map((e) => TransactionModel.fromMap(e)).toList();
+    }
     final rows = await db.query(
       'transactions',
       where: 'date BETWEEN ? AND ?',
@@ -333,12 +345,11 @@ class TransactionRepository {
     return false;
   }
 
-  /// Local normaliser (kept in sync with analysis) that strips symbols and
-  /// lowercases description text for grouping.
+  /// Local normaliser (kept in sync with analysis) that lowercases and collapses
+  /// whitespace while preserving digits for accurate grouping.
   static String _normalizeText(String raw) {
     return raw
         .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z ]'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
   }
@@ -400,21 +411,28 @@ class TransactionRepository {
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 
   /// Expense totals grouped by normalized uncategorized key (description).
+  /// Includes both truly uncategorized (null category_id) and transactions
+  /// assigned to the "Uncategorized" category.
+  /// Transfers are already excluded by type = 'expense' filter.
   static Future<Map<String, double>> sumExpensesByUncategorizedKeyBetween(
       DateTime start, DateTime end) async {
     final db = await AppDatabase.instance.database;
-    final rows = await db.query(
-      'transactions',
-      columns: ['description', 'amount'],
-      where:
-          "type='expense' AND excluded = 0 AND category_id IS NULL AND date BETWEEN ? AND ?",
-      whereArgs: [_iso(start), _iso(end)],
-    );
+    // Query for both null category_id AND transactions in the "Uncategorized" category
+    final rows = await db.rawQuery('''
+      SELECT t.description, t.amount
+      FROM transactions t
+      LEFT JOIN categories c ON t.category_id = c.id
+      WHERE t.type = 'expense'
+        AND t.excluded = 0
+        AND t.date BETWEEN ? AND ?
+        AND (t.category_id IS NULL OR LOWER(c.name) IN ('uncategorized', 'uncategorised'))
+    ''', [_iso(start), _iso(end)]);
     final map = <String, double>{};
     for (final row in rows) {
       final desc = (row['description'] as String?) ?? '';
-      final key = _normalizeText(desc);
-      if (key.isEmpty) continue;
+      var key = _normalizeText(desc);
+      // Use a placeholder key for empty descriptions so they're still tracked
+      if (key.isEmpty) key = '_unnamed_transaction';
       final amount = (row['amount'] as num?)?.toDouble().abs() ?? 0.0;
       map[key] = (map[key] ?? 0) + amount;
     }
@@ -422,6 +440,9 @@ class TransactionRepository {
   }
 
   /// Friendly descriptions for uncategorized keys within the provided range.
+  /// Includes both truly uncategorized (null category_id) and transactions
+  /// assigned to the "Uncategorized" category.
+  /// Transfers are already excluded by type = 'expense' filter.
   static Future<Map<String, String>> getDisplayNamesForUncategorizedKeys(
     Set<String> keys,
     DateTime start,
@@ -429,15 +450,22 @@ class TransactionRepository {
   ) async {
     if (keys.isEmpty) return const {};
     final db = await AppDatabase.instance.database;
-    final rows = await db.query(
-      'transactions',
-      columns: ['description'],
-      where:
-          "type='expense' AND excluded = 0 AND category_id IS NULL AND date BETWEEN ? AND ?",
-      whereArgs: [_iso(start), _iso(end)],
-      orderBy: 'date DESC',
-    );
+    // Query for both null category_id AND transactions in the "Uncategorized" category
+    final rows = await db.rawQuery('''
+      SELECT t.description
+      FROM transactions t
+      LEFT JOIN categories c ON t.category_id = c.id
+      WHERE t.type = 'expense'
+        AND t.excluded = 0
+        AND t.date BETWEEN ? AND ?
+        AND (t.category_id IS NULL OR LOWER(c.name) IN ('uncategorized', 'uncategorised'))
+      ORDER BY t.date DESC
+    ''', [_iso(start), _iso(end)]);
     final result = <String, String>{};
+    // Handle the unnamed transaction placeholder
+    if (keys.contains('_unnamed_transaction')) {
+      result['_unnamed_transaction'] = 'Unnamed Transaction';
+    }
     for (final row in rows) {
       final desc = (row['description'] as String?) ?? '';
       if (desc.trim().isEmpty) continue;

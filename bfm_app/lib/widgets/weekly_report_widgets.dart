@@ -53,9 +53,15 @@ class GoalReportCard extends StatelessWidget {
                     Text(
                       outcome.goal.name,
                       style: const TextStyle(fontWeight: FontWeight.w500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
-                    Text(outcome.message),
+                    Text(
+                      outcome.message,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ],
                 ),
               ),
@@ -132,23 +138,34 @@ class BudgetRingCard extends StatelessWidget {
               runSpacing: 8,
               children: segments
                   .map(
-                    (seg) => Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            color: seg.color,
-                            shape: BoxShape.circle,
+                    (seg) => ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 160),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: seg.color,
+                              shape: BoxShape.circle,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          "${seg.label} (\$${seg.value.toStringAsFixed(0)})",
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ],
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              seg.label,
+                              style: const TextStyle(fontSize: 12),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Text(
+                            " \$${seg.value.toStringAsFixed(0)}",
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
+                      ),
                     ),
                   )
                   .toList(),
@@ -166,11 +183,16 @@ class BudgetRingCard extends StatelessWidget {
   Widget _buildStats(WeeklyInsightsReport report) {
     final budgetTotal = report.totalBudget;
     final totalSpent = report.totalSpent;
-    final budgetSpend =
-        report.categories.fold<double>(0, (sum, entry) => sum + entry.spent);
-    final remainingBudget = budgetTotal - budgetSpend;
-    final leftoverCash = report.totalIncome - totalSpent;
-    final leftoverPositive = leftoverCash >= 0;
+    // Only sum spend from categories that have a budget (budget > 0)
+    final budgetSpend = report.categories
+        .where((entry) => entry.budget > 0)
+        .fold<double>(0, (sum, entry) => sum + entry.spent);
+
+    // Use leftToSpend from overviewSummary to match dashboard calculation
+    // Falls back to simple income - spent if no summary available
+    final leftToSpend = report.overviewSummary?.leftToSpend ??
+        (report.totalIncome - totalSpent);
+    final leftoverPositive = leftToSpend >= 0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -183,21 +205,21 @@ class BudgetRingCard extends StatelessWidget {
           value: "\$${budgetTotal.toStringAsFixed(2)}",
         ),
         _StatRow(
-          label: "Spent",
+          label: "Spent on budgets",
+          value: "\$${budgetSpend.toStringAsFixed(2)}",
+          valueColor: budgetSpend > budgetTotal ? Colors.deepOrangeAccent : null,
+        ),
+        _StatRow(
+          label: "Total spent",
           value: "\$${totalSpent.toStringAsFixed(2)}",
           valueColor: Colors.deepOrangeAccent,
         ),
-        _StatRow(
-          label: "Remaining budget",
-          value: "\$${remainingBudget.toStringAsFixed(2)}",
-          valueColor: remainingBudget >= 0 ? Colors.teal : Colors.redAccent,
-        ),
         const SizedBox(height: 8),
         _StatRow(
-          label: "Money left over",
-          value: "\$${leftoverCash.abs().toStringAsFixed(2)}",
+          label: "Left to spend",
+          value: "\$${leftToSpend.abs().toStringAsFixed(2)}",
           valueColor: leftoverPositive ? Colors.green : Colors.redAccent,
-          prefix: leftoverPositive ? "saved" : "over",
+          prefix: leftoverPositive ? null : "over",
         ),
       ],
     );

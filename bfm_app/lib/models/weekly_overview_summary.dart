@@ -23,6 +23,10 @@ class WeeklyOverviewSummary {
   final double discretionaryBudget;
   final double discretionaryLeft;
 
+  /// Left to spend: (income - totalBudgets) - discretionarySpend
+  /// Matches the dashboard calculation for consistency.
+  final double leftToSpend;
+
   const WeeklyOverviewSummary({
     required this.weekStart,
     required this.weekEnd,
@@ -33,6 +37,7 @@ class WeeklyOverviewSummary {
     required this.goalSpend,
     required this.discretionaryBudget,
     required this.discretionaryLeft,
+    required this.leftToSpend,
   });
 
   /// Convenience getter used by UI chips.
@@ -49,6 +54,7 @@ class WeeklyOverviewSummary {
         'goalSpend': goalSpend,
         'discretionaryBudget': discretionaryBudget,
         'discretionaryLeft': discretionaryLeft,
+        'leftToSpend': leftToSpend,
       };
 
   /// Rebuilds the summary from stored JSON.
@@ -68,6 +74,7 @@ class WeeklyOverviewSummary {
           (json['discretionaryBudget'] as num?)?.toDouble() ?? 0.0,
       discretionaryLeft:
           (json['discretionaryLeft'] as num?)?.toDouble() ?? 0.0,
+      leftToSpend: (json['leftToSpend'] as num?)?.toDouble() ?? 0.0,
     );
   }
 

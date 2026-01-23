@@ -171,13 +171,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           _FieldConfig(
             controller: _ageCtrl,
             label: 'Age',
-            hint: 'e.g. 29',
             keyboardType: TextInputType.number,
           ),
           _FieldConfig(
             controller: _genderCtrl,
             label: 'Gender',
-            hint: 'Woman, non-binary, masculine, etc.',
           ),
           _FieldConfig(
             controller: _locationCtrl,
@@ -192,7 +190,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         description: 'Helps us thank the right people and understand reach.',
         fieldLabel: 'Referrer',
         controller: _referrerCtrl,
-        hint: 'Friend, mentor, social media…',
         showInfo: false,
       ),
       _QuestionStep(

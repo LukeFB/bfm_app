@@ -37,7 +37,7 @@ class TransactionModel {
   final double amount;
   final String description;
   final String date; // YYYY-MM-DD (we keep string to match current DB usage)
-  final String type; // expected values: 'income' or 'expense'
+  final String type; // expected values: 'income', 'expense', or 'transfer'
   final String? categoryName; // Essential if present uncategorized if not
 
   // Optional enrichment
@@ -113,7 +113,7 @@ class TransactionModel {
 
   /// Converts raw Akahu JSON into our local format.
   /// - Normalises dates to YYYY-MM-DD.
-  /// - Derives local type based on amount sign (safer than Akahu type alone).
+  /// - Derives local type based on Akahu type field and amount sign.
   /// - Pulls category + merchant metadata when available.
   /// - Generates a deterministic hash when Akahu doesn't send one.
   factory TransactionModel.fromAkahu(Map<String, dynamic> a) {
@@ -129,13 +129,24 @@ class TransactionModel {
       isoDay = dt.split('T').first; // best-effort
     }
 
-    // Map akahu type to local domain
-    String localType = 'income'; // default
+    // Map Akahu type to local domain
+    // Akahu types: CREDIT, DEBIT, PAYMENT, TRANSFER, STANDING ORDER, EFTPOS,
+    //              INTEREST, FEE, TAX, CREDIT CARD, DIRECT DEBIT, DIRECT CREDIT, ATM, LOAN
+    final akahuType = (a['type'] as String?)?.toUpperCase() ?? '';
     final amt = (a['amount'] as num).toDouble();
+    final desc = ((a['description'] ?? '') as String).toLowerCase();
 
-    // Prefer amount sign over type field for now TODO:
-    if (amt < 0) {
+    // Detect transfers - check both Akahu type and description keywords
+    final isTransfer = _isLikelyTransfer(akahuType, desc);
+
+    String localType;
+    // Preserve transfer type so we can exclude them from spending insights
+    if (isTransfer) {
+      localType = 'transfer';
+    } else if (amt < 0) {
       localType = 'expense';
+    } else {
+      localType = 'income';
     }
 
     final merchant = a['merchant'] as Map<String, dynamic>?;
@@ -198,6 +209,9 @@ class TransactionModel {
     return t == 'expense' || t == 'debit';
   }
 
+  /// True when this is a transfer between accounts (excluded from insights).
+  bool get isTransfer => type.toLowerCase() == 'transfer';
+
   /// Converts `amount` into a signed number that downstream charts expect.
   double get signedAmount => isExpense ? -amount.abs() : amount.abs();
 
@@ -215,6 +229,34 @@ class TransactionModel {
           normalized == 'true' ||
           normalized == 'yes';
     }
+    return false;
+  }
+
+  /// Detects if a transaction is likely a transfer between accounts.
+  /// Checks both Akahu type and common description patterns.
+  static bool _isLikelyTransfer(String akahuType, String descLower) {
+    // Explicit transfer type from Akahu
+    if (akahuType == 'TRANSFER') return true;
+
+    // Common transfer description patterns
+    // Be careful not to match things like "payment transfer" for actual payments
+    final transferPatterns = [
+      RegExp(r'\btransfer\b'),           // "transfer", "Transfer to savings"
+      RegExp(r'\btfr\b'),                // "TFR", common abbreviation
+      RegExp(r'\bto\s+(my\s+)?savings\b'), // "to savings", "to my savings"
+      RegExp(r'\bfrom\s+(my\s+)?savings\b'), // "from savings"
+      RegExp(r'\bto\s+(my\s+)?(checking|chequing)\b'),
+      RegExp(r'\bfrom\s+(my\s+)?(checking|chequing)\b'),
+      RegExp(r'\baccount\s+transfer\b'),
+      RegExp(r'\binternal\s+transfer\b'),
+      RegExp(r'\bown\s+account\b'),
+      RegExp(r'\bbetween\s+accounts\b'),
+    ];
+
+    for (final pattern in transferPatterns) {
+      if (pattern.hasMatch(descLower)) return true;
+    }
+
     return false;
   }
 }

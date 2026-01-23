@@ -78,7 +78,26 @@ class InsightsService {
       period.start,
       period.end,
     );
-    double remainingUncategorized = spendMapAll[null]?.abs() ?? 0.0;
+    
+    // Get all category names to identify the "Uncategorized" category
+    final allCategoryNames =
+        await CategoryRepository.getNamesByIds(spendMapAll.keys.whereType<int>());
+    
+    // Find spend assigned to the "Uncategorized" category (has category_id but name is "Uncategorized")
+    double uncategorizedCategorySpend = 0.0;
+    for (final entry in spendMapAll.entries) {
+      if (entry.key == null) continue;
+      final catName = allCategoryNames[entry.key];
+      if (catName != null) {
+        final nameLower = catName.toLowerCase();
+        if (nameLower == 'uncategorized' || nameLower == 'uncategorised') {
+          uncategorizedCategorySpend += entry.value.abs();
+        }
+      }
+    }
+    
+    // Combine true uncategorized (null category_id) + "Uncategorized" category spend
+    double remainingUncategorized = (spendMapAll[null]?.abs() ?? 0.0) + uncategorizedCategorySpend;
     final totalSpentAll =
         spendMapAll.values.fold<double>(0, (sum, value) => sum + value.abs());
     final actualWeekIncome = await TransactionRepository.sumIncomeBetween(
@@ -96,8 +115,6 @@ class InsightsService {
         .toSet();
     final budgetCategoryNames =
         await CategoryRepository.getNamesByIds(budgetCategoryIds);
-    final allCategoryNames =
-        await CategoryRepository.getNamesByIds(spendMapAll.keys.whereType<int>());
     final goalSpendMap =
         await GoalRepository.weeklyContributionTotals(period.start);
 
@@ -106,24 +123,34 @@ class InsightsService {
     double goalBudgetTotal = 0;
     double nonGoalBudgetTotal = 0;
 
-    final uncategorizedKeys = budgets
-        .map((b) => b.uncategorizedKey)
-        .whereType<String>()
-        .where((k) => k.isNotEmpty)
-        .toSet();
+    final uncategorizedKeys = <String>{
+      ...budgets
+          .map((b) => b.uncategorizedKey)
+          .whereType<String>()
+          .where((k) => k.isNotEmpty),
+      ...uncategorizedSpendMap.keys,
+    };
     final uncategorizedNames =
         await TransactionRepository.getDisplayNamesForUncategorizedKeys(
       uncategorizedKeys,
       period.start,
       period.end,
     );
+    final usedUncategorizedKeys = <String>{};
+    var hasUncategorizedCatchAll = false;
 
     for (final budget in budgets) {
       String label;
       double spent = 0;
 
       if (budget.categoryId != null) {
-        label = budgetCategoryNames[budget.categoryId!] ?? 'Category';
+        final rawLabel = budgetCategoryNames[budget.categoryId!] ?? 'Category';
+        final labelLower = rawLabel.toLowerCase();
+        // Skip budgets linked to the "Uncategorized" category - handled separately
+        if (labelLower == 'uncategorized' || labelLower == 'uncategorised') {
+          continue;
+        }
+        label = rawLabel;
         spent = spendMapAll[budget.categoryId]?.abs() ?? 0.0;
       } else if (budget.goalId != null) {
         final rawLabel = (budget.label ?? 'Goal').trim();
@@ -133,12 +160,23 @@ class InsightsService {
         label = _uncategorizedLabelForBudget(budget, uncategorizedNames);
         final key = budget.uncategorizedKey;
         if (key != null && key.isNotEmpty) {
+          // Always use the display label for better names
+          label = _uncategorizedDisplayLabel(key, uncategorizedNames);
           spent = uncategorizedSpendMap[key] ?? 0.0;
+          usedUncategorizedKeys.add(key);
           remainingUncategorized =
               math.max(remainingUncategorized - spent, 0.0);
         } else {
+          // Skip budgets with no specific uncategorized key - they're catch-all placeholders
+          final labelLower = label.toLowerCase();
+          if (labelLower == 'uncategorized' || 
+              labelLower == 'uncategorised' || 
+              labelLower == 'other transaction') {
+            continue;
+          }
           spent = remainingUncategorized;
           remainingUncategorized = 0.0;
+          hasUncategorizedCatchAll = true;
         }
       }
 
@@ -158,11 +196,45 @@ class InsightsService {
       }
     }
 
+    if (!hasUncategorizedCatchAll) {
+      double unbudgetedUncategorizedTotal = 0.0;
+      for (final entry in uncategorizedSpendMap.entries) {
+        if (usedUncategorizedKeys.contains(entry.key)) continue;
+        if (entry.value <= 0) continue;
+        final label = _uncategorizedDisplayLabel(entry.key, uncategorizedNames);
+        categories.add(
+          CategoryWeeklySummary(
+            label: label,
+            budget: 0,
+            spent: entry.value,
+          ),
+        );
+        budgetSpend += entry.value;
+        unbudgetedUncategorizedTotal += entry.value;
+      }
+      remainingUncategorized =
+          math.max(remainingUncategorized - unbudgetedUncategorizedTotal, 0.0);
+      // Only add remainder if it's significant (more than 1 cent to avoid floating point errors)
+      if (remainingUncategorized > 0.01) {
+        categories.add(
+          CategoryWeeklySummary(
+            label: 'Other Uncategorized',
+            budget: 0,
+            spent: remainingUncategorized,
+          ),
+        );
+        budgetSpend += remainingUncategorized;
+        remainingUncategorized = 0.0;
+      }
+    }
+
     categories.sort((a, b) => b.spent.compareTo(a.spent));
 
     final topCategories = _mapTopCategories(
       spendMapAll,
       allCategoryNames,
+      uncategorizedSpendMap: uncategorizedSpendMap,
+      uncategorizedNames: uncategorizedNames,
     );
 
     final metBudget = totalBudget > 0 ? budgetSpend <= totalBudget : false;
@@ -183,6 +255,17 @@ class InsightsService {
     final discretionaryBudget = actualWeekIncome - nonGoalBudgetTotal;
     final discretionaryLeft = discretionaryBudget - nonGoalSpend;
 
+    // Calculate leftToSpend matching the dashboard formula:
+    // (income - totalBudgets) - discretionarySpend
+    // Where discretionarySpend = overages for budgeted categories + full spend for non-budgeted
+    // Use displayIncome (previous week when usePreviousWeekIncome=true) to match dashboard
+    final discretionarySpend = await _calculateDiscretionarySpend(
+      period.start,
+      period.end,
+      budgets,
+    );
+    final leftToSpend = (displayIncome - totalBudget) - discretionarySpend;
+
     final overviewSummary = WeeklyOverviewSummary(
       weekStart: period.start,
       weekEnd: period.end,
@@ -193,6 +276,7 @@ class InsightsService {
       goalSpend: goalSpend,
       discretionaryBudget: discretionaryBudget,
       discretionaryLeft: discretionaryLeft,
+      leftToSpend: leftToSpend,
     );
 
     final report = WeeklyInsightsReport(
@@ -306,19 +390,53 @@ class InsightsService {
   /// Converts the spend map into sorted summaries for the report.
   static List<CategoryWeeklySummary> _mapTopCategories(
     Map<int?, double> spendMap,
-    Map<int, String> categoryNames,
-  ) {
+    Map<int, String> categoryNames, {
+    Map<String, double> uncategorizedSpendMap = const {},
+    Map<String, String> uncategorizedNames = const {},
+  }) {
     final list = <CategoryWeeklySummary>[];
+    final uncategorizedTotal = spendMap[null]?.abs() ?? 0.0;
+    double uncategorizedMapped = 0.0;
+    // Track spend from the "Uncategorized" category to merge with true uncategorized
+    double uncategorizedCategorySpend = 0.0;
     spendMap.forEach((categoryId, spent) {
-      final label = categoryId == null
-          ? 'Uncategorized'
-          : (categoryNames[categoryId] ?? 'Category');
+      if (categoryId == null) return;
+      final rawLabel = categoryNames[categoryId] ?? 'Category';
+      final labelLower = rawLabel.toLowerCase();
+      // Skip the "Uncategorized" category - its spend will be merged into uncategorized items
+      if (labelLower == 'uncategorized' || labelLower == 'uncategorised') {
+        uncategorizedCategorySpend += spent.abs();
+        return;
+      }
       list.add(CategoryWeeklySummary(
-        label: label,
+        label: rawLabel,
         budget: spent.abs(),
         spent: spent.abs(),
       ));
     });
+    for (final entry in uncategorizedSpendMap.entries) {
+      if (entry.value <= 0) continue;
+      list.add(
+        CategoryWeeklySummary(
+          label: _uncategorizedDisplayLabel(entry.key, uncategorizedNames),
+          budget: entry.value.abs(),
+          spent: entry.value.abs(),
+        ),
+      );
+      uncategorizedMapped += entry.value.abs();
+    }
+    // Combine true uncategorized + "Uncategorized" category spend
+    final totalUncategorizedRemaining = uncategorizedTotal + uncategorizedCategorySpend;
+    final uncategorizedRemaining =
+        math.max(totalUncategorizedRemaining - uncategorizedMapped, 0.0);
+    // Only add remainder if it's significant (more than 1 cent to avoid floating point errors)
+    if (uncategorizedRemaining > 0.01) {
+      list.add(CategoryWeeklySummary(
+        label: 'Other Transactions',
+        budget: uncategorizedRemaining,
+        spent: uncategorizedRemaining,
+      ));
+    }
     list.sort((a, b) => b.spent.compareTo(a.spent));
     return list;
   }
@@ -344,6 +462,47 @@ class InsightsService {
     return "No contribution was applied to ${goal.name} this week.";
   }
 
+  /// Calculates discretionary spend matching the dashboard formula:
+  /// - For budgeted categories: only count overages (spend - budget, if > 0)
+  /// - For non-budgeted/uncategorized: count full amount
+  static Future<double> _calculateDiscretionarySpend(
+    DateTime start,
+    DateTime end,
+    List<BudgetModel> budgets,
+  ) async {
+    // Build a map of category_id -> weekly budget limit
+    final budgetsByCategory = <int, double>{};
+    for (final budget in budgets) {
+      final catId = budget.categoryId;
+      if (catId != null) {
+        budgetsByCategory[catId] =
+            (budgetsByCategory[catId] ?? 0.0) + budget.weeklyLimit;
+      }
+    }
+
+    // Get spend grouped by category for the period
+    final spendByCategory =
+        await TransactionRepository.sumExpensesByCategoryBetween(start, end);
+
+    double discretionary = 0.0;
+    for (final entry in spendByCategory.entries) {
+      final catId = entry.key;
+      final spent = entry.value.abs();
+
+      if (catId == null || !budgetsByCategory.containsKey(catId)) {
+        // Non-budgeted or uncategorized: count full amount
+        discretionary += spent;
+      } else {
+        // Budgeted category: only count overage
+        final budget = budgetsByCategory[catId] ?? 0.0;
+        final overage = math.max(spent - budget, 0.0);
+        discretionary += overage;
+      }
+    }
+
+    return discretionary;
+  }
+
 }
 
 /// Convenience date tuple capturing a week’s start/end bounds.
@@ -361,16 +520,67 @@ String _uncategorizedLabelForBudget(
   Map<String, String> nameByKey,
 ) {
   final custom = (budget.label ?? '').trim();
-  if (custom.isNotEmpty && custom.toLowerCase() != 'uncategorized') {
+  final customLower = custom.toLowerCase();
+  if (custom.isNotEmpty && 
+      customLower != 'uncategorized' && 
+      customLower != 'uncategorised') {
     return custom;
   }
   final key = budget.uncategorizedKey;
   if (key != null && key.isNotEmpty) {
-    final friendly = nameByKey[key];
-    if (friendly != null && friendly.trim().isNotEmpty) {
+    final keyLower = key.trim().toLowerCase();
+    // Skip if the key itself is just "uncategorized"
+    if (keyLower != 'uncategorized' && keyLower != 'uncategorised') {
+      final friendly = nameByKey[key];
+      if (friendly != null && friendly.trim().isNotEmpty) {
+        final friendlyLower = friendly.trim().toLowerCase();
+        if (friendlyLower != 'uncategorized' && friendlyLower != 'uncategorised') {
+          return friendly.trim();
+        }
+      }
+      // Fall back to title-casing the key itself
+      final words = key.trim().split(' ');
+      final titled = words.map((w) {
+        if (w.isEmpty) return w;
+        return w[0].toUpperCase() + w.substring(1);
+      }).join(' ');
+      if (titled.isNotEmpty) {
+        return titled;
+      }
+    }
+  }
+  return 'Other Transaction';
+}
+
+String _uncategorizedDisplayLabel(
+  String key,
+  Map<String, String> nameByKey,
+) {
+  // Handle the unnamed transaction placeholder
+  if (key == '_unnamed_transaction') {
+    return 'Unnamed Transaction';
+  }
+  final friendly = nameByKey[key];
+  if (friendly != null && friendly.trim().isNotEmpty) {
+    final friendlyLower = friendly.trim().toLowerCase();
+    // Don't return "Uncategorized" as a label - use a more descriptive fallback
+    if (friendlyLower != 'uncategorized' && friendlyLower != 'uncategorised') {
       return friendly.trim();
     }
   }
-  return 'Uncategorized';
+  // Fall back to the key itself (now preserves original description) if no mapping found
+  if (key.trim().isNotEmpty) {
+    final keyLower = key.trim().toLowerCase();
+    // Skip if the key itself is just "uncategorized"
+    if (keyLower != 'uncategorized' && keyLower != 'uncategorised') {
+      // Title case the key for display
+      final words = key.trim().split(' ');
+      final titled = words.map((w) {
+        if (w.isEmpty) return w;
+        return w[0].toUpperCase() + w.substring(1);
+      }).join(' ');
+      return titled;
+    }
+  }
+  return 'Other Transaction';
 }
-

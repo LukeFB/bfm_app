@@ -105,14 +105,6 @@ class _InsightsScreenState extends State<InsightsScreen> {
               padding: const EdgeInsets.all(16),
               children: [
                 BudgetRingCard(report: report),
-                const SizedBox(height: 16),
-                TopCategoryChart(report: report),
-                const SizedBox(height: 16),
-                GoalReportCard(report: report, onOpenGoals: () async {
-                  await Navigator.pushNamed(context, '/goals');
-                  if (!mounted) return;
-                  await _refresh();
-                }),
                 if (payload.history.isNotEmpty) ...[
                   const SizedBox(height: 24),
                   _HistoryList(
@@ -158,8 +150,11 @@ class _CategoryRow extends StatelessWidget {
                 child: Text(
                   summary.label,
                   style: const TextStyle(fontWeight: FontWeight.w500),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
+              const SizedBox(width: 8),
               Text(
                 label,
                 style: TextStyle(
@@ -200,9 +195,15 @@ class _HistoryList extends StatelessWidget {
             for (final entry in history)
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: Text(entry.report.weekLabel),
+                title: Text(
+                  entry.report.weekLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
                 subtitle: Text(
                   "Spent \$${entry.report.totalSpent.toStringAsFixed(2)} • Budget \$${entry.report.totalBudget.toStringAsFixed(2)}",
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 trailing: IconButton(
                   icon: const Icon(Icons.open_in_new),
@@ -277,6 +278,8 @@ class _WeeklyReportDetailSheet extends StatelessWidget {
                               t.description.isEmpty
                                   ? 'Transaction'
                                   : t.description,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                             subtitle: Text(t.date),
                             trailing: Text(

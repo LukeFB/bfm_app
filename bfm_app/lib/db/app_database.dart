@@ -50,7 +50,7 @@ class AppDatabase {
     // Open the database with version and an onUpgrade callback
     return await openDatabase(
       path,
-      version: 20,
+      version: 21,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },
@@ -235,6 +235,31 @@ class AppDatabase {
       SET usage_count = (
         SELECT COUNT(*) FROM transactions t WHERE t.category_id = categories.id
       );
+    ''');
+
+    // Reclassify transactions that look like transfers based on description
+    // This catches transfers that weren't marked as type='TRANSFER' by Akahu
+    await db.rawUpdate('''
+      UPDATE transactions
+      SET type = 'transfer'
+      WHERE type = 'expense'
+        AND (
+          LOWER(description) LIKE '%transfer%'
+          OR LOWER(description) LIKE '% tfr %'
+          OR LOWER(description) LIKE 'tfr %'
+          OR LOWER(description) LIKE '% tfr'
+          OR LOWER(description) LIKE '%to savings%'
+          OR LOWER(description) LIKE '%from savings%'
+          OR LOWER(description) LIKE '%to my savings%'
+          OR LOWER(description) LIKE '%from my savings%'
+          OR LOWER(description) LIKE '%to checking%'
+          OR LOWER(description) LIKE '%to chequing%'
+          OR LOWER(description) LIKE '%from checking%'
+          OR LOWER(description) LIKE '%from chequing%'
+          OR LOWER(description) LIKE '%internal transfer%'
+          OR LOWER(description) LIKE '%own account%'
+          OR LOWER(description) LIKE '%between accounts%'
+        );
     ''');
   }
 

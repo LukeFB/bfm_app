@@ -54,6 +54,7 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   // Replaced _Message with ChatMessage to integrate with storage + AI.
   final List<ChatMessage> _messages = [];
+  final List<ChatMessage> _allMessages = [];
 
   final TextEditingController _controller = TextEditingController();
 
@@ -75,6 +76,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // How many most-recent turns to send with each request
   static const int kContextWindowTurns = kChatContextWindowTurns;
+  static const int _kMaxUiMessages = 100;
 
   /// Sets up the AI + storage services and loads history.
   @override
@@ -97,19 +99,25 @@ class _ChatScreenState extends State<ChatScreen> {
   /// API key exists so the UI can hint accordingly.
   Future<void> _bootstrap() async {
     // Load persisted messages (if any)
-    final persisted = await _store.loadMessages();
-    if (persisted.isNotEmpty) {
+    final persistedAll = await _store.loadAllMessages();
+    if (persistedAll.isNotEmpty) {
+      _allMessages.addAll(persistedAll);
       setState(() {
-        _messages.addAll(persisted);
+        final start = _allMessages.length > _kMaxUiMessages
+            ? _allMessages.length - _kMaxUiMessages
+            : 0;
+        _messages.addAll(_allMessages.sublist(start));
       });
       // ensure the list is scrolled to bottom after loading history.
       _scrollToBottom();
     } else {
       // Seed welcome greeting
-      _messages.add(ChatMessage.assistant(
+      final greeting = ChatMessage.assistant(
         "Kia ora! How can I help with your budget today?",
-      ));
-      await _store.saveMessages(_messages);
+      );
+      _messages.add(greeting);
+      _allMessages.add(greeting);
+      await _store.saveMessages(_allMessages);
       setState(() {});
       // scroll to the bottom after first paint.
       _scrollToBottom();
@@ -151,10 +159,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   List<Map<String, String>> _buildRecentTurns() {
-    final start = _messages.length > kContextWindowTurns
-        ? _messages.length - kContextWindowTurns
+    final start = _allMessages.length > kContextWindowTurns
+        ? _allMessages.length - kContextWindowTurns
         : 0;
-    return _messages
+    return _allMessages
         .sublist(start)
         .map((m) => m.toOpenAiRoleContent())
         .toList();
@@ -176,8 +184,9 @@ class _ChatScreenState extends State<ChatScreen> {
     final userMsg = ChatMessage.user(text);
     final lastUserText = userMsg.content;
     _messages.add(userMsg);
+    _allMessages.add(userMsg);
     _controller.clear();
-    await _store.saveMessages(_messages);
+    await _store.saveMessages(_allMessages);
     setState(() {});
     _scrollToBottom(); // keep view pinned to newest message.
 
@@ -190,7 +199,8 @@ class _ChatScreenState extends State<ChatScreen> {
       // Append assistant response and persist
       final botMsg = ChatMessage.assistant(replyWithLinks);
       _messages.add(botMsg);
-      await _store.saveMessages(_messages);
+      _allMessages.add(botMsg);
+      await _store.saveMessages(_allMessages);
       setState(() {});
       _scrollToBottom(); // scroll to bottom when bot replies.
       unawaited(_detectActions(
@@ -203,7 +213,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.add(ChatMessage.assistant(
         "Sorry, I couldn’t reply just now. ${_prettyErr(e)}",
       ));
-      await _store.saveMessages(_messages);
+      _allMessages.add(_messages.last);
+      await _store.saveMessages(_allMessages);
       setState(() {});
       _scrollToBottom(); // maintain scroll position.
     } finally {
@@ -220,18 +231,26 @@ class _ChatScreenState extends State<ChatScreen> {
   }) async {
     if (!_hasApiKey) return;
     setState(() => _actionLoading = true);
-    var actions = await _actionExtractor.identifyActions(turns);
+    final actionContext = _buildActionContextText(
+      lastUserMessage: lastUserMessage,
+    );
+    var actions = await _actionExtractor.identifyActions(
+      turns,
+      assistantReply: lastAssistantMessage,
+    );
     actions = _ensurePromptedGoal(actions, lastUserMessage, lastAssistantMessage);
-    actions = _ensureAlertCoverage(actions, lastUserMessage);
-    actions = _ensureBillCoverage(actions, lastUserMessage);
+    actions = _ensureAlertCoverage(actions, actionContext);
+    actions = _ensureBillCoverage(actions, actionContext);
+    actions = _ensureGoalTimelineAlert(actions, actionContext);
     actions = _filterActionsForUtterance(
       actions,
       lastUserMessage,
       lastAssistantMessage: lastAssistantMessage,
     );
-    actions = _ensureAlertCoverage(actions, lastUserMessage);
-    actions = _ensureBillCoverage(actions, lastUserMessage);
+    actions = _ensureAlertCoverage(actions, actionContext);
+    actions = _ensureBillCoverage(actions, actionContext);
     actions = _normalizeActionTitles(actions, lastUserMessage);
+    actions = _prefillMissingActionData(actions, actionContext);
     if (!mounted) return;
     setState(() {
       _actionLoading = false;
@@ -239,6 +258,25 @@ class _ChatScreenState extends State<ChatScreen> {
         ..clear()
         ..addAll(actions);
     });
+  }
+
+  String _buildActionContextText({String? lastUserMessage}) {
+    if (_allMessages.isEmpty) return lastUserMessage ?? '';
+    final buffer = StringBuffer();
+    var added = 0;
+    for (var i = _allMessages.length - 1; i >= 0; i--) {
+      final msg = _allMessages[i];
+      if (msg.role != ChatRole.user) continue;
+      final text = msg.content.trim();
+      if (text.isEmpty) continue;
+      buffer.write(text);
+      buffer.write(' ');
+      added++;
+      if (added >= 4) break;
+    }
+    final combined = buffer.toString().trim();
+    if (combined.isNotEmpty) return combined;
+    return lastUserMessage ?? '';
   }
 
   List<ChatSuggestedAction> _ensureBillCoverage(
@@ -287,6 +325,37 @@ class _ChatScreenState extends State<ChatScreen> {
     return result;
   }
 
+  List<ChatSuggestedAction> _ensureGoalTimelineAlert(
+    List<ChatSuggestedAction> actions,
+    String? userText,
+  ) {
+    if (userText == null) return actions;
+    final normalized = userText.toLowerCase();
+    if (!_mentionsGoal(normalized)) return actions;
+    if (_wantsAlertOnly(normalized)) return actions;
+    final hasTimeline =
+        _extractDueInDaysFromText(userText) != null ||
+        _extractDueDateFromText(userText) != null;
+    if (!hasTimeline) return actions;
+    final hasAlert = actions.any((a) => a.type == ChatActionType.alert);
+    if (hasAlert) return actions;
+    final extractedAmount = _extractAmountFromText(userText);
+    final extractedDueInDays = _extractDueInDaysFromText(userText);
+    final extractedDueDate = _extractDueDateFromText(userText);
+    final result = List<ChatSuggestedAction>.from(actions);
+    result.add(
+      ChatSuggestedAction(
+        type: ChatActionType.alert,
+        title: 'alert',
+        description: userText,
+        amount: extractedAmount,
+        dueDate: extractedDueDate,
+        dueInDays: extractedDueInDays,
+      ),
+    );
+    return result;
+  }
+
   List<ChatSuggestedAction> _ensureAlertCoverage(
     List<ChatSuggestedAction> actions,
     String? userText,
@@ -320,7 +389,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     final hasGoal = actions.any((action) => action.type == ChatActionType.goal);
     if (hasGoal) return actions;
-    final title = _looksLikeName(userText) ? userText.trim() : null;
+    final title = _extractGoalNameFromText(userText);
     final amount = _extractAmountFromText(userText);
     final dueInDays = _extractDueInDaysFromText(userText);
     final result = List<ChatSuggestedAction>.from(actions);
@@ -344,7 +413,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (actions.isEmpty) return actions;
     final normalized = userText?.toLowerCase() ?? '';
     final alertOnly = _wantsAlertOnly(normalized);
-    final wantsAlert = _mentionsAlert(normalized) || _mentionsBill(normalized);
+    final goalTimeline = _goalNeedsAlert(normalized, actions);
+    final wantsAlert =
+        _mentionsAlert(normalized) || _mentionsBill(normalized) || goalTimeline;
     final wantsGoal =
         _mentionsGoal(normalized) || (_mentionsBill(normalized) && !alertOnly);
     final assistantText = lastAssistantMessage?.toLowerCase() ?? '';
@@ -373,6 +444,47 @@ class _ChatScreenState extends State<ChatScreen> {
       return true;
     }).toList();
   }
+
+  List<ChatSuggestedAction> _prefillMissingActionData(
+    List<ChatSuggestedAction> actions,
+    String? userText,
+  ) {
+    if (actions.isEmpty || userText == null) return actions;
+    final extractedAmount = _extractAmountFromText(userText);
+    final extractedDueInDays = _extractDueInDaysFromText(userText);
+    final extractedDueDate = _extractDueDateFromText(userText);
+    final extractedName = _extractGoalNameFromText(userText);
+    return actions.map((action) {
+      var updated = action;
+      if (updated.amount == null && extractedAmount != null) {
+        updated = updated.copyWith(amount: extractedAmount);
+      }
+      if (updated.type == ChatActionType.goal &&
+          (updated.title == null || _isGenericGoalName(updated.title!)) &&
+          extractedName != null) {
+        updated = updated.copyWith(title: extractedName);
+      }
+      if (updated.dueDate == null && extractedDueDate != null) {
+        updated = updated.copyWith(dueDate: extractedDueDate);
+      }
+      if (updated.dueInDays == null && extractedDueInDays != null) {
+        updated = updated.copyWith(dueInDays: extractedDueInDays);
+      }
+      if (updated.type == ChatActionType.goal &&
+          updated.weeklyAmount == null &&
+          updated.amount != null) {
+        final weekly = _calculateWeeklyContribution(
+          updated.amount!,
+          dueDate: updated.dueDate,
+          dueInDays: updated.dueInDays,
+        );
+        if (weekly != null && weekly > 0) {
+          updated = updated.copyWith(weeklyAmount: weekly);
+        }
+      }
+      return updated;
+    }).toList();
+  }
   /// Clears history after a confirmation dialog and reseeds the greeting.
   Future<void> _clearChat() async {
     final confirm = await showDialog<bool>(
@@ -397,12 +509,15 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages
         ..clear()
         ..add(ChatMessage.assistant('Kia ora! How can I help with your budget today?'));
+      _allMessages
+        ..clear()
+        ..add(_messages.first);
       _pendingActions.clear();
       _actionLoading = false;
     });
 
     // persist the single greeting message
-    await _store.saveMessages(_messages);
+    await _store.saveMessages(_allMessages);
     _scrollToBottom(); // scroll to top/bottom as needed after reset.
 
     if (mounted) {
@@ -627,7 +742,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _appendConfirmationMessage(String text) async {
     final msg = ChatMessage.assistant(text);
     _messages.add(msg);
-    await _store.saveMessages(_messages);
+    _allMessages.add(msg);
+    await _store.saveMessages(_allMessages);
     if (!mounted) return;
     setState(() {});
     _scrollToBottom();
@@ -1409,8 +1525,9 @@ bool _mentionsAlert(String text) {
 }
 
 bool _mentionsGoal(String text) {
-  final pattern =
-      RegExp(r'\b(goal|saving|save up|savings)\b');
+  final pattern = RegExp(
+    r'\b(goal|saving|save up|savings|save for|set aside|put aside|contribute|target)\b',
+  );
   return pattern.hasMatch(text);
 }
 
@@ -1421,6 +1538,17 @@ bool _mentionsBudget(String text) {
 
 bool _wantsAlertOnly(String text) {
   return _mentionsAlert(text) && !_mentionsGoal(text);
+}
+
+bool _goalNeedsAlert(String normalizedText, List<ChatSuggestedAction> actions) {
+  if (!_mentionsGoal(normalizedText)) return false;
+  final hasTimeline = _extractDueInDaysFromText(normalizedText) != null ||
+      _extractDueDateFromText(normalizedText) != null;
+  if (hasTimeline) return true;
+  for (final action in actions) {
+    if (action.type == ChatActionType.goal && action.hasDueDate) return true;
+  }
+  return false;
 }
 
 bool _assistantPromptedAction(String text, ChatActionType type) {
@@ -1454,7 +1582,61 @@ bool _looksLikeName(String text) {
       lower.contains('next month')) {
     return false;
   }
+  if (trimmed.split(RegExp(r'\s+')).length > 6) return false;
   return RegExp(r'[a-zA-Z]').hasMatch(trimmed);
+}
+
+String? _extractGoalNameFromText(String text) {
+  final normalized = text.trim();
+  if (normalized.isEmpty) return null;
+  final lower = normalized.toLowerCase();
+  final namedMatch = RegExp(
+    r'\b(?:called|named|name it|call it)\s+([a-z0-9][a-z0-9\s\-&]+)\b',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  if (namedMatch != null) {
+    final raw = normalized.substring(namedMatch.start, namedMatch.end);
+    final cleaned = raw
+        .replaceFirst(
+          RegExp(
+            r'\b(?:called|named|name it|call it)\b',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .trim();
+    final title = _cleanGoalTitle(cleaned);
+    return title.isEmpty ? null : title;
+  }
+  final forMatch = RegExp(
+    r'\b(?:for|to buy|to get|to save for|to pay for)\s+([a-z0-9][a-z0-9\s\-&]+)',
+    caseSensitive: false,
+  ).firstMatch(normalized);
+  if (forMatch != null) {
+    final raw = normalized.substring(forMatch.start, forMatch.end);
+    final cleaned = raw
+        .replaceFirst(
+          RegExp(
+            r'\b(?:for|to buy|to get|to save for|to pay for)\b',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .trim();
+    final title = _cleanGoalTitle(cleaned);
+    return title.isEmpty ? null : title;
+  }
+  if (_looksLikeName(normalized)) {
+    return _cleanGoalTitle(normalized);
+  }
+  return null;
+}
+
+String _cleanGoalTitle(String text) {
+  var cleaned = text.trim();
+  cleaned = cleaned.replaceAll(RegExp(r'[\.\!\?]+$'), '').trim();
+  cleaned = cleaned.replaceAll(RegExp(r'\s{2,}'), ' ');
+  return cleaned;
 }
 
 ChatSuggestedAction _normalizeActionTitle(ChatSuggestedAction action) {
@@ -1607,10 +1789,102 @@ int? _extractDueInDaysFromText(String text) {
     final weeks = int.tryParse(weekMatch.group(1)!);
     if (weeks != null && weeks >= 0) return weeks * 7;
   }
+  final monthMatch =
+      RegExp(r'\b(?:in\s+)?(\d{1,3})\s*(month|months)\b').firstMatch(normalized);
+  if (monthMatch != null) {
+    final months = int.tryParse(monthMatch.group(1)!);
+    if (months != null && months >= 0) return months * 30;
+  }
+  final yearMatch =
+      RegExp(r'\b(?:in\s+)?(\d{1,3})\s*(year|years)\b').firstMatch(normalized);
+  if (yearMatch != null) {
+    final years = int.tryParse(yearMatch.group(1)!);
+    if (years != null && years >= 0) return years * 365;
+  }
   if (normalized.contains('tomorrow')) return 1;
   if (normalized.contains('today')) return 0;
   if (normalized.contains('next week')) return 7;
+  if (normalized.contains('next month')) return 30;
   return null;
+}
+
+DateTime? _extractDueDateFromText(String text) {
+  final normalized = text.toLowerCase();
+  final isoMatch =
+      RegExp(r'\b(\d{4})-(\d{2})-(\d{2})\b').firstMatch(normalized);
+  if (isoMatch != null) {
+    try {
+      return DateTime.parse(isoMatch.group(0)!);
+    } catch (_) {
+      // fall through
+    }
+  }
+  final monthMatch = RegExp(
+    r'\b(\d{1,2})\s+'
+    r'(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|september|oct|october|nov|november|dec|december)'
+    r'(?:\s+(\d{4}))?\b',
+  ).firstMatch(normalized);
+  if (monthMatch != null) {
+    final day = int.tryParse(monthMatch.group(1)!);
+    final year = int.tryParse(monthMatch.group(3) ?? '');
+    final monthText = monthMatch.group(2)!;
+    final month = _monthNumber(monthText);
+    if (day != null && month != null) {
+      final now = DateTime.now();
+      final targetYear = year ?? now.year;
+      var candidate = DateTime(targetYear, month, day);
+      if (candidate.isBefore(now) && year == null) {
+        candidate = DateTime(targetYear + 1, month, day);
+      }
+      return candidate;
+    }
+  }
+  return null;
+}
+
+int? _monthNumber(String text) {
+  switch (text.substring(0, 3)) {
+    case 'jan':
+      return 1;
+    case 'feb':
+      return 2;
+    case 'mar':
+      return 3;
+    case 'apr':
+      return 4;
+    case 'may':
+      return 5;
+    case 'jun':
+      return 6;
+    case 'jul':
+      return 7;
+    case 'aug':
+      return 8;
+    case 'sep':
+      return 9;
+    case 'oct':
+      return 10;
+    case 'nov':
+      return 11;
+    case 'dec':
+      return 12;
+  }
+  return null;
+}
+
+double? _calculateWeeklyContribution(
+  double amount, {
+  DateTime? dueDate,
+  int? dueInDays,
+}) {
+  int? days = dueInDays;
+  if (days == null && dueDate != null) {
+    days = dueDate.difference(DateTime.now()).inDays;
+  }
+  if (days == null || days <= 0) return null;
+  final weeks = (days / 7).clamp(1, double.infinity);
+  final weekly = amount / weeks;
+  return (weekly * 100).roundToDouble() / 100;
 }
 
 double? _firstAmount(List<ChatSuggestedAction> actions) {
