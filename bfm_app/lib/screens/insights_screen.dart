@@ -17,7 +17,6 @@
 /// ---------------------------------------------------------------------------
 import 'package:flutter/material.dart';
 
-import 'package:bfm_app/models/transaction_model.dart';
 import 'package:bfm_app/models/weekly_report.dart';
 import 'package:bfm_app/services/insights_service.dart';
 import 'package:bfm_app/widgets/weekly_report_widgets.dart';
@@ -32,14 +31,27 @@ class InsightsScreen extends StatefulWidget {
 
 /// Internal container bundling the latest report plus saved history.
 class _InsightsPayload {
-  final WeeklyInsightsReport report;
+  final WeeklyInsightsReport currentReport;
   final List<WeeklyReportEntry> history;
-  const _InsightsPayload({required this.report, required this.history});
+  const _InsightsPayload({required this.currentReport, required this.history});
+  
+  /// All reports: current week first, then history (most recent first)
+  List<WeeklyInsightsReport> get allReports {
+    final reports = <WeeklyInsightsReport>[currentReport];
+    for (final entry in history) {
+      // Avoid duplicating the current week if it's already in history
+      if (entry.report.weekStartIso != currentReport.weekStartIso) {
+        reports.add(entry.report);
+      }
+    }
+    return reports;
+  }
 }
 
-/// Handles fetching reports, pull-to-refresh, and history modals.
+/// Handles fetching reports, pull-to-refresh, and navigation through reports.
 class _InsightsScreenState extends State<InsightsScreen> {
   late Future<_InsightsPayload> _future;
+  int _currentIndex = 0;
 
   /// Seeds the Future when the screen mounts.
   @override
@@ -52,28 +64,36 @@ class _InsightsScreenState extends State<InsightsScreen> {
   Future<_InsightsPayload> _load() async {
     final report = await InsightsService.generateWeeklyReport();
     final history = await InsightsService.getSavedReports();
-    return _InsightsPayload(report: report, history: history);
+    return _InsightsPayload(currentReport: report, history: history);
   }
 
   /// Rebuilds the Future and waits for it so pull-to-refresh can complete.
   Future<void> _refresh() async {
     setState(() {
+      _currentIndex = 0;
       _future = _load();
     });
     await _future;
   }
 
-  /// Opens a bottom sheet that shows the JSON-backed report for a given week.
-  Future<void> _openHistoryDetail(WeeklyReportEntry entry) async {
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (ctx) => _WeeklyReportDetailSheet(entry: entry),
-    );
+  void _goToPrevious(int maxIndex) {
+    if (_currentIndex < maxIndex) {
+      setState(() => _currentIndex++);
+    }
   }
 
-  /// Renders the insights cards and history list.
+  void _goToNext() {
+    if (_currentIndex > 0) {
+      setState(() => _currentIndex--);
+    }
+  }
+
+  String _formatDateRange(DateTime start, DateTime end) {
+    String fmt(DateTime d) => "${d.day}/${d.month}/${d.year}";
+    return "${fmt(start)} - ${fmt(end)}";
+  }
+
+  /// Renders the insights cards with navigation.
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -99,202 +119,65 @@ class _InsightsScreenState extends State<InsightsScreen> {
               );
             }
             final payload = snapshot.data!;
-            final report = payload.report;
+            final allReports = payload.allReports;
+            
+            // Clamp index in case data changed
+            final safeIndex = _currentIndex.clamp(0, allReports.length - 1);
+            final report = allReports[safeIndex];
+            final maxIndex = allReports.length - 1;
+            final canGoBack = safeIndex < maxIndex;
+            final canGoForward = safeIndex > 0;
+            final isCurrentWeek = safeIndex == 0;
+            
             return ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.all(16),
               children: [
+                // Navigation bar with arrows and date range
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.chevron_left),
+                      onPressed: canGoBack ? () => _goToPrevious(maxIndex) : null,
+                      tooltip: 'Previous week',
+                    ),
+                    Column(
+                      children: [
+                        Text(
+                          _formatDateRange(report.weekStart, report.weekEnd),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                        ),
+                        if (isCurrentWeek)
+                          Text(
+                            'This week',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_right),
+                      onPressed: canGoForward ? _goToNext : null,
+                      tooltip: 'Next week',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
                 BudgetRingCard(report: report),
-                if (payload.history.isNotEmpty) ...[
-                  const SizedBox(height: 24),
-                  _HistoryList(
-                    history: payload.history,
-                    onOpen: _openHistoryDetail,
-                  ),
-                ],
+                const SizedBox(height: 16),
+                BudgetComparisonCard(
+                  key: ValueKey(report.weekStart),
+                  forWeekStart: report.weekStart,
+                ),
               ],
             );
           },
-        ),
-      ),
-    );
-  }
-}
-
-
-/// Renders a single category row inside the history detail sheet.
-class _CategoryRow extends StatelessWidget {
-  final CategoryWeeklySummary summary;
-  const _CategoryRow({required this.summary});
-
-  @override
-  Widget build(BuildContext context) {
-    final hasBudget = summary.budget > 0;
-    final pct = hasBudget && summary.budget > 0
-        ? (summary.spent / summary.budget).clamp(0.0, 1.5)
-        : 1.0;
-    final over = hasBudget && summary.spent > summary.budget + 0.01;
-    final label = hasBudget
-        ? "\$${summary.spent.toStringAsFixed(2)} / \$${summary.budget.toStringAsFixed(2)}"
-        : "\$${summary.spent.toStringAsFixed(2)} spent";
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
-                  summary.label,
-                  style: const TextStyle(fontWeight: FontWeight.w500),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: TextStyle(
-                  color: over ? Colors.deepOrange : Colors.black54,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          LinearProgressIndicator(
-            value: pct > 1 ? 1 : pct,
-            backgroundColor: Colors.grey.shade200,
-            color: over ? Colors.deepOrange : Colors.blueAccent,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// List card showing previously saved weekly reports.
-class _HistoryList extends StatelessWidget {
-  final List<WeeklyReportEntry> history;
-  final Future<void> Function(WeeklyReportEntry) onOpen;
-  const _HistoryList({required this.history, required this.onOpen});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Weekly report history",
-                style: TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 12),
-            for (final entry in history)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(
-                  entry.report.weekLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(
-                  "Spent \$${entry.report.totalSpent.toStringAsFixed(2)} • Budget \$${entry.report.totalBudget.toStringAsFixed(2)}",
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing: IconButton(
-                  icon: const Icon(Icons.open_in_new),
-                  onPressed: () => onOpen(entry),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Bottom sheet that drills into a historical weekly report.
-class _WeeklyReportDetailSheet extends StatelessWidget {
-  final WeeklyReportEntry entry;
-  const _WeeklyReportDetailSheet({required this.entry});
-
-  @override
-  Widget build(BuildContext context) {
-    final report = entry.report;
-    return FractionallySizedBox(
-      heightFactor: 0.9,
-      child: Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
-        ),
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  Text("Week of ${report.weekLabel}",
-                      style: const TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 12),
-                  const Text("Budgets vs spend",
-                      style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  for (final summary in report.categories)
-                    _CategoryRow(summary: summary),
-                  const SizedBox(height: 16),
-                  const Text("Transactions",
-                      style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  FutureBuilder<List<TransactionModel>>(
-                    future:
-                        InsightsService.getTransactionsForWeek(report.weekStart),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) {
-                        return const Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Center(child: CircularProgressIndicator()),
-                        );
-                      }
-                      final txs = snapshot.data!;
-                      if (txs.isEmpty) {
-                        return const Text("No transactions recorded.");
-                      }
-                      return Column(
-                        children: txs.map((t) {
-                          final amount = t.type == 'expense'
-                              ? -t.amount.abs()
-                              : t.amount.abs();
-                          final color = amount < 0
-                              ? Colors.deepOrange
-                              : Colors.green;
-                          return ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(
-                              t.description.isEmpty
-                                  ? 'Transaction'
-                                  : t.description,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Text(t.date),
-                            trailing: Text(
-                              "\$${amount.toStringAsFixed(2)}",
-                              style: TextStyle(color: color),
-                            ),
-                          );
-                        }).toList(),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ],
         ),
       ),
     );

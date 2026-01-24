@@ -15,6 +15,7 @@ import 'package:bfm_app/models/weekly_report.dart';
 import 'package:bfm_app/models/weekly_overview_summary.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
+import 'package:bfm_app/repositories/weekly_report_repository.dart';
 import 'package:bfm_app/services/insights_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -50,6 +51,13 @@ class WeeklyOverviewService {
   static Future<WeeklyOverviewPayload?> buildPayloadForLastWeek() async {
     final targetWeekStart = _previousWeekStart(DateTime.now());
     return _buildPayloadForWeek(targetWeekStart);
+  }
+
+  /// Saves a weekly report to persist for streak tracking.
+  /// Call this when the user finishes the weekly overview to record the
+  /// "left to spend" value for budget streak calculations.
+  static Future<void> saveReport(WeeklyInsightsReport report) async {
+    await WeeklyReportRepository.upsert(report);
   }
 
   /// Records that the overview for the provided week has been surfaced.

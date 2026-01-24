@@ -17,6 +17,7 @@ import 'package:bfm_app/models/event_model.dart';
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/tip_model.dart';
 import 'package:bfm_app/models/transaction_model.dart';
+import 'package:bfm_app/services/budget_streak_service.dart';
 
 /// Immutable snapshot of dashboard values for a render.
 class DashData {
@@ -27,6 +28,7 @@ class DashData {
   final List<TransactionModel> recent;
   final TipModel? featuredTip;
   final List<EventModel> events;
+  final BudgetStreakData budgetStreak;
 
   /// Requires every piece of dashboard data up front to keep the UI simple.
   const DashData({
@@ -37,5 +39,6 @@ class DashData {
     required this.recent,
     required this.featuredTip,
     required this.events,
+    required this.budgetStreak,
   });
 }

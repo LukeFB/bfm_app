@@ -94,9 +94,10 @@ class ContextBuilder {
     buffer.writeln(
       '- When suggesting a referral, mention the service and give the website link (instead of repeating the provider name).',
     );
-    buffer.writeln('- Data available to you: current weekly budgets per category, this week\'s category spend vs limits, savings goals with progress, active referral services (with websites), upcoming events, the latest weekly report (including income), active alerts, and recurring payments with frequency.');
+    buffer.writeln('- Data available to you: current weekly budgets per category, this week\'s category spend vs limits, weekly budget vs last month\'s weekly average comparison, savings goals with progress, active referral services (with websites), upcoming events, the latest weekly report (including income), active alerts, and recurring payments with frequency.');
     buffer.writeln('- Budgets are selected essential expenses users set per category.');
     buffer.writeln('- Categories represent average weekly spending per category; compare spend vs budgets to help users save more.');
+    buffer.writeln('- Weekly budget comparison shows: Avg (weekly average from last 4 weeks), Budget (weekly limit). This compares typical spending (avg) to budget. "Over budget" means avg is >15% above budget (user consistently overspends). "On track" means avg is within 15% of budget.');
     buffer.writeln('- Recurring payments are recurring bills/subscriptions (weekly/monthly, with next due dates). You can suggest reviewing these.');
     buffer.writeln('- When users ask for amounts or limits you already see, respond with the precise figures from context;');
     buffer.writeln('- Offer budget coaching using the current limits/spend (compare expenses per category to average expenses in those categories, suggest reallocation, warn about overruns, celebrate under-budget categories).');

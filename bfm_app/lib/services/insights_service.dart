@@ -26,6 +26,7 @@ import 'package:bfm_app/models/weekly_overview_summary.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
+import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/repositories/weekly_report_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 
@@ -118,6 +119,20 @@ class InsightsService {
     final goalSpendMap =
         await GoalRepository.weeklyContributionTotals(period.start);
 
+    // Load recurring transactions for budgets that reference them
+    final recurringIds = budgets
+        .map((b) => b.recurringTransactionId)
+        .whereType<int>()
+        .toSet();
+    final recurringTransactions = await RecurringRepository.getByIds(recurringIds);
+    final recurringById = <int, String>{};
+    for (final rt in recurringTransactions) {
+      if (rt.id != null && rt.description != null) {
+        // Normalize the description the same way as uncategorizedSpendMap keys
+        recurringById[rt.id!] = rt.description!.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
+      }
+    }
+
     final List<CategoryWeeklySummary> categories = [];
     double budgetSpend = 0;
     double goalBudgetTotal = 0;
@@ -128,6 +143,8 @@ class InsightsService {
           .map((b) => b.uncategorizedKey)
           .whereType<String>()
           .where((k) => k.isNotEmpty),
+      // Also add normalized recurring transaction descriptions as potential keys
+      ...recurringById.values,
       ...uncategorizedSpendMap.keys,
     };
     final uncategorizedNames =
@@ -139,27 +156,65 @@ class InsightsService {
     final usedUncategorizedKeys = <String>{};
     var hasUncategorizedCatchAll = false;
 
+    // Group budgets by category/key to avoid double-counting spend
+    // Key format: "cat:{id}" for categories, "goal:{id}" for goals, "key:{key}" for uncategorized, "rec:{id}" for recurring
+    final groupedBudgets = <String, ({String label, double budgetTotal, double spent, bool isGoal})>{};
+    
     for (final budget in budgets) {
+      String groupKey;
       String label;
       double spent = 0;
+      bool isGoal = false;
 
       if (budget.categoryId != null) {
         final rawLabel = budgetCategoryNames[budget.categoryId!] ?? 'Category';
         final labelLower = rawLabel.toLowerCase();
-        // Skip budgets linked to the "Uncategorized" category - handled separately
+        // If linked to "Uncategorized" category but has a recurring transaction,
+        // treat it as an uncategorized budget using the recurring transaction's description
         if (labelLower == 'uncategorized' || labelLower == 'uncategorised') {
-          continue;
+          if (budget.recurringTransactionId != null) {
+            final recurringKey = recurringById[budget.recurringTransactionId!];
+            if (recurringKey != null && recurringKey.isNotEmpty) {
+              groupKey = 'rec:${budget.recurringTransactionId}';
+              label = _uncategorizedDisplayLabel(recurringKey, uncategorizedNames);
+              spent = uncategorizedSpendMap[recurringKey] ?? 0.0;
+              usedUncategorizedKeys.add(recurringKey);
+              remainingUncategorized = math.max(remainingUncategorized - spent, 0.0);
+            } else {
+              continue; // No description to match
+            }
+          } else {
+            continue; // Skip non-recurring uncategorized category budgets
+          }
+        } else {
+          groupKey = 'cat:${budget.categoryId}';
+          label = rawLabel;
+          spent = spendMapAll[budget.categoryId]?.abs() ?? 0.0;
         }
-        label = rawLabel;
-        spent = spendMapAll[budget.categoryId]?.abs() ?? 0.0;
       } else if (budget.goalId != null) {
         final rawLabel = (budget.label ?? 'Goal').trim();
+        groupKey = 'goal:${budget.goalId}';
         label = rawLabel.isEmpty ? 'Goal' : rawLabel;
         spent = goalSpendMap[budget.goalId!] ?? 0.0;
+        isGoal = true;
+      } else if (budget.recurringTransactionId != null) {
+        // Handle recurring transaction budgets
+        final recurringKey = recurringById[budget.recurringTransactionId!];
+        if (recurringKey != null && recurringKey.isNotEmpty) {
+          groupKey = 'rec:${budget.recurringTransactionId}';
+          label = _uncategorizedDisplayLabel(recurringKey, uncategorizedNames);
+          spent = uncategorizedSpendMap[recurringKey] ?? 0.0;
+          usedUncategorizedKeys.add(recurringKey);
+          remainingUncategorized = math.max(remainingUncategorized - spent, 0.0);
+        } else {
+          // Recurring transaction doesn't have a description, skip
+          continue;
+        }
       } else {
         label = _uncategorizedLabelForBudget(budget, uncategorizedNames);
         final key = budget.uncategorizedKey;
         if (key != null && key.isNotEmpty) {
+          groupKey = 'key:$key';
           // Always use the display label for better names
           label = _uncategorizedDisplayLabel(key, uncategorizedNames);
           spent = uncategorizedSpendMap[key] ?? 0.0;
@@ -174,25 +229,48 @@ class InsightsService {
               labelLower == 'other transaction') {
             continue;
           }
+          groupKey = 'catch:all';
           spent = remainingUncategorized;
           remainingUncategorized = 0.0;
           hasUncategorizedCatchAll = true;
         }
       }
 
+      // Group budgets: combine budget limits, but keep spent the same (it's the same transactions)
+      final existing = groupedBudgets[groupKey];
+      if (existing != null) {
+        groupedBudgets[groupKey] = (
+          label: existing.label,
+          budgetTotal: existing.budgetTotal + budget.weeklyLimit,
+          spent: existing.spent, // Don't double-count spend
+          isGoal: existing.isGoal,
+        );
+      } else {
+        groupedBudgets[groupKey] = (
+          label: label,
+          budgetTotal: budget.weeklyLimit,
+          spent: spent,
+          isGoal: isGoal,
+        );
+      }
+    }
+    
+    // Now create category summaries from grouped data
+    for (final entry in groupedBudgets.entries) {
+      final data = entry.value;
       categories.add(
         CategoryWeeklySummary(
-          label: label,
-          budget: budget.weeklyLimit,
-          spent: spent,
+          label: data.label,
+          budget: data.budgetTotal,
+          spent: data.spent,
         ),
       );
-      budgetSpend += spent;
+      budgetSpend += data.spent;
 
-      if (budget.goalId != null) {
-        goalBudgetTotal += budget.weeklyLimit;
+      if (data.isGoal) {
+        goalBudgetTotal += data.budgetTotal;
       } else {
-        nonGoalBudgetTotal += budget.weeklyLimit;
+        nonGoalBudgetTotal += data.budgetTotal;
       }
     }
 

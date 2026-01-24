@@ -25,6 +25,7 @@
 import 'dart:convert';
 
 import 'package:sqflite/sqflite.dart';
+import 'package:bfm_app/services/budget_comparison_service.dart';
 
 /// Builds AI prompt context by querying the local database.
 class PromptModel {
@@ -43,6 +44,7 @@ class PromptModel {
     bool includeEvents = true,
     bool includeAlerts = true,
     bool includeRecurring = true,
+    bool includeBudgetComparison = true,
   }) async {
     final buffer = StringBuffer();
     buffer.writeln("### USER CONTEXT ###\n");
@@ -53,6 +55,10 @@ class PromptModel {
 
     if (includeCategories) {
       buffer.writeln(await _buildCategorySpendContext());
+    }
+
+    if (includeBudgetComparison) {
+      buffer.writeln(await _buildBudgetComparisonContext());
     }
 
     if (includeGoals) {
@@ -265,6 +271,17 @@ class PromptModel {
     }
     buffer.writeln();
     return buffer.toString();
+  }
+
+  /// Builds context comparing this week's budget spend vs monthly average.
+  Future<String> _buildBudgetComparisonContext() async {
+    try {
+      final context = await BudgetComparisonService.buildChatbotContext();
+      if (context.isEmpty) return '';
+      return context;
+    } catch (_) {
+      return '';
+    }
   }
 
   /// Looks up the most recent budget period and returns totals per category id.

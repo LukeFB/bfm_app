@@ -66,13 +66,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           builder: (_) => WeeklyOverviewSheet(
             payload: payload,
             onFinish: () async {
+              await WeeklyOverviewService.markOverviewHandled(payload.weekStart);
               navigator.pushNamedAndRemoveUntil('/dashboard', (route) => false);
             },
           ),
           fullscreenDialog: true,
         ),
       );
-      await WeeklyOverviewService.markOverviewHandled(payload.weekStart);
     } catch (err) {
       if (!mounted) return;
       scaffold.showSnackBar(

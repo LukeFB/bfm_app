@@ -42,6 +42,7 @@ import 'package:bfm_app/models/event_model.dart';
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/tip_model.dart';
 import 'package:bfm_app/models/transaction_model.dart';
+import 'package:bfm_app/services/budget_streak_service.dart';
 import 'package:bfm_app/services/content_sync_service.dart';
 import 'package:bfm_app/services/weekly_overview_service.dart';
 import 'package:bfm_app/widgets/weekly_overview_sheet.dart';
@@ -109,6 +110,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       TransactionRepository.getRecent(5),
       DashboardService.getFeaturedTip(),
       DashboardService.getUpcomingEvents(limit: 3),
+      BudgetStreakService.calculateStreak(),
     ]);
 
     final discWeeklyBudget = results[0] as double;
@@ -118,6 +120,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     final recent = results[4] as List<TransactionModel>;
     final tip = results[5] as TipModel?;
     final events = results[6] as List<EventModel>;
+    final budgetStreak = results[7] as BudgetStreakData;
 
     final leftToSpend = discWeeklyBudget - spentThisWeek;
 
@@ -129,13 +132,24 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       recent: recent,
       featuredTip: tip,
       events: events,
+      budgetStreak: budgetStreak,
     );
     _scheduleWeeklyOverviewCheck();
     return data;
   }
 
-  /// Triggers a rebuild by swapping the Future.
+  /// Triggers a rebuild by swapping the Future (uses stale check).
   Future<void> _refresh() async {
+    setState(() {
+      _future = _load();
+    });
+  }
+
+  /// Force syncs transactions immediately (bypasses stale check).
+  /// Used for pull-to-refresh when user wants latest data NOW.
+  Future<void> _forceSync() async {
+    await TransactionSyncService().syncNow(forceRefresh: true);
+    if (!mounted) return;
     setState(() {
       _future = _load();
     });
@@ -184,81 +198,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     return '$month ${date.day}';
   }
 
-  void _showTransactionActions(TransactionModel txn) {
-    final id = txn.id;
-    if (id == null) return;
-
-    final formattedAmount = txn.signedAmount < 0
-        ? "-\$${txn.signedAmount.abs().toStringAsFixed(2)}"
-        : "\$${txn.signedAmount.toStringAsFixed(2)}";
-    final amountColor =
-        txn.isExpense ? const Color(0xFFFF6934) : Colors.green;
-
-    showModalBottomSheet(
-      context: context,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                title: Text(
-                  txn.description.isEmpty ? "Transaction" : txn.description,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text("${txn.date} • ${txn.type}"),
-                trailing: Text(
-                  formattedAmount,
-                  style: TextStyle(
-                    color: amountColor,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              SwitchListTile.adaptive(
-                value: txn.excluded,
-                title: const Text('Exclude from calculations'),
-                subtitle: const Text(
-                  'Left to spend, discretionary spend, and insights will ignore this transaction.',
-                ),
-                onChanged: (value) => _toggleExcluded(sheetContext, id, value),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _toggleExcluded(
-    BuildContext sheetContext,
-    int transactionId,
-    bool exclude,
-  ) async {
-    try {
-      await TransactionRepository.setExcluded(
-        id: transactionId,
-        excluded: exclude,
-      );
-      if (!mounted) return;
-      Navigator.of(sheetContext).pop();
-      _refresh();
-      final message = exclude
-          ? 'Transaction excluded from calculations.'
-          : 'Transaction re-included in calculations.';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
-    } catch (err) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to update transaction: $err')),
-      );
-    }
-  }
-
   void _scheduleWeeklyOverviewCheck() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _maybeShowWeeklyOverview();
@@ -276,6 +215,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
           builder: (_) => WeeklyOverviewSheet(
             payload: payload,
             onFinish: () async {
+              await WeeklyOverviewService.markOverviewHandled(payload.weekStart);
               if (!mounted) return;
               await _refresh();
             },
@@ -283,7 +223,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
           fullscreenDialog: true,
         ),
       );
-      await WeeklyOverviewService.markOverviewHandled(payload.weekStart);
     } finally {
       _weeklyOverviewCheckInFlight = false;
     }
@@ -330,7 +269,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
             final upcomingEvents = data.events;
 
             return RefreshIndicator(
-              onRefresh: _refresh,
+              onRefresh: _forceSync,
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(16),
@@ -483,19 +422,8 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                               amount: amt,
                               date: date,
                               excluded: t.excluded,
-                              onLongPress: t.id == null
-                                  ? null
-                                  : () => _showTransactionActions(t),
                             );
                           }),
-                          const SizedBox(height: 8),
-                          const Text(
-                            "Hold a transaction to exclude it from calculations.",
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.black54,
-                            ),
-                          ),
                         ],
                       ),
                     ),
@@ -503,31 +431,62 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                     const SizedBox(height: 24),
 
                     // ---------- STREAKS ----------
-                    const DashboardCard(
-                      title: "Streaks",
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Center(
-                            child: Text(
-                              // TODO: dynamic
-                              "🔥3",
-                              style: TextStyle(
-                                fontSize: 40,
-                                fontWeight: FontWeight.bold,
-                              ),
+                    DashboardCard(
+                      title: "Budget Streak",
+                      child: data.budgetStreak.streakWeeks > 0
+                          ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Center(
+                                  child: Text(
+                                    "🔥${data.budgetStreak.streakWeeks}",
+                                    style: const TextStyle(
+                                      fontSize: 40,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  "You have met your budget ${data.budgetStreak.streakWeeks} ${data.budgetStreak.streakWeeks == 1 ? 'week' : 'weeks'} in a row",
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  "You have saved: \$${data.budgetStreak.totalSaved.toStringAsFixed(data.budgetStreak.totalSaved >= 100 ? 0 : 2)}",
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.green,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            )
+                          : const Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Center(
+                                  child: Text(
+                                    "🔥0",
+                                    style: TextStyle(
+                                      fontSize: 40,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(height: 16),
+                                Text(
+                                  "Complete a week under budget to start your streak!",
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                          SizedBox(height: 16),
-                          Text(
-                            "You have opened the app 3 weeks in a row",
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
 
                     const SizedBox(height: 24),

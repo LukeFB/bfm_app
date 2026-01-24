@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'package:bfm_app/models/weekly_report.dart';
+import 'package:bfm_app/services/budget_comparison_service.dart';
+import 'package:bfm_app/utils/category_emoji_helper.dart';
 
 /// Card summarising goal outcomes and linking to the goals screen.
 class GoalReportCard extends StatelessWidget {
@@ -86,6 +88,11 @@ class BudgetRingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final segments = _buildSegments(report);
     final statsSection = showStats ? _buildStats(report) : null;
+    
+    // Calculate spent from segments (exclude Leftover)
+    final spentFromSegments = segments
+        .where((s) => s.label != 'Leftover' && s.label != 'No spend yet')
+        .fold<double>(0, (sum, s) => sum + s.value);
 
     return Card(
       child: Padding(
@@ -120,7 +127,7 @@ class BudgetRingCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        "Spent: \$${report.totalSpent.toStringAsFixed(0)}",
+                        "Spent: \$${spentFromSegments.toStringAsFixed(0)}",
                         style: const TextStyle(
                           fontSize: 12,
                           color: Colors.black54,
@@ -132,44 +139,7 @@ class BudgetRingCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 12,
-              runSpacing: 8,
-              children: segments
-                  .map(
-                    (seg) => ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 160),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 10,
-                            height: 10,
-                            decoration: BoxDecoration(
-                              color: seg.color,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Flexible(
-                            child: Text(
-                              seg.label,
-                              style: const TextStyle(fontSize: 12),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          Text(
-                            " \$${seg.value.toStringAsFixed(0)}",
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                  .toList(),
-            ),
+            _buildLegend(segments),
             if (statsSection != null) ...[
               const SizedBox(height: 16),
               statsSection,
@@ -177,6 +147,107 @@ class BudgetRingCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildSectionHeader(String text) {
+    return Row(
+      children: [
+        Expanded(child: Divider(color: Colors.grey.shade400)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey.shade600,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ),
+        Expanded(child: Divider(color: Colors.grey.shade400)),
+      ],
+    );
+  }
+
+  Widget _buildLegend(List<_RingSegment> segments) {
+    // Separate budgeted from non-budgeted (exclude "Leftover" and "No spend yet")
+    final budgeted = segments
+        .where((s) => s.isBudgeted && s.label != 'Leftover' && s.label != 'No spend yet')
+        .toList();
+    final notBudgeted = segments
+        .where((s) => !s.isBudgeted && s.label != 'Leftover')
+        .toList();
+    final leftover = segments.where((s) => s.label == 'Leftover').toList();
+
+    Widget buildSegmentRow(_RingSegment seg) {
+      return ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 160),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: seg.color,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                seg.label,
+                style: const TextStyle(fontSize: 12),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Text(
+              " \$${seg.value.toStringAsFixed(0)}",
+              style: const TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        // Budgeted for header and categories
+        if (budgeted.isNotEmpty) ...[
+          _buildSectionHeader('budgeted for'),
+          const SizedBox(height: 8),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 12,
+            runSpacing: 8,
+            children: budgeted.map(buildSegmentRow).toList(),
+          ),
+        ],
+        // Separator and non-budgeted categories
+        if (notBudgeted.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _buildSectionHeader('not budgeted for'),
+          const SizedBox(height: 8),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 12,
+            runSpacing: 8,
+            children: notBudgeted.map(buildSegmentRow).toList(),
+          ),
+        ],
+        // Leftover (if any)
+        if (leftover.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 12,
+            runSpacing: 8,
+            children: leftover.map(buildSegmentRow).toList(),
+          ),
+        ],
+      ],
     );
   }
 
@@ -229,37 +300,93 @@ class BudgetRingCard extends StatelessWidget {
     final segments = <_RingSegment>[];
     double budgetSpent = 0;
     var colorIndex = 0;
-    final labelCounts = <String, int>{};
+    final usedLabels = <String>{};
 
+    // Build a set of labels that have budgets (case-insensitive)
+    final budgetedLabels = <String>{};
     for (final cat in report.categories) {
-      final value = cat.spent.abs();
-      if (value <= 0) continue;
-      var label = cat.label;
-      final nextCount = (labelCounts[label] ?? 0) + 1;
-      labelCounts[label] = nextCount;
-      if (nextCount > 1) {
-        label = "$label (${nextCount})";
+      if (cat.budget > 0) {
+        budgetedLabels.add(cat.label.toLowerCase());
       }
+    }
+
+    // Combine categories with the same label
+    final combinedCategories = <String, ({double spent, double budget})>{};
+    for (final cat in report.categories) {
+      final label = cat.label;
+      final existing = combinedCategories[label];
+      if (existing != null) {
+        combinedCategories[label] = (
+          spent: existing.spent + cat.spent,
+          budget: existing.budget + cat.budget,
+        );
+      } else {
+        combinedCategories[label] = (spent: cat.spent, budget: cat.budget);
+      }
+    }
+
+    for (final entry in combinedCategories.entries) {
+      final label = entry.key;
+      final value = entry.value.spent.abs();
+      if (value <= 0) continue;
+      usedLabels.add(label.toLowerCase());
+      final hasBudget = entry.value.budget > 0;
       segments.add(
         _RingSegment(
           value: value,
           label: label,
           color: _ringPalette[colorIndex % _ringPalette.length],
+          isBudgeted: hasBudget,
         ),
       );
       budgetSpent += value;
       colorIndex++;
     }
 
+    // Instead of showing "Other spend" as one item, break it down using topCategories
     final otherSpend = math.max(report.totalSpent - budgetSpent, 0.0);
     if (otherSpend > 0) {
-      segments.add(
-        _RingSegment(
-          value: otherSpend,
-          label: 'Other spend',
-          color: Colors.blueGrey.shade400,
-        ),
-      );
+      // Combine topCategories by label first
+      final combinedTop = <String, double>{};
+      for (final top in report.topCategories) {
+        if (top.spent <= 0) continue;
+        if (usedLabels.contains(top.label.toLowerCase())) continue;
+        combinedTop[top.label] = (combinedTop[top.label] ?? 0) + top.spent.abs();
+      }
+      
+      double otherAccountedFor = 0;
+      for (final entry in combinedTop.entries) {
+        final label = entry.key;
+        final value = entry.value;
+        usedLabels.add(label.toLowerCase());
+        // Check if this label matches a budget (case-insensitive)
+        final hasBudget = budgetedLabels.contains(label.toLowerCase());
+        segments.add(
+          _RingSegment(
+            value: value,
+            label: label,
+            color: hasBudget 
+                ? _ringPalette[colorIndex % _ringPalette.length]
+                : Colors.blueGrey.shade400,
+            isBudgeted: hasBudget,
+          ),
+        );
+        if (hasBudget) colorIndex++;
+        otherAccountedFor += value;
+      }
+      
+      // If there's still unaccounted spend, show it as "Other"
+      final remaining = otherSpend - otherAccountedFor;
+      if (remaining > 0.01) {
+        segments.add(
+          _RingSegment(
+            value: remaining,
+            label: 'Other',
+            color: Colors.blueGrey.shade300,
+            isBudgeted: false,
+          ),
+        );
+      }
     }
 
     final leftover = math.max(report.totalIncome - report.totalSpent, 0.0);
@@ -269,6 +396,7 @@ class BudgetRingCard extends StatelessWidget {
           value: leftover,
           label: 'Leftover',
           color: Colors.grey.shade300,
+          isBudgeted: true, // Not shown in legend anyway
         ),
       );
     }
@@ -279,6 +407,7 @@ class BudgetRingCard extends StatelessWidget {
           value: report.totalIncome > 0 ? report.totalIncome : 1,
           label: 'No spend yet',
           color: Colors.grey.shade300,
+          isBudgeted: true,
         ),
       );
     }
@@ -347,11 +476,13 @@ class _RingSegment {
   final double value;
   final String label;
   final Color color;
+  final bool isBudgeted;
 
   const _RingSegment({
     required this.value,
     required this.label,
     required this.color,
+    this.isBudgeted = true,
   });
 }
 
@@ -438,6 +569,197 @@ class _StatRow extends StatelessWidget {
               fontWeight: FontWeight.w600,
               color: valueColor ?? Colors.black87,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Expandable card comparing budget spend vs weekly average.
+/// 
+/// If [forWeekStart] is provided, shows comparisons for that specific week.
+/// Otherwise shows current week (week-to-date).
+class BudgetComparisonCard extends StatefulWidget {
+  final DateTime? forWeekStart;
+  
+  const BudgetComparisonCard({super.key, this.forWeekStart});
+
+  @override
+  State<BudgetComparisonCard> createState() => _BudgetComparisonCardState();
+}
+
+class _BudgetComparisonCardState extends State<BudgetComparisonCard> {
+  bool _isExpanded = false;
+  CategoryEmojiHelper? _emojiHelper;
+  Future<List<BudgetSpendComparison>>? _comparisonsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    CategoryEmojiHelper.ensureLoaded().then((h) {
+      if (mounted) setState(() => _emojiHelper = h);
+    });
+    _loadComparisons();
+  }
+
+  @override
+  void didUpdateWidget(BudgetComparisonCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Reload if the week changed
+    if (oldWidget.forWeekStart != widget.forWeekStart) {
+      _loadComparisons();
+    }
+  }
+
+  void _loadComparisons() {
+    _comparisonsFuture = BudgetComparisonService.getComparisons(forWeekStart: widget.forWeekStart);
+  }
+
+  String _formatWeekLabel() {
+    if (widget.forWeekStart != null) {
+      final start = widget.forWeekStart!;
+      final end = start.add(const Duration(days: 6));
+      return "${start.day}/${start.month} - ${end.day}/${end.month}";
+    }
+    return "This week";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () => setState(() => _isExpanded = !_isExpanded),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "Budget vs Last Month's Average",
+                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                        ),
+                        Text(
+                          _formatWeekLabel(),
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    _isExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.grey.shade600,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_isExpanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: FutureBuilder<List<BudgetSpendComparison>>(
+                future: _comparisonsFuture,
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: CircularProgressIndicator(),
+                      ),
+                    );
+                  }
+                  final comparisons = snapshot.data!;
+                  if (comparisons.isEmpty) {
+                    return const Text("No budget data available yet.");
+                  }
+                  return Column(
+                    children: [
+                      for (final c in comparisons)
+                        _ComparisonRow(comparison: c, emojiHelper: _emojiHelper),
+                    ],
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ComparisonRow extends StatelessWidget {
+  final BudgetSpendComparison comparison;
+  final CategoryEmojiHelper? emojiHelper;
+  
+  const _ComparisonRow({required this.comparison, this.emojiHelper});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = comparison;
+    
+    // Compare average spending to budget to show if user is consistently over/under
+    Color statusColor;
+    IconData statusIcon;
+    String statusText;
+    
+    if (c.isAvgOverBudget) {
+      // Average is significantly higher than budget - consistently overspending
+      statusColor = Colors.orange;
+      statusIcon = Icons.trending_up;
+      statusText = "Over budget";
+    } else if (c.weeklyAvgSpend > c.budgetLimit) {
+      // Over budget but within tolerance - normal variance
+      statusColor = Colors.green;
+      statusIcon = Icons.check;
+      statusText = "Normal variance";
+    } else if (c.isAvgUnderBudget) {
+      // Average is significantly lower than budget - room to spare
+      statusColor = Colors.green;
+      statusIcon = Icons.trending_down;
+      statusText = "Under budget";
+    } else {
+      // Average is at or under budget within tolerance - on track
+      statusColor = Colors.teal;
+      statusIcon = Icons.check;
+      statusText = "On track";
+    }
+    
+    final emoji = emojiHelper?.emojiForName(c.label) ?? CategoryEmojiHelper.defaultEmoji;
+    
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Text(emoji, style: const TextStyle(fontSize: 20)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  c.label,
+                  style: const TextStyle(fontWeight: FontWeight.w500),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  "Avg: \$${c.weeklyAvgSpend.toStringAsFixed(0)}  •  Budget: \$${c.budgetLimit.toStringAsFixed(0)}",
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+          Icon(statusIcon, size: 14, color: statusColor),
+          const SizedBox(width: 4),
+          Text(
+            statusText,
+            style: TextStyle(fontSize: 11, color: statusColor, fontWeight: FontWeight.w500),
           ),
         ],
       ),

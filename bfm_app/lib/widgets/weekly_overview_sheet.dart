@@ -4,6 +4,7 @@ import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/transaction_model.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
+import 'package:bfm_app/repositories/weekly_report_repository.dart';
 import 'package:bfm_app/services/insights_service.dart';
 import 'package:bfm_app/services/weekly_overview_service.dart';
 import 'package:bfm_app/widgets/weekly_report_widgets.dart';
@@ -161,6 +162,11 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
                     BudgetRingCard(
                       report: _payload.report,
                       showStats: false,
+                    ),
+                    const SizedBox(height: 16),
+                    BudgetComparisonCard(
+                      key: ValueKey(_payload.weekStart),
+                      forWeekStart: _payload.weekStart,
                     ),
                     const SizedBox(height: 16),
                     _buildContributionSection(),
@@ -349,6 +355,11 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
     if (_submitting) return;
     final contributionsOk = await _applySelectedContributionsIfNeeded();
     if (!contributionsOk || !mounted) return;
+    
+    // Save the current report to persist "left to spend" for streak tracking.
+    // This ensures the streak counter gets updated whether or not contributions were made.
+    await WeeklyReportRepository.upsert(_payload.report);
+    
     final finishCallback = widget.onFinish;
     Navigator.of(context).pop();
     if (finishCallback != null) {
