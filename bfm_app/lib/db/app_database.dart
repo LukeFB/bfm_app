@@ -50,7 +50,7 @@ class AppDatabase {
     // Open the database with version and an onUpgrade callback
     return await openDatabase(
       path,
-      version: 21,
+      version: 22,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },
@@ -133,6 +133,7 @@ class AppDatabase {
     }
     if (!await hasTable('goal_progress_log')) await _createGoalProgressLog(db);
     if (!await hasTable('weekly_reports')) await _createWeeklyReports(db);
+    if (!await hasTable('accounts')) await _createAccounts(db);
 
     // Goals schema migration (name, amount, weekly_contribution, saved_amount)
     final hasGoalName = await hasCol('goals', 'name');
@@ -276,6 +277,7 @@ class AppDatabase {
     await _createTips(db);
     await _createGoalProgressLog(db);
     await _createWeeklyReports(db);
+    await _createAccounts(db);
     await _ensureIndexesAndTriggers(db);
   }
 
@@ -462,6 +464,37 @@ class AppDatabase {
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
     ''');
+  }
+
+  /// Stores connected bank accounts from Akahu for balance tracking.
+  Future<void> _createAccounts(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        akahu_id TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        balance_current REAL NOT NULL DEFAULT 0,
+        balance_available REAL,
+        balance_formatted TEXT,
+        connection_id TEXT,
+        connection_name TEXT,
+        connection_logo TEXT,
+        connection_type TEXT,
+        account_number TEXT,
+        refreshed_at TEXT,
+        synced_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    ''');
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS ux_accounts_akahu_id ON accounts(akahu_id);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_accounts_type ON accounts(type);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_accounts_connection ON accounts(connection_id);',
+    );
   }
 
   /// Tracks recurring transaction heuristics. Called from create + upgrade flows.

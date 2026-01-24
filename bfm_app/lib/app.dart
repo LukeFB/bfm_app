@@ -42,6 +42,7 @@ import 'package:bfm_app/screens/onboarding_screen.dart';
 import 'package:bfm_app/screens/budget_build_screen.dart';
 import 'package:bfm_app/screens/budget_recurring_screen.dart';
 import 'package:bfm_app/screens/enter_pin_screen.dart';
+import 'package:bfm_app/screens/savings_screen.dart';
 import 'package:bfm_app/screens/set_pin_screen.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/services/pin_store.dart';
@@ -443,6 +444,7 @@ class MyApp extends StatelessWidget {
         '/chat': (_) => const ChatScreen(),
         '/insights': (_) => const InsightsScreen(),
         '/settings': (_) => const SettingsScreen(),
+        '/savings': (_) => const SavingsScreen(),
         '/debug': (_) => const DebugScreen(), // Debug
         '/budget/build': (_) => const BudgetBuildScreen(),
         '/budget/edit': (_) => const BudgetBuildScreen(editMode: true),

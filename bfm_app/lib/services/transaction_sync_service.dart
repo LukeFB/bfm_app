@@ -16,6 +16,7 @@
 /// ---------------------------------------------------------------------------
 import 'dart:developer';
 
+import 'package:bfm_app/repositories/account_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/services/akahu_service.dart';
 import 'package:bfm_app/services/secure_credential_store.dart';
@@ -72,7 +73,7 @@ class TransactionSyncService {
       hasBackfilled ? _rollingWindow : _initialBackfillWindow,
     );
 
-    // Fetch both settled AND pending transactions in parallel for freshness
+    // Fetch transactions, pending transactions, AND accounts in parallel
     final results = await Future.wait([
       AkahuService.fetchTransactions(
         tokens.appToken,
@@ -84,10 +85,15 @@ class TransactionSyncService {
         tokens.appToken,
         tokens.userToken,
       ),
+      AkahuService.fetchAccounts(
+        tokens.appToken,
+        tokens.userToken,
+      ),
     ]);
 
     final settledPayloads = results[0];
     final pendingPayloads = results[1];
+    final accountPayloads = results[2];
 
     // Mark pending transactions so we can identify them in the UI if needed
     for (final payload in pendingPayloads) {
@@ -96,7 +102,12 @@ class TransactionSyncService {
 
     final allPayloads = [...settledPayloads, ...pendingPayloads];
 
-    log('Synced ${settledPayloads.length} settled + ${pendingPayloads.length} pending transactions');
+    log('Synced ${settledPayloads.length} settled + ${pendingPayloads.length} pending transactions, ${accountPayloads.length} accounts');
+
+    // Sync accounts (even if no transactions)
+    if (accountPayloads.isNotEmpty) {
+      await AccountRepository.upsertFromAkahu(accountPayloads);
+    }
 
     if (allPayloads.isEmpty) {
       await _markSynced(markBackfillComplete: usedBackfillWindow);

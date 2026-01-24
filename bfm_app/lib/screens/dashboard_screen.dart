@@ -597,6 +597,13 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
               ),
               Expanded(
                 child: BottomBarButton(
+                  icon: Icons.savings_outlined,
+                  label: "Savings",
+                  onTap: () => _openRoute('/savings'),
+                ),
+              ),
+              Expanded(
+                child: BottomBarButton(
                   icon: Icons.chat_bubble,
                   label: "Moni AI",
                   onTap: () => _openRoute('/chat'),

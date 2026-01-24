@@ -15,6 +15,7 @@
 /// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
+import 'package:bfm_app/repositories/account_repository.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
@@ -63,6 +64,7 @@ class BankService {
     await TransactionRepository.clearAll();
     await RecurringRepository.clearAll();
     await BudgetRepository.clearAll();
+    await AccountRepository.clearAll();
 
     // ------ Reset category usage counters (keep categories themselves) ------
     final db = await AppDatabase.instance.database;
