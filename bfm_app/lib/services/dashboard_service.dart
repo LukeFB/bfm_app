@@ -32,6 +32,7 @@ import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/repositories/alert_repository.dart';
 import 'package:bfm_app/repositories/tip_repository.dart';
+import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
 
 /// Aggregates all database work needed to populate the dashboard.
@@ -342,6 +343,141 @@ class DashboardService {
     final budgetsSum = await BudgetRepository.getTotalWeeklyBudget();
     final safeBudgets = budgetsSum.isNaN ? 0.0 : budgetsSum;
     return lastWeekIncome - safeBudgets;
+  }
+
+  /// Weekly income used for the dashboard chart.
+  static Future<double> getWeeklyIncome() async {
+    return weeklyIncomeLastWeek();
+  }
+
+  /// Total budgeted amount (sum of all budgets).
+  static Future<double> getTotalBudgeted() async {
+    return BudgetRepository.getTotalWeeklyBudget();
+  }
+
+  /// Amount spent on budgeted categories this week.
+  /// Replicates the exact calculation from insights:
+  /// Sum of spent amounts for all budget entries where weeklyLimit > 0.
+  static Future<double> getSpentOnBudgets() async {
+    final now = DateTime.now();
+    final monday = now.subtract(Duration(days: now.weekday - 1));
+    final weekEnd = now;
+
+    // Get all budgets
+    final budgets = await BudgetRepository.getAll();
+    if (budgets.isEmpty) return 0.0;
+
+    // Get spend by category
+    final spendByCategory = await TransactionRepository.sumExpensesByCategoryBetween(
+      monday,
+      weekEnd,
+    );
+
+    // Get spend by uncategorized key
+    final spendByUncategorizedKey = await TransactionRepository.sumExpensesByUncategorizedKeyBetween(
+      monday,
+      weekEnd,
+    );
+
+    // Get goal contributions
+    final goalSpendMap = await GoalRepository.weeklyContributionTotals(monday);
+
+    // Get recurring transaction descriptions for matching
+    final recurringIds = budgets
+        .map((b) => b.recurringTransactionId)
+        .whereType<int>()
+        .toSet();
+    final recurringTransactions = await RecurringRepository.getByIds(recurringIds);
+    final recurringById = <int, String>{};
+    for (final rt in recurringTransactions) {
+      if (rt.id != null && rt.description != null) {
+        recurringById[rt.id!] = rt.description!.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
+      }
+    }
+
+    // Get category names to identify "Uncategorized" category
+    final categoryIds = budgets
+        .where((b) => b.categoryId != null)
+        .map((b) => b.categoryId!)
+        .toSet();
+    final categoryNames = await CategoryRepository.getNamesByIds(categoryIds);
+
+    // Track used keys to avoid double-counting
+    final usedGroupKeys = <String>{};
+    double totalSpentOnBudgets = 0.0;
+
+    for (final budget in budgets) {
+      // Skip budgets with zero limit
+      if (budget.weeklyLimit <= 0) continue;
+
+      String? groupKey;
+      double spent = 0.0;
+
+      if (budget.categoryId != null) {
+        final catName = categoryNames[budget.categoryId];
+        final nameLower = catName?.toLowerCase() ?? '';
+        
+        // Handle "Uncategorized" category with recurring transaction
+        if (nameLower == 'uncategorized' || nameLower == 'uncategorised') {
+          if (budget.recurringTransactionId != null) {
+            final recurringKey = recurringById[budget.recurringTransactionId!];
+            if (recurringKey != null && recurringKey.isNotEmpty) {
+              groupKey = 'rec:${budget.recurringTransactionId}';
+              spent = spendByUncategorizedKey[recurringKey]?.abs() ?? 0.0;
+            }
+          }
+          // Skip non-recurring uncategorized category budgets
+        } else {
+          groupKey = 'cat:${budget.categoryId}';
+          spent = spendByCategory[budget.categoryId]?.abs() ?? 0.0;
+        }
+      } else if (budget.goalId != null) {
+        groupKey = 'goal:${budget.goalId}';
+        spent = goalSpendMap[budget.goalId!] ?? 0.0;
+      } else if (budget.recurringTransactionId != null) {
+        final recurringKey = recurringById[budget.recurringTransactionId!];
+        if (recurringKey != null && recurringKey.isNotEmpty) {
+          groupKey = 'rec:${budget.recurringTransactionId}';
+          spent = spendByUncategorizedKey[recurringKey]?.abs() ?? 0.0;
+        }
+      } else if (budget.uncategorizedKey != null && budget.uncategorizedKey!.isNotEmpty) {
+        groupKey = 'key:${budget.uncategorizedKey}';
+        spent = spendByUncategorizedKey[budget.uncategorizedKey]?.abs() ?? 0.0;
+      }
+
+      // Only count each group once (avoid double-counting if multiple budgets for same category)
+      if (groupKey != null && !usedGroupKeys.contains(groupKey)) {
+        usedGroupKeys.add(groupKey);
+        totalSpentOnBudgets += spent;
+      }
+    }
+
+    return totalSpentOnBudgets;
+  }
+
+  /// Total expenses this week (all categories).
+  static Future<double> getTotalExpensesThisWeek() async {
+    final db = await AppDatabase.instance.database;
+
+    final now = DateTime.now();
+    final monday = now.subtract(Duration(days: now.weekday - 1));
+    String fmt(DateTime d) =>
+        "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+    final start = fmt(monday);
+    final end = fmt(now);
+
+    final rows = await db.rawQuery(
+      '''
+      SELECT SUM(ABS(amount)) AS spent
+      FROM transactions
+      WHERE type='expense'
+        AND excluded = 0
+        AND date BETWEEN ? AND ?;
+      ''',
+      [start, end],
+    );
+
+    return (rows.first['spent'] as num?)?.toDouble() ?? 0.0;
   }
 
   /// Fetches the currently featured tip from the repository.

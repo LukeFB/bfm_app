@@ -30,6 +30,12 @@ class DashData {
   final List<EventModel> events;
   final BudgetStreakData budgetStreak;
 
+  // Semi-circle chart data
+  final double weeklyIncome;
+  final double totalBudgeted;
+  final double spentOnBudgets;
+  final double discretionarySpent;
+
   /// Requires every piece of dashboard data up front to keep the UI simple.
   const DashData({
     required this.leftToSpendThisWeek,
@@ -40,5 +46,9 @@ class DashData {
     required this.featuredTip,
     required this.events,
     required this.budgetStreak,
+    required this.weeklyIncome,
+    required this.totalBudgeted,
+    required this.spentOnBudgets,
+    required this.discretionarySpent,
   });
 }

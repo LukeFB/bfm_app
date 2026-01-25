@@ -35,6 +35,7 @@ import 'package:bfm_app/utils/date_utils.dart';
 import 'package:bfm_app/widgets/dashboard_card.dart';
 import 'package:bfm_app/widgets/bottom_bar_button.dart';
 import 'package:bfm_app/widgets/activity_item.dart';
+import 'package:bfm_app/widgets/semi_circle_chart.dart';
 
 import 'package:bfm_app/repositories/transaction_repository.dart';
 
@@ -111,6 +112,10 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       DashboardService.getFeaturedTip(),
       DashboardService.getUpcomingEvents(limit: 3),
       BudgetStreakService.calculateStreak(),
+      DashboardService.getWeeklyIncome(), // For semi-circle chart
+      DashboardService.getTotalBudgeted(), // For semi-circle chart
+      DashboardService.getSpentOnBudgets(), // For semi-circle chart
+      DashboardService.getTotalExpensesThisWeek(), // For semi-circle chart
     ]);
 
     final discWeeklyBudget = results[0] as double;
@@ -121,8 +126,14 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     final tip = results[5] as TipModel?;
     final events = results[6] as List<EventModel>;
     final budgetStreak = results[7] as BudgetStreakData;
+    final weeklyIncome = results[8] as double;
+    final totalBudgeted = results[9] as double;
+    final spentOnBudgets = results[10] as double;
+    final totalExpenses = results[11] as double;
 
     final leftToSpend = discWeeklyBudget - spentThisWeek;
+    // Non-budgeted spend = total expenses - spend on budgeted categories
+    final nonBudgetedSpend = (totalExpenses - spentOnBudgets).clamp(0.0, double.infinity);
 
     final data = DashData(
       leftToSpendThisWeek: leftToSpend,
@@ -133,6 +144,10 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       featuredTip: tip,
       events: events,
       budgetStreak: budgetStreak,
+      weeklyIncome: weeklyIncome,
+      totalBudgeted: totalBudgeted,
+      spentOnBudgets: spentOnBudgets,
+      discretionarySpent: nonBudgetedSpend, // Now correctly: total - spent on budgets
     );
     _scheduleWeeklyOverviewCheck();
     return data;
@@ -252,10 +267,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
             }
 
             final data = snap.data!;
-            final leftToSpendStr =
-                "\$${data.leftToSpendThisWeek.toStringAsFixed(1)}";
-            final weeklyBudgetStr =
-                "Weekly budget: \$${data.totalWeeklyBudget.toStringAsFixed(0)}";
 
             final primaryGoal = data.primaryGoal;
             final goalName =
@@ -286,38 +297,31 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                         ),
                       ],
                     ),
-                    // ---------- HEADER ----------
+                    // ---------- MOTIVATIONAL MESSAGE ----------
                     Text(
                       _headerMessage(
                         data.leftToSpendThisWeek,
                         data.totalWeeklyBudget,
                       ),
                       style: const TextStyle(
-                        fontSize: 12,
+                        fontSize: 14,
                         fontFamily: "Roboto",
                         color: Colors.black54,
                       ),
                     ),
 
-                    const SizedBox(height: 8),
-                    Text(
-                      leftToSpendStr,
-                      style: const TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        color: bfmBlue,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text("Left to spend"),
-                        Text(weeklyBudgetStr),
-                      ],
+                    const SizedBox(height: 16),
+
+                    // ---------- SEMI-CIRCLE CHART ----------
+                    SemiCircleChart(
+                      income: data.weeklyIncome,
+                      totalBudgeted: data.totalBudgeted,
+                      spentOnBudgets: data.spentOnBudgets,
+                      leftToSpend: data.totalWeeklyBudget,
+                      discretionarySpent: data.discretionarySpent,
                     ),
 
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 24),
                     // ---------- GOALS ----------
                     DashboardCard(
                       title: "Savings Goals",
