@@ -17,11 +17,12 @@
 ///   - UI summarising money health plus navigation entry points.
 ///
 /// Budget header logic:
-///   weeklyBudget = weeklyIncomeThisWeek − sum(weekly budgets)
-///   leftToSpend  = weeklyBudget − discretionarySpendThisWeek
+///   leftToSpend = income - budgeted - budgetOverspend - nonBudgetSpend
 ///
-/// Where discretionary spend = expenses this week NOT in budgeted categories
-/// (uncategorised counts as discretionary).
+/// Where:
+///   budgetOverspend = max(0, spentOnBudgets - totalBudgeted)
+///   nonBudgetSpend = expenses this week NOT in budgeted categories
+/// (uncategorised counts as non-budget spend).
 /// ---------------------------------------------------------------------------
 
 import 'package:flutter/foundation.dart';
@@ -105,8 +106,10 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       debugPrint('Content sync skipped: $err');
     }
     final results = await Future.wait([
-      DashboardService.getDiscretionaryWeeklyBudget(), // recurring income (fallback: last week)
-      DashboardService.discretionarySpendThisWeek(), // Mon to today expenses
+      DashboardService.getWeeklyIncome(), // Weekly income
+      DashboardService.getTotalBudgeted(), // Sum of all budgets
+      DashboardService.getSpentOnBudgets(), // Spent on budgeted categories
+      DashboardService.getTotalExpensesThisWeek(), // Total expenses this week
       GoalRepository.getAll(), // All goals for the goals card
       DashboardService.getAlerts(),
       TransactionRepository.getRecent(5),
@@ -115,20 +118,26 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       BudgetStreakService.calculateStreak(),
     ]);
 
-    final discWeeklyBudget = results[0] as double;
-    final spentThisWeek = results[1] as double;
-    final allGoals = results[2] as List<GoalModel>;
-    final alerts = results[3] as List<AlertModel>;
-    final recent = results[4] as List<TransactionModel>;
-    final tip = results[5] as TipModel?;
-    final events = results[6] as List<EventModel>;
-    final budgetStreak = results[7] as BudgetStreakData;
+    final weeklyIncome = results[0] as double;
+    final totalBudgeted = results[1] as double;
+    final spentOnBudgets = results[2] as double;
+    final totalExpenses = results[3] as double;
+    final allGoals = results[4] as List<GoalModel>;
+    final alerts = results[5] as List<AlertModel>;
+    final recent = results[6] as List<TransactionModel>;
+    final tip = results[7] as TipModel?;
+    final events = results[8] as List<EventModel>;
+    final budgetStreak = results[9] as BudgetStreakData;
 
-    final leftToSpend = discWeeklyBudget - spentThisWeek;
+    // Calculate left to spend: income - budgeted - budget overspend - non budget spend
+    // This matches the formula used in the budget edit/review screen
+    final budgetOverspend = (spentOnBudgets - totalBudgeted).clamp(0.0, double.infinity);
+    final nonBudgetSpend = (totalExpenses - spentOnBudgets).clamp(0.0, double.infinity);
+    final leftToSpend = weeklyIncome - totalBudgeted - budgetOverspend - nonBudgetSpend;
 
     final data = DashData(
       leftToSpendThisWeek: leftToSpend,
-      totalWeeklyBudget: discWeeklyBudget, // income - budgets
+      totalWeeklyBudget: weeklyIncome - totalBudgeted, // Discretionary budget (income - budgets)
       primaryGoal: allGoals.isNotEmpty ? allGoals.first : null,
       allGoals: allGoals,
       alerts: alerts,
@@ -136,6 +145,10 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       featuredTip: tip,
       events: events,
       budgetStreak: budgetStreak,
+      weeklyIncome: weeklyIncome,
+      totalBudgeted: totalBudgeted,
+      spentOnBudgets: spentOnBudgets,
+      discretionarySpent: nonBudgetSpend,
     );
     _scheduleWeeklyOverviewCheck();
     return data;
@@ -338,7 +351,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
                     // ---------- ALERTS AND GOALS SIDE BY SIDE ----------
                     SizedBox(
-                      height: 200,
+                      height: 160,
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [

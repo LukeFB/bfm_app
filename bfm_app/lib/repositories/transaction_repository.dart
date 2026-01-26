@@ -248,11 +248,12 @@ class TransactionRepository {
   }
 
   /// Persists a manually created transaction (usually from admin/debug tools).
+  /// When the model has an existing id, replaces that row; otherwise inserts new.
   static Future<int> insertManual(TransactionModel model) async {
     final db = await AppDatabase.instance.database;
     return await db.insert(
       'transactions',
-      model.toDbMap(),
+      model.toDbMap(includeId: true),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }

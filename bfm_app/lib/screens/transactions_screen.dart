@@ -480,7 +480,10 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
               child: const Text("Cancel"),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
               onPressed: () async {
                 await TransactionRepository.delete(id);
                 if (context.mounted) {

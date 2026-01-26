@@ -351,7 +351,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
 
   Future<List<_CategoryBudgetItem>> _fetchCategoryBudgets() async {
     final suggestions = await BudgetAnalysisService.getCategoryWeeklyBudgetSuggestions(
-      minWeekly: 10.0,
+      minWeekly: 5.0,
     );
     
     final categorySuggestions = suggestions.where((s) => 
@@ -379,7 +379,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
 
   Future<List<_UncategorizedItem>> _fetchUncategorizedBudgets() async {
     final suggestions = await BudgetAnalysisService.getCategoryWeeklyBudgetSuggestions(
-      minWeekly: 10.0,
+      minWeekly: 5.0,
     );
     
     final uncatSuggestions = suggestions.where((s) => s.isUncategorizedGroup).toList();
@@ -787,6 +787,8 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     String? helperText,
   }) async {
     final controller = TextEditingController(text: initialValue);
+    // Select all text so user can immediately type
+    controller.selection = TextSelection(baseOffset: 0, extentOffset: controller.text.length);
     final result = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
@@ -854,6 +856,8 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
   }) async {
     final nameController = TextEditingController(text: initialName);
     final amountController = TextEditingController(text: initialAmount);
+    // Select all text in name field so user can immediately type
+    nameController.selection = TextSelection(baseOffset: 0, extentOffset: nameController.text.length);
     
     final result = await showDialog<_UncatEditResult>(
       context: context,
@@ -1085,6 +1089,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () => _handleRecurringToggle(rid, !isSelected),
         onLongPress: () => _editRecurringAmount(item),
         child: Container(
           decoration: _rowDecoration(isSelected),
@@ -1140,12 +1145,6 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              Checkbox(
-                value: isSelected,
-                visualDensity: VisualDensity.compact,
-                onChanged: (v) => _handleRecurringToggle(rid, v ?? false),
-              ),
             ],
           ),
         ),
@@ -1170,6 +1169,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () => _handleCategoryToggle(catId, !isSelected),
         onLongPress: () => _editCategoryAmount(item),
         child: Container(
           decoration: _rowDecoration(isSelected),
@@ -1219,12 +1219,6 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              Checkbox(
-                value: isSelected,
-                visualDensity: VisualDensity.compact,
-                onChanged: (v) => _handleCategoryToggle(catId, v ?? false),
-              ),
             ],
           ),
         ),
@@ -1248,6 +1242,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () => _handleUncatToggle(key, !isSelected),
         onLongPress: () => _editUncatItem(item),
         child: Container(
           decoration: _rowDecoration(isSelected),
@@ -1301,12 +1296,6 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                       ),
                   ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              Checkbox(
-                value: isSelected,
-                visualDensity: VisualDensity.compact,
-                onChanged: (v) => _handleUncatToggle(key, v ?? false),
               ),
             ],
           ),

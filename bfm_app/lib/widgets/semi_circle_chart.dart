@@ -120,9 +120,26 @@ class SemiCircleChart extends StatelessWidget {
     required bool isOverspentDiscretionary,
   }) {
     // Calculate amounts
-    final budgetOverspendAmount = (spentOnBudgets - totalBudgeted).clamp(0.0, double.infinity);
     final leftOnBudgets = (totalBudgeted - spentOnBudgets).clamp(0.0, double.infinity);
-    final discretionaryOverspendAmount = (discretionarySpent - leftToSpend).clamp(0.0, double.infinity);
+    final budgetOverspend = (spentOnBudgets - totalBudgeted).clamp(0.0, double.infinity);
+    // Left to spend is reduced by budget overspend (can go negative)
+    final effectiveLimit = leftToSpend - budgetOverspend;
+    final actualLeftToSpend = effectiveLimit - discretionarySpent; // Can be negative
+    // Budget overspend consumed all weekly limit
+    final noWeeklyLimitLeft = effectiveLimit <= 0;
+    // Discretionary overspend (spending beyond what's left after budget overspend)
+    final discretionaryOverspend = (discretionarySpent - effectiveLimit.clamp(0.0, double.infinity)).clamp(0.0, double.infinity);
+
+    // Determine scenario
+    // Scenario 1: Budget OK AND Non-budget OK
+    // Scenario 2: Budget overspent AND still has effective left to spend AND non-budget OK
+    // Scenario 3: Budget overspent AND (no effective left OR non-budget overspent)
+    // Scenario 4: Budget OK AND Non-budget overspent
+    
+    final isScenario1 = !isOverspentOnBudgets && !isOverspentDiscretionary;
+    final isScenario2 = isOverspentOnBudgets && !noWeeklyLimitLeft && !isOverspentDiscretionary;
+    final isScenario3 = isOverspentOnBudgets && (noWeeklyLimitLeft || isOverspentDiscretionary);
+    final isScenario4 = !isOverspentOnBudgets && isOverspentDiscretionary;
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -132,46 +149,171 @@ class SemiCircleChart extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Budget section - spent/overspent
-              _LegendItem(
-                color: isOverspentOnBudgets ? redOverspent : orangeBright,
-                label: isOverspentOnBudgets ? 'Overspent' : 'Budget spent',
-                value: isOverspentOnBudgets
-                    ? '\$${budgetOverspendAmount.toStringAsFixed(0)}'
-                    : '\$${spentOnBudgets.toStringAsFixed(0)}',
-                isFilled: true,
-              ),
-              const SizedBox(height: 4),
-              // Budget section - left/budgeted (orange filled when overspent)
-              _LegendItem(
-                color: orangeBright,
-                outlineColor: orangeLight,
-                label: isOverspentOnBudgets ? 'Budgeted' : 'Left',
-                value: isOverspentOnBudgets
-                    ? '\$${totalBudgeted.toStringAsFixed(0)}'
-                    : '\$${leftOnBudgets.toStringAsFixed(0)}',
-                isFilled: isOverspentOnBudgets, // Orange filled when overspent
-              ),
+              // === BUDGET SECTION ===
+              if (isScenario1 || isScenario4) ...[
+                // Scenario 1 & 4: Budget OK
+                // (Orange) Budget spent
+                _LegendItem(
+                  color: orangeBright,
+                  label: 'Budget Spent',
+                  value: '\$${spentOnBudgets.toStringAsFixed(0)}',
+                  isFilled: true,
+                ),
+                const SizedBox(height: 4),
+                // (Light Orange) budget left
+                _LegendItem(
+                  color: orangeBright,
+                  outlineColor: orangeLight,
+                  label: 'budget left',
+                  value: '\$${leftOnBudgets.toStringAsFixed(0)}',
+                  isFilled: false,
+                ),
+                const SizedBox(height: 4),
+                // Budget: (no color)
+                _LegendItem(
+                  color: orangeBright,
+                  label: 'Budget',
+                  value: '\$${totalBudgeted.toStringAsFixed(0)}',
+                  isFilled: true,
+                  showIndicator: false,
+                ),
+              ] else ...[
+                // Scenario 2 & 3: Budget overspent
+                // Budget spent: (no color)
+                _LegendItem(
+                  color: orangeBright,
+                  label: 'Budget Spent',
+                  value: '\$${spentOnBudgets.toStringAsFixed(0)}',
+                  isFilled: true,
+                  showIndicator: false,
+                ),
+                const SizedBox(height: 4),
+                // (Orange) Budgeted
+                _LegendItem(
+                  color: orangeBright,
+                  label: 'Budgeted',
+                  value: '\$${totalBudgeted.toStringAsFixed(0)}',
+                  isFilled: true,
+                ),
+                const SizedBox(height: 4),
+                // (Red) Budget overspend
+                _LegendItem(
+                  color: redOverspent,
+                  label: 'Budget overspend',
+                  value: '\$${budgetOverspend.toStringAsFixed(0)}',
+                  isFilled: true,
+                ),
+              ],
               const SizedBox(height: 8),
-            // Non-budget section - show "Spent" normally, "Spending" only when overspent
-            _LegendItem(
-              color: blueBright,
-              label: isOverspentDiscretionary ? 'Spending' : 'Spent',
-              value: isOverspentDiscretionary
-                  ? '\$${leftToSpend.toStringAsFixed(0)}'
-                  : '\$${discretionarySpent.toStringAsFixed(0)}',
-              isFilled: true,
-            ),
-            // Show overspent in red if overspent on non-budget
-            if (isOverspentDiscretionary) ...[
-              const SizedBox(height: 4),
+              
+              // === DISCRETIONARY SECTION ===
+              if (isScenario1) ...[
+                // Scenario 1: Budget OK, Non-budget OK
+                // (Blue) non-budget spent
+                _LegendItem(
+                  color: blueBright,
+                  label: 'non-budget spent',
+                  value: '\$${discretionarySpent.toStringAsFixed(0)}',
+                  isFilled: true,
+                ),
+                const SizedBox(height: 4),
+                // (Light blue) left to spend
+                _LegendItem(
+                  color: blueBright,
+                  outlineColor: blueLight,
+                  label: 'left to spend',
+                  value: '\$${actualLeftToSpend.clamp(0.0, double.infinity).toStringAsFixed(0)}',
+                  isFilled: false,
+                ),
+                const SizedBox(height: 4),
+                // Weekly limit: (no color)
+                _LegendItem(
+                  color: blueBright,
+                  label: 'Weekly limit',
+                  value: '\$${leftToSpend.toStringAsFixed(0)}',
+                  isFilled: true,
+                  showIndicator: false,
+                ),
+              ] else if (isScenario2) ...[
+                // Scenario 2: Budget overspent, still left to spend from weekly limit
+                // (light blue) Left to spend
+                _LegendItem(
+                  color: blueBright,
+                  outlineColor: blueLight,
+                  label: 'Left to spend',
+                  value: '\$${actualLeftToSpend.clamp(0.0, double.infinity).toStringAsFixed(0)}',
+                  isFilled: false,
+                ),
+                const SizedBox(height: 4),
+                // (Blue) Non-budget spent
+                _LegendItem(
+                  color: blueBright,
+                  label: 'Non-budget spent',
+                  value: '\$${discretionarySpent.toStringAsFixed(0)}',
+                  isFilled: true,
+                ),
+                const SizedBox(height: 4),
+                // Weekly limit: (no color)
+                _LegendItem(
+                  color: blueBright,
+                  label: 'Weekly limit',
+                  value: '\$${leftToSpend.toStringAsFixed(0)}',
+                  isFilled: true,
+                  showIndicator: false,
+                ),
+              ] else if (isScenario3) ...[
+                // Scenario 3: Budget overspent AND (no effective left OR non-budget overspent)
+                // (Blue) Weekly limit
+                _LegendItem(
+                  color: blueBright,
+                  label: 'Weekly limit',
+                  value: '\$${effectiveLimit.clamp(0.0, double.infinity).toStringAsFixed(0)}',
+                  isFilled: true,
+                ),
+                const SizedBox(height: 4),
+                // (Red) non-budget Overspend
+                _LegendItem(
+                  color: redOverspent,
+                  label: 'non-budget Overspend',
+                  value: '\$${(discretionaryOverspend > 0 ? discretionaryOverspend : discretionarySpent).toStringAsFixed(0)}',
+                  isFilled: true,
+                ),
+              ] else if (isScenario4) ...[
+                // Scenario 4: Budget OK, Non-budget overspent
+                // non-budget spent: (no color)
+                _LegendItem(
+                  color: blueBright,
+                  label: 'non-budget spent',
+                  value: '\$${discretionarySpent.toStringAsFixed(0)}',
+                  isFilled: true,
+                  showIndicator: false,
+                ),
+                const SizedBox(height: 4),
+                // (Blue) weekly limit
+                _LegendItem(
+                  color: blueBright,
+                  label: 'weekly limit',
+                  value: '\$${leftToSpend.toStringAsFixed(0)}',
+                  isFilled: true,
+                ),
+                const SizedBox(height: 4),
+                // (Red) non-budget overspend
+                _LegendItem(
+                  color: redOverspent,
+                  label: 'non-budget overspend',
+                  value: '\$${discretionaryOverspend.toStringAsFixed(0)}',
+                  isFilled: true,
+                ),
+              ],
+              const SizedBox(height: 8),
+              // Income: (no color)
               _LegendItem(
-                color: redOverspent,
-                label: 'Overspent',
-                value: '\$${discretionaryOverspendAmount.toStringAsFixed(0)}',
+                color: Colors.grey,
+                label: 'Income',
+                value: '\$${income.toStringAsFixed(0)}',
                 isFilled: true,
+                showIndicator: false,
               ),
-            ],
               // Streak display (only show when > 1)
               if (streakWeeks > 1) ...[
                 const SizedBox(height: 12),
@@ -333,6 +475,7 @@ class _LegendItem extends StatelessWidget {
   final String label;
   final String value;
   final bool isFilled;
+  final bool showIndicator;
 
   const _LegendItem({
     required this.color,
@@ -340,36 +483,50 @@ class _LegendItem extends StatelessWidget {
     required this.label,
     required this.value,
     required this.isFilled,
+    this.showIndicator = true,
   });
 
   @override
   Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: 12,
-          height: 12,
-          decoration: BoxDecoration(
-            color: isFilled ? color : (outlineColor ?? Colors.transparent),
-            border: isFilled ? null : Border.all(color: color, width: 1.5),
-            shape: BoxShape.circle,
-          ),
-        ),
+        if (showIndicator)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: isFilled ? color : (outlineColor ?? Colors.transparent),
+                border: isFilled ? null : Border.all(color: color, width: 1.5),
+                shape: BoxShape.circle,
+              ),
+            ),
+          )
+        else
+          const SizedBox(width: 12),
         const SizedBox(width: 8),
-        Text(
-          '$label: ',
-          style: const TextStyle(
-            fontSize: 11,
-            color: Colors.black54,
-          ),
-        ),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-            color: isFilled ? color : Colors.black87,
+        Flexible(
+          child: Wrap(
+            children: [
+              Text(
+                '$label: ',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Colors.black54,
+                ),
+              ),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: showIndicator ? (isFilled ? color : Colors.black87) : Colors.black87,
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -403,174 +560,194 @@ class _SemiCircleChartPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     const strokeWidth = 24.0;
-    // Position center much lower in the widget
     final topPadding = strokeWidth / 2 + 140;
     final radius = math.min(size.width / 2 - 16, size.height - 20);
     final center = Offset(size.width / 2, topPadding);
-    const gapAngle = 0.06;
+    const gapAngle = 0.04; // Small gap between sections
 
     const totalAngle = math.pi;
+    const startAngle = math.pi; // Start from left side of semi-circle
 
     if (income <= 0) {
       _drawEmptyTrack(canvas, center, radius, strokeWidth);
       return;
     }
 
-    // Calculate overspent amounts
-    final isOverspentBudget = spentOnBudgets > totalBudgeted;
-    final isOverspentDiscretionary = discretionarySpent > leftToSpend;
-    final budgetOverspend = isOverspentBudget ? spentOnBudgets - totalBudgeted : 0.0;
-    final discretionaryOverspend = isOverspentDiscretionary ? discretionarySpent - leftToSpend : 0.0;
-
-    // Calculate base angles (without overspend)
-    final budgetedProportion = (totalBudgeted / income).clamp(0.0, 1.0);
-    final leftToSpendProportion = (leftToSpend / income).clamp(0.0, 1.0);
-    final budgetOverspendProportion = (budgetOverspend / income).clamp(0.0, 1.0);
-    final discretionaryOverspendProportion = (discretionaryOverspend / income).clamp(0.0, 1.0);
-
-    final budgetedAngle = totalAngle * budgetedProportion;
-    final leftToSpendAngle = totalAngle * leftToSpendProportion;
-    final budgetOverspendAngle = totalAngle * budgetOverspendProportion;
-    final discretionaryOverspendAngle = totalAngle * discretionaryOverspendProportion;
-
     _drawEmptyTrack(canvas, center, radius, strokeWidth);
 
-    double currentAngle = math.pi;
-    final adjustedBudgetAngle = budgetedAngle - (leftToSpendAngle > 0 ? gapAngle / 2 : 0);
-    final blueStartAngle = math.pi + budgetedAngle + gapAngle;
-    final adjustedLeftAngle = leftToSpendAngle - (budgetedAngle > 0 ? gapAngle / 2 : 0);
+    // Calculate key values
+    final isOverspentBudget = spentOnBudgets > totalBudgeted;
+    final budgetOverspend = isOverspentBudget ? spentOnBudgets - totalBudgeted : 0.0;
+    final effectiveLeftToSpend = (leftToSpend - budgetOverspend).clamp(0.0, double.infinity);
+    final noWeeklyLimitLeft = effectiveLeftToSpend <= 0;
+    final isOverspentDiscretionary = discretionarySpent > effectiveLeftToSpend;
+    final discretionaryOverspend = isOverspentDiscretionary ? discretionarySpent - effectiveLeftToSpend : 0.0;
+    
+    // Determine scenario
+    // Scenario 1: Budget OK AND Non-budget OK
+    // Scenario 2: Budget overspent AND still has effective left AND non-budget OK
+    // Scenario 3: Budget overspent AND (no effective left OR non-budget overspent)
+    // Scenario 4: Budget OK AND Non-budget overspent
+    final isScenario1 = !isOverspentBudget && !isOverspentDiscretionary;
+    final isScenario2 = isOverspentBudget && !noWeeklyLimitLeft && !isOverspentDiscretionary;
+    final isScenario3 = isOverspentBudget && (noWeeklyLimitLeft || isOverspentDiscretionary);
+    final isScenario4 = !isOverspentBudget && isOverspentDiscretionary;
 
-    // 1. Draw BLUE section outline FIRST (will be under orange)
-    if (adjustedLeftAngle > 0) {
-      final outlinePaint = Paint()
-        ..color = _blueLight
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth
-        ..strokeCap = StrokeCap.round;
-
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius),
-        blueStartAngle,
-        adjustedLeftAngle,
-        false,
-        outlinePaint,
-      );
-    }
-
-    // 2. Draw BLUE fill
-    if (leftToSpend > 0 && discretionarySpent > 0) {
-      final fillPaint = Paint()
-        ..color = _blueBright
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth - 4
-        ..strokeCap = StrokeCap.round;
-
-      // Fill up to spent amount (capped at left-to-spend angle)
-      final fillRatio = (discretionarySpent / leftToSpend).clamp(0.0, 1.0);
-      final blueFillAngle = isOverspentDiscretionary
-          ? adjustedLeftAngle
-          : adjustedLeftAngle * fillRatio;
-
-      if (blueFillAngle > 0) {
-        canvas.drawArc(
-          Rect.fromCircle(center: center, radius: radius),
-          blueStartAngle,
-          blueFillAngle,
-          false,
-          fillPaint,
-        );
-      }
-    }
-
-    // 3. Draw ORANGE section outline (overlaps blue)
-    if (adjustedBudgetAngle > 0) {
-      final outlinePaint = Paint()
-        ..color = _orangeLight
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth
-        ..strokeCap = StrokeCap.round;
-
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius),
-        currentAngle,
-        adjustedBudgetAngle,
-        false,
-        outlinePaint,
-      );
-    }
-
-    // 4. Draw ORANGE fill
-    if (totalBudgeted > 0 && spentOnBudgets > 0) {
-      final fillPaint = Paint()
-        ..color = _orangeBright
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth - 4
-        ..strokeCap = StrokeCap.round;
-
-      // Fill up to spent amount (capped at budgeted angle)
-      final fillRatio = (spentOnBudgets / totalBudgeted).clamp(0.0, 1.0);
-      final orangeFillAngle = isOverspentBudget 
-          ? adjustedBudgetAngle 
-          : adjustedBudgetAngle * fillRatio;
-
-      if (orangeFillAngle > 0) {
-        canvas.drawArc(
-          Rect.fromCircle(center: center, radius: radius),
-          currentAngle,
-          orangeFillAngle,
-          false,
-          fillPaint,
-        );
-      }
-    }
-
-    // 5. Draw RED overspend LAST (so it overlaps everything)
-    // Budget overspend - starts at end of budget section, overlaps into blue
-    if (isOverspentBudget && budgetOverspendAngle > 0) {
-      final redPaint = Paint()
-        ..color = _redOverspent
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth - 4
-        ..strokeCap = StrokeCap.round;
-
-      final redStartAngle = currentAngle + adjustedBudgetAngle;
-      final maxBudgetOverspend = math.max(0.0, totalAngle - (redStartAngle - math.pi));
-      final clampedBudgetOverspend = budgetOverspendAngle.clamp(0.0, maxBudgetOverspend);
+    if (isScenario1) {
+      // ===== SCENARIO 1: Budget OK, Non-budget OK - use income as base =====
+      final budgetAngle = totalAngle * (totalBudgeted / income).clamp(0.0, 1.0);
+      final leftToSpendAngle = totalAngle * (leftToSpend / income).clamp(0.0, 1.0);
       
-      if (clampedBudgetOverspend > 0) {
-        canvas.drawArc(
-          Rect.fromCircle(center: center, radius: radius),
-          redStartAngle,
-          clampedBudgetOverspend,
-          false,
-          redPaint,
-        );
-      }
-    }
-
-    // Discretionary overspend - draw red at the end of blue section, overlapping it
-    if (isOverspentDiscretionary && discretionaryOverspendAngle > 0) {
-      final redPaint = Paint()
-        ..color = _redOverspent
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth - 4
-        ..strokeCap = StrokeCap.round;
-
-      // Red overlaps the end of the blue section
-      // Start the red bar earlier so it's visible at the end of the chart
-      final redSweep = discretionaryOverspendAngle.clamp(0.0, adjustedLeftAngle);
-      final redStartAngle = blueStartAngle + adjustedLeftAngle - redSweep;
+      var currentPos = startAngle;
       
-      if (redSweep > 0) {
-        canvas.drawArc(
-          Rect.fromCircle(center: center, radius: radius),
-          redStartAngle,
-          redSweep,
-          false,
-          redPaint,
-        );
+      // Orange outline (budget) with orange fill based on spent
+      if (budgetAngle > 0.01) {
+        _drawArc(canvas, center, radius, currentPos, budgetAngle - gapAngle/2, _orangeLight, strokeWidth);
+        if (spentOnBudgets > 0) {
+          final fillRatio = (spentOnBudgets / totalBudgeted).clamp(0.0, 1.0);
+          _drawArc(canvas, center, radius, currentPos, (budgetAngle - gapAngle/2) * fillRatio, _orangeBright, strokeWidth - 4);
+        }
+        currentPos += budgetAngle + gapAngle/2;
+      }
+      
+      // Blue outline (weekly limit) with blue fill based on non-budget spent
+      if (leftToSpendAngle > 0.01) {
+        _drawArc(canvas, center, radius, currentPos, leftToSpendAngle - gapAngle/2, _blueLight, strokeWidth);
+        if (discretionarySpent > 0) {
+          final fillRatio = (discretionarySpent / leftToSpend).clamp(0.0, 1.0);
+          _drawArc(canvas, center, radius, currentPos, (leftToSpendAngle - gapAngle/2) * fillRatio, _blueBright, strokeWidth - 4);
+        }
+      }
+      
+    } else if (isScenario2) {
+      // ===== SCENARIO 2: Budget overspent, Non-budget OK =====
+      // Use total for proportions: budget + budget overspend + effective limit
+      final totalBase = totalBudgeted + budgetOverspend + effectiveLeftToSpend;
+      if (totalBase <= 0) return;
+      
+      final budgetAngle = totalAngle * (totalBudgeted / totalBase);
+      final budgetOverspendAngle = totalAngle * (budgetOverspend / totalBase);
+      final effectiveLimitAngle = totalAngle * (effectiveLeftToSpend / totalBase);
+      
+      var currentPos = startAngle;
+      
+      // Orange filled (100% since overspent)
+      if (budgetAngle > 0.01) {
+        _drawArc(canvas, center, radius, currentPos, budgetAngle, _orangeLight, strokeWidth);
+        _drawArc(canvas, center, radius, currentPos, budgetAngle, _orangeBright, strokeWidth - 4);
+        currentPos += budgetAngle;
+      }
+      
+      // Red (budget overspend)
+      if (budgetOverspendAngle > 0.01) {
+        _drawArc(canvas, center, radius, currentPos, budgetOverspendAngle, _redOverspent, strokeWidth - 4);
+        currentPos += budgetOverspendAngle;
+      }
+      
+      // Blue outline with fill based on non-budget spent
+      if (effectiveLimitAngle > 0.01) {
+        currentPos += gapAngle;
+        _drawArc(canvas, center, radius, currentPos, effectiveLimitAngle, _blueLight, strokeWidth);
+        if (discretionarySpent > 0) {
+          final fillRatio = (discretionarySpent / effectiveLeftToSpend).clamp(0.0, 1.0);
+          _drawArc(canvas, center, radius, currentPos, effectiveLimitAngle * fillRatio, _blueBright, strokeWidth - 4);
+        }
+      }
+      
+    } else if (isScenario3) {
+      // ===== SCENARIO 3: Budget overspent AND (no effective left OR non-budget overspent) =====
+      // Show: budget (orange), budget overspend (red), weekly limit (blue), non-budget overspend (red)
+      // Use effective limit when it exists, otherwise use original weekly limit
+      final weeklyLimitForChart = effectiveLeftToSpend > 0 ? effectiveLeftToSpend : leftToSpend;
+      final nonBudgetOverspendForChart = discretionaryOverspend > 0 ? discretionaryOverspend : discretionarySpent;
+      
+      final totalBase = totalBudgeted + budgetOverspend + weeklyLimitForChart + nonBudgetOverspendForChart;
+      if (totalBase <= 0) return;
+      
+      final budgetAngle = totalAngle * (totalBudgeted / totalBase);
+      final budgetOverspendAngle = totalAngle * (budgetOverspend / totalBase);
+      final weeklyLimitAngle = totalAngle * (weeklyLimitForChart / totalBase);
+      final nonBudgetOverspendAngle = totalAngle * (nonBudgetOverspendForChart / totalBase);
+      
+      var currentPos = startAngle;
+      
+      // Orange filled (100% since overspent)
+      if (budgetAngle > 0.01) {
+        _drawArc(canvas, center, radius, currentPos, budgetAngle, _orangeLight, strokeWidth);
+        _drawArc(canvas, center, radius, currentPos, budgetAngle, _orangeBright, strokeWidth - 4);
+        currentPos += budgetAngle;
+      }
+      
+      // Red (budget overspend)
+      if (budgetOverspendAngle > 0.01) {
+        _drawArc(canvas, center, radius, currentPos, budgetOverspendAngle, _redOverspent, strokeWidth - 4);
+        currentPos += budgetOverspendAngle;
+      }
+      
+      // Blue (weekly limit - effective or original based on what's available)
+      if (weeklyLimitAngle > 0.01) {
+        currentPos += gapAngle;
+        _drawArc(canvas, center, radius, currentPos, weeklyLimitAngle, _blueLight, strokeWidth);
+        _drawArc(canvas, center, radius, currentPos, weeklyLimitAngle, _blueBright, strokeWidth - 4);
+        currentPos += weeklyLimitAngle;
+      }
+      
+      // Red (non-budget overspend)
+      if (nonBudgetOverspendAngle > 0.01) {
+        _drawArc(canvas, center, radius, currentPos, nonBudgetOverspendAngle, _redOverspent, strokeWidth - 4);
+      }
+      
+    } else if (isScenario4) {
+      // ===== SCENARIO 4: Budget OK, Non-budget overspent =====
+      // Use total for proportions: budget + weekly limit + non-budget overspend
+      final totalBase = totalBudgeted + leftToSpend + discretionaryOverspend;
+      if (totalBase <= 0) return;
+      
+      final budgetAngle = totalAngle * (totalBudgeted / totalBase);
+      final weeklyLimitAngle = totalAngle * (leftToSpend / totalBase);
+      final overspendAngle = totalAngle * (discretionaryOverspend / totalBase);
+      
+      var currentPos = startAngle;
+      
+      // Orange outline with fill based on spent
+      if (budgetAngle > 0.01) {
+        _drawArc(canvas, center, radius, currentPos, budgetAngle - gapAngle/2, _orangeLight, strokeWidth);
+        if (spentOnBudgets > 0) {
+          final fillRatio = (spentOnBudgets / totalBudgeted).clamp(0.0, 1.0);
+          _drawArc(canvas, center, radius, currentPos, (budgetAngle - gapAngle/2) * fillRatio, _orangeBright, strokeWidth - 4);
+        }
+        currentPos += budgetAngle + gapAngle/2;
+      }
+      
+      // Blue filled (100% since non-budget overspent)
+      if (weeklyLimitAngle > 0.01) {
+        _drawArc(canvas, center, radius, currentPos, weeklyLimitAngle, _blueLight, strokeWidth);
+        _drawArc(canvas, center, radius, currentPos, weeklyLimitAngle, _blueBright, strokeWidth - 4);
+        currentPos += weeklyLimitAngle;
+      }
+      
+      // Red (non-budget overspend)
+      if (overspendAngle > 0.01) {
+        _drawArc(canvas, center, radius, currentPos, overspendAngle, _redOverspent, strokeWidth - 4);
       }
     }
+  }
+  
+  void _drawArc(Canvas canvas, Offset center, double radius, double startAngle, double sweepAngle, Color color, double strokeWidth) {
+    if (sweepAngle <= 0) return;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      startAngle,
+      sweepAngle,
+      false,
+      paint,
+    );
   }
 
   void _drawEmptyTrack(
