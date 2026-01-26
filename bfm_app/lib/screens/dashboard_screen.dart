@@ -329,16 +329,16 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                       child: Column(
                         children: [
                           Text(
-                            '\$${data.leftToSpendThisWeek.abs().toStringAsFixed(0)}',
+                            '${isOverspent ? '-' : ''}\$${data.leftToSpendThisWeek.abs().toStringAsFixed(0)}',
                             style: TextStyle(
                               fontSize: 64,
                               fontWeight: FontWeight.bold,
                               color: isOverspent ? const Color(0xFFE53935) : bfmBlue,
                             ),
                           ),
-                          Text(
-                            isOverspent ? 'overspent this week' : 'left to spend this week',
-                            style: const TextStyle(
+                          const Text(
+                            'left to spend this week',
+                            style: TextStyle(
                               fontSize: 16,
                               color: Colors.black54,
                             ),
