@@ -69,17 +69,54 @@ class DashboardService {
     return goals.isEmpty ? null : goals.first;
   }
 
-  /// Upcoming recurring alerts configured by the user.
-  static Future<List<String>> getAlerts() async {
-    final recurringAlerts = await AlertRepository.getActiveRecurring();
-    final manualAlerts = (await AlertRepository.getAll())
-        .where((alert) => alert.recurringTransactionId == null && alert.isActive)
-        .toList();
-
-    final formattedRecurring = await _formatRecurringAlerts(recurringAlerts);
-    final formattedManual = _formatManualAlerts(manualAlerts);
-
-    return [...formattedManual, ...formattedRecurring];
+  /// Upcoming alerts configured by the user, sorted by days until due.
+  /// For recurring alerts, uses the recurring transaction's next_due_date.
+  static Future<List<AlertModel>> getAlerts() async {
+    final allAlerts = await AlertRepository.getAll();
+    final activeAlerts = allAlerts.where((a) => a.isActive).toList();
+    
+    // Get recurring transaction IDs to look up their due dates
+    final recurringIds = activeAlerts
+        .map((a) => a.recurringTransactionId)
+        .whereType<int>()
+        .toSet();
+    
+    // Look up recurring transactions to get their next due dates
+    Map<int, DateTime?> recurringDueDates = {};
+    Map<int, double?> recurringAmounts = {};
+    if (recurringIds.isNotEmpty) {
+      final recurringList = await RecurringRepository.getByIds(recurringIds);
+      for (final r in recurringList) {
+        if (r.id != null) {
+          recurringDueDates[r.id!] = DateTime.tryParse(r.nextDueDate);
+          recurringAmounts[r.id!] = r.amount;
+        }
+      }
+    }
+    
+    // Update alerts with due dates and amounts from recurring transactions
+    final enrichedAlerts = activeAlerts.map((alert) {
+      if (alert.recurringTransactionId != null) {
+        final recurringDueDate = recurringDueDates[alert.recurringTransactionId];
+        final recurringAmount = recurringAmounts[alert.recurringTransactionId];
+        return alert.copyWith(
+          dueDate: alert.dueDate ?? recurringDueDate,
+          amount: alert.amount ?? recurringAmount,
+        );
+      }
+      return alert;
+    }).toList();
+    
+    // Sort by due date (soonest first), nulls at end
+    enrichedAlerts.sort((a, b) {
+      // Nulls go to the end
+      if (a.dueDate == null && b.dueDate == null) return 0;
+      if (a.dueDate == null) return 1;
+      if (b.dueDate == null) return -1;
+      return a.dueDate!.compareTo(b.dueDate!);
+    });
+    
+    return enrichedAlerts;
   }
 
   // ---------------------------------------------------------------------------

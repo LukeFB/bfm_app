@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:bfm_app/models/alert_model.dart';
 import 'package:bfm_app/repositories/alert_repository.dart';
+import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
@@ -93,12 +94,44 @@ class AlertNotificationService {
   }
 
   /// Clears pending alert notifications and rebuilds the schedule for all alerts.
+  /// Enriches recurring alerts with their due dates from the recurring transaction.
   Future<void> resyncScheduledAlerts() async {
     await init();
     await _plugin.cancelAll();
+    
     final alerts = await AlertRepository.getAll();
-    for (final alert in alerts) {
-      await schedule(alert);
+    final activeAlerts = alerts.where((a) => a.isActive).toList();
+    
+    // Get recurring transaction IDs to look up their due dates
+    final recurringIds = activeAlerts
+        .map((a) => a.recurringTransactionId)
+        .whereType<int>()
+        .toSet();
+    
+    // Look up recurring transactions to get their next due dates
+    Map<int, DateTime?> recurringDueDates = {};
+    if (recurringIds.isNotEmpty) {
+      final recurringList = await RecurringRepository.getByIds(recurringIds);
+      for (final r in recurringList) {
+        if (r.id != null) {
+          recurringDueDates[r.id!] = DateTime.tryParse(r.nextDueDate);
+        }
+      }
+    }
+    
+    // Schedule notifications for all active alerts
+    for (final alert in activeAlerts) {
+      AlertModel enrichedAlert = alert;
+      
+      // Enrich recurring alerts with due date from recurring transaction
+      if (alert.recurringTransactionId != null && alert.dueDate == null) {
+        final recurringDueDate = recurringDueDates[alert.recurringTransactionId];
+        if (recurringDueDate != null) {
+          enrichedAlert = alert.copyWith(dueDate: recurringDueDate);
+        }
+      }
+      
+      await schedule(enrichedAlert);
     }
   }
 

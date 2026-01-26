@@ -47,7 +47,13 @@ class AlertRepository {
 
   static Future<List<AlertModel>> getAll() async {
     final db = await AppDatabase.instance.database;
-    final rows = await db.query('alerts');
+    // Sort by due_date ascending, with nulls at the end
+    final rows = await db.rawQuery('''
+      SELECT * FROM alerts
+      ORDER BY 
+        CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,
+        due_date ASC
+    ''');
     return rows.map(AlertModel.fromMap).toList();
   }
 

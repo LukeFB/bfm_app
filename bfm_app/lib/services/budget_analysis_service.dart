@@ -68,21 +68,20 @@ class BudgetAnalysisService {
   /// Builds weekly budget suggestions for normal categories plus grouped
   /// uncategorized descriptions. Normalises spend to actual available weeks and
   /// boosts recurring categories even if they spend below `minWeekly`.
+  /// 
+  /// Uses rolling 30-day window ending today to capture recent spending changes.
   static Future<List<BudgetSuggestionModel>> getCategoryWeeklyBudgetSuggestions({
     double minWeekly = 5.0,
   }) async {
     final db = await AppDatabase.instance.database;
 
-    // normalize to $/week
+    // Use rolling 30-day window ending today for more responsive detection
     final today = DateTime.now();
-    final firstOfThisMonth = DateTime(today.year, today.month, 1);
-    final prevMonthStart =
-        DateTime(firstOfThisMonth.year, firstOfThisMonth.month - 1, 1);
-    final prevMonthEnd = firstOfThisMonth.subtract(const Duration(days: 1));
-    final start = _formatDate(prevMonthStart);
-    final end = _formatDate(prevMonthEnd);
-    final weeks = ((prevMonthEnd.difference(prevMonthStart).inDays + 1) / 7)
-        .clamp(1, double.infinity) as double;
+    final windowEnd = DateTime(today.year, today.month, today.day);
+    final windowStart = windowEnd.subtract(const Duration(days: 30));
+    final start = _formatDate(windowStart);
+    final end = _formatDate(windowEnd);
+    final weeks = (30 / 7).clamp(1, double.infinity) as double; // ~4.29 weeks
 
     // Recurring categories
     final recurring = await RecurringRepository.getAll();

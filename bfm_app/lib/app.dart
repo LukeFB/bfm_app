@@ -41,6 +41,7 @@ import 'package:bfm_app/screens/onboarding_screen.dart';
 
 import 'package:bfm_app/screens/budget_build_screen.dart';
 import 'package:bfm_app/screens/budget_recurring_screen.dart';
+import 'package:bfm_app/screens/budgets_screen.dart';
 import 'package:bfm_app/screens/enter_pin_screen.dart';
 import 'package:bfm_app/screens/savings_screen.dart';
 import 'package:bfm_app/screens/set_pin_screen.dart';
@@ -115,6 +116,9 @@ class _LockGateState extends State<LockGate> {
     // if (supported) {
     //   await _handleDeviceAuth(autoTriggered: true);
     // }
+
+    // TODO: Remove this bypass - skipping PIN for testing
+    await _routeAfterAuth();
   }
 
   /*
@@ -446,6 +450,7 @@ class MyApp extends StatelessWidget {
         '/settings': (_) => const SettingsScreen(),
         '/savings': (_) => const SavingsScreen(),
         '/debug': (_) => const DebugScreen(), // Debug
+        '/budgets': (_) => const BudgetsScreen(),
         '/budget/build': (_) => const BudgetBuildScreen(),
         '/budget/edit': (_) => const BudgetBuildScreen(editMode: true),
         '/alerts/manage': (_) => const BudgetRecurringScreen(),

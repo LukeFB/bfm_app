@@ -12,6 +12,7 @@
 
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:bfm_app/models/alert_model.dart';
 
 /// Semi-circle chart displaying income breakdown with budget tracking.
 class SemiCircleChart extends StatelessWidget {
@@ -20,6 +21,9 @@ class SemiCircleChart extends StatelessWidget {
   final double spentOnBudgets;
   final double leftToSpend;
   final double discretionarySpent;
+  final List<AlertModel> alerts;
+  final VoidCallback? onAlertsPressed;
+  final int streakWeeks;
 
   // Colors - brighter orange
   static const Color orangeBright = Color(0xFFFF7A00);
@@ -35,6 +39,9 @@ class SemiCircleChart extends StatelessWidget {
     required this.spentOnBudgets,
     required this.leftToSpend,
     required this.discretionarySpent,
+    this.alerts = const [],
+    this.onAlertsPressed,
+    this.streakWeeks = 0,
   });
 
   @override
@@ -43,36 +50,64 @@ class SemiCircleChart extends StatelessWidget {
     final isOverspentOnBudgets = spentOnBudgets > totalBudgeted;
     final isOverspentDiscretionary = discretionarySpent > leftToSpend;
 
-    // Calculate remaining amounts
-    final leftOnBudgets = (totalBudgeted - spentOnBudgets).clamp(0.0, double.infinity);
-    final leftToSpendRemaining = (leftToSpend - discretionarySpent).clamp(0.0, double.infinity);
+    // Total left to spend (can be negative if overspent)
+    final totalLeftToSpend = income - spentOnBudgets - discretionarySpent;
+    final isOverspentTotal = totalLeftToSpend < 0;
 
     return Card(
       elevation: 0,
       color: Colors.transparent,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Column(
           children: [
             SizedBox(
               height: 180,
-              child: CustomPaint(
-                size: const Size(double.infinity, 180),
-                painter: _SemiCircleChartPainter(
-                  income: income,
-                  totalBudgeted: totalBudgeted,
-                  spentOnBudgets: spentOnBudgets,
-                  leftToSpend: leftToSpend,
-                  discretionarySpent: discretionarySpent,
-                ),
+              child: Stack(
+                children: [
+                  CustomPaint(
+                    size: const Size(double.infinity, 180),
+                    painter: _SemiCircleChartPainter(
+                      income: income,
+                      totalBudgeted: totalBudgeted,
+                      spentOnBudgets: spentOnBudgets,
+                      leftToSpend: leftToSpend,
+                      discretionarySpent: discretionarySpent,
+                    ),
+                  ),
+                  // Center text showing left to spend
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 8,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '\$${totalLeftToSpend.abs().toStringAsFixed(0)}',
+                          style: TextStyle(
+                            fontSize: 32,
+                            fontWeight: FontWeight.bold,
+                            color: isOverspentTotal ? redOverspent : Colors.black87,
+                          ),
+                        ),
+                        Text(
+                          isOverspentTotal ? 'overspent' : 'left to spend',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             _buildLegend(
               isOverspentOnBudgets: isOverspentOnBudgets,
               isOverspentDiscretionary: isOverspentDiscretionary,
-              leftOnBudgets: leftOnBudgets,
-              leftToSpendRemaining: leftToSpendRemaining,
             ),
           ],
         ),
@@ -83,91 +118,208 @@ class SemiCircleChart extends StatelessWidget {
   Widget _buildLegend({
     required bool isOverspentOnBudgets,
     required bool isOverspentDiscretionary,
-    required double leftOnBudgets,
-    required double leftToSpendRemaining,
   }) {
-    // Calculate overspend amounts (spent - budgeted)
+    // Calculate amounts
     final budgetOverspendAmount = (spentOnBudgets - totalBudgeted).clamp(0.0, double.infinity);
+    final leftOnBudgets = (totalBudgeted - spentOnBudgets).clamp(0.0, double.infinity);
     final discretionaryOverspendAmount = (discretionarySpent - leftToSpend).clamp(0.0, double.infinity);
 
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade300, width: 1),
-      ),
-      child: Row(
-        children: [
-          // Orange section (budgets)
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: orangeLight.withOpacity(0.3),
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(11),
-                  bottomLeft: Radius.circular(11),
-                ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Left side: Legend
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Budget section - spent/overspent
+              _LegendItem(
+                color: isOverspentOnBudgets ? redOverspent : orangeBright,
+                label: isOverspentOnBudgets ? 'Overspent' : 'Budget spent',
+                value: isOverspentOnBudgets
+                    ? '\$${budgetOverspendAmount.toStringAsFixed(0)}'
+                    : '\$${spentOnBudgets.toStringAsFixed(0)}',
+                isFilled: true,
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _LegendRow(
-                    color: isOverspentOnBudgets ? redOverspent : orangeBright,
-                    label: isOverspentOnBudgets ? 'Overspent:' : 'Spent:',
-                    value: isOverspentOnBudgets
-                        ? '\$${budgetOverspendAmount.toStringAsFixed(0)}'
-                        : '\$${spentOnBudgets.toStringAsFixed(0)}',
-                    isFilled: true,
-                  ),
-                  const SizedBox(height: 6),
-                  _LegendRow(
-                    color: orangeBright,
-                    label: isOverspentOnBudgets ? 'Budgeted:' : 'Left:',
-                    value: isOverspentOnBudgets 
-                        ? '\$${totalBudgeted.toStringAsFixed(0)}'
-                        : '\$${leftOnBudgets.toStringAsFixed(0)}',
-                    isFilled: false,
-                    fillColor: orangeLight,
-                  ),
-                ],
+              const SizedBox(height: 4),
+              // Budget section - left/budgeted (orange filled when overspent)
+              _LegendItem(
+                color: orangeBright,
+                outlineColor: orangeLight,
+                label: isOverspentOnBudgets ? 'Budgeted' : 'Left',
+                value: isOverspentOnBudgets
+                    ? '\$${totalBudgeted.toStringAsFixed(0)}'
+                    : '\$${leftOnBudgets.toStringAsFixed(0)}',
+                isFilled: isOverspentOnBudgets, // Orange filled when overspent
               ),
+              const SizedBox(height: 8),
+            // Non-budget section - show "Spent" normally, "Spending" only when overspent
+            _LegendItem(
+              color: blueBright,
+              label: isOverspentDiscretionary ? 'Spending' : 'Spent',
+              value: isOverspentDiscretionary
+                  ? '\$${leftToSpend.toStringAsFixed(0)}'
+                  : '\$${discretionarySpent.toStringAsFixed(0)}',
+              isFilled: true,
             ),
+            // Show overspent in red if overspent on non-budget
+            if (isOverspentDiscretionary) ...[
+              const SizedBox(height: 4),
+              _LegendItem(
+                color: redOverspent,
+                label: 'Overspent',
+                value: '\$${discretionaryOverspendAmount.toStringAsFixed(0)}',
+                isFilled: true,
+              ),
+            ],
+              // Streak display (only show when > 1)
+              if (streakWeeks > 1) ...[
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 24),
+                    child: Text(
+                      '$streakWeeks🔥',
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
-          // Blue section (discretionary)
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: blueLight.withOpacity(0.3),
-                borderRadius: const BorderRadius.only(
-                  topRight: Radius.circular(11),
-                  bottomRight: Radius.circular(11),
+        ),
+        const SizedBox(width: 8),
+        // Right side: Alerts card
+        Expanded(
+          child: _buildAlertsSection(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAlertsSection() {
+    final now = DateTime.now();
+    
+    // Alerts are already sorted by due date in the service, but ensure sorting here too
+    final sortedAlerts = List<AlertModel>.from(alerts)
+      ..sort((a, b) {
+        // Nulls go to the end
+        if (a.dueDate == null && b.dueDate == null) return 0;
+        if (a.dueDate == null) return 1;
+        if (b.dueDate == null) return -1;
+        return a.dueDate!.compareTo(b.dueDate!);
+      });
+    
+    return Container(
+      height: 130,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Alerts',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _LegendRow(
-                    color: isOverspentDiscretionary ? redOverspent : blueBright,
-                    label: isOverspentDiscretionary ? 'Overspent:' : 'Spent:',
-                    value: isOverspentDiscretionary
-                        ? '\$${discretionaryOverspendAmount.toStringAsFixed(0)}'
-                        : '\$${discretionarySpent.toStringAsFixed(0)}',
-                    isFilled: true,
-                  ),
-                  const SizedBox(height: 6),
-                  _LegendRow(
-                    color: blueBright,
-                    label: isOverspentDiscretionary ? 'Budgeted:' : 'Left:',
-                    value: isOverspentDiscretionary
-                        ? '\$${leftToSpend.toStringAsFixed(0)}'
-                        : '\$${leftToSpendRemaining.toStringAsFixed(0)}',
-                    isFilled: false,
-                    fillColor: blueLight,
-                  ),
-                ],
+              const Spacer(),
+              GestureDetector(
+                onTap: onAlertsPressed,
+                child: const Icon(
+                  Icons.chevron_right,
+                  size: 20,
+                  color: Colors.grey,
+                ),
               ),
-            ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: sortedAlerts.isEmpty
+                ? const Text(
+                    'No alerts',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey,
+                    ),
+                  )
+                : ListView.separated(
+                    padding: EdgeInsets.zero,
+                    itemCount: sortedAlerts.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 6),
+                    itemBuilder: (context, index) {
+                      final alert = sortedAlerts[index];
+                      final daysLeft = alert.dueDate != null
+                          ? alert.dueDate!.difference(now).inDays
+                          : null;
+                      final icon = alert.icon ?? '🔔';
+                      final hasAmount = alert.amount != null && alert.amount! > 0;
+                      
+                      // Build days text
+                      String daysText = '';
+                      if (daysLeft != null) {
+                        daysText = daysLeft <= 0
+                            ? 'Today'
+                            : daysLeft == 1
+                                ? '1d'
+                                : '${daysLeft}d';
+                      }
+
+                      return GestureDetector(
+                        onTap: onAlertsPressed,
+                        child: Row(
+                          children: [
+                            Text(icon, style: const TextStyle(fontSize: 12)),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                alert.title,
+                                style: const TextStyle(fontSize: 11),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (hasAmount) ...[
+                              Text(
+                                '\$${alert.amount!.toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                            ],
+                            if (daysText.isNotEmpty)
+                              Text(
+                                daysText,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: (daysLeft ?? 999) <= 1 ? redOverspent : Colors.grey,
+                                  fontWeight: (daysLeft ?? 999) <= 1 ? FontWeight.w600 : FontWeight.normal,
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
           ),
         ],
       ),
@@ -175,47 +327,47 @@ class SemiCircleChart extends StatelessWidget {
   }
 }
 
-class _LegendRow extends StatelessWidget {
+class _LegendItem extends StatelessWidget {
   final Color color;
+  final Color? outlineColor;
   final String label;
   final String value;
   final bool isFilled;
-  final Color? fillColor;
 
-  const _LegendRow({
+  const _LegendItem({
     required this.color,
+    this.outlineColor,
     required this.label,
     required this.value,
     required this.isFilled,
-    this.fillColor,
   });
 
   @override
   Widget build(BuildContext context) {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 10,
-          height: 10,
+          width: 12,
+          height: 12,
           decoration: BoxDecoration(
-            color: isFilled ? color : (fillColor ?? Colors.transparent),
+            color: isFilled ? color : (outlineColor ?? Colors.transparent),
             border: isFilled ? null : Border.all(color: color, width: 1.5),
-            borderRadius: BorderRadius.circular(2),
+            shape: BoxShape.circle,
           ),
         ),
-        const SizedBox(width: 6),
+        const SizedBox(width: 8),
         Text(
-          label,
+          '$label: ',
           style: const TextStyle(
             fontSize: 11,
             color: Colors.black54,
           ),
         ),
-        const Spacer(),
         Text(
           value,
           style: TextStyle(
-            fontSize: 13,
+            fontSize: 11,
             fontWeight: FontWeight.bold,
             color: isFilled ? color : Colors.black87,
           ),
@@ -396,7 +548,7 @@ class _SemiCircleChartPainter extends CustomPainter {
       }
     }
 
-    // Discretionary overspend - starts at end of blue section
+    // Discretionary overspend - draw red at the end of blue section, overlapping it
     if (isOverspentDiscretionary && discretionaryOverspendAngle > 0) {
       final redPaint = Paint()
         ..color = _redOverspent
@@ -404,15 +556,16 @@ class _SemiCircleChartPainter extends CustomPainter {
         ..strokeWidth = strokeWidth - 4
         ..strokeCap = StrokeCap.round;
 
-      final redStartAngle = blueStartAngle + adjustedLeftAngle;
-      final maxDiscretionaryOverspend = math.max(0.0, math.pi * 2 - redStartAngle);
-      final clampedDiscretionaryOverspend = discretionaryOverspendAngle.clamp(0.0, maxDiscretionaryOverspend);
+      // Red overlaps the end of the blue section
+      // Start the red bar earlier so it's visible at the end of the chart
+      final redSweep = discretionaryOverspendAngle.clamp(0.0, adjustedLeftAngle);
+      final redStartAngle = blueStartAngle + adjustedLeftAngle - redSweep;
       
-      if (clampedDiscretionaryOverspend > 0) {
+      if (redSweep > 0) {
         canvas.drawArc(
           Rect.fromCircle(center: center, radius: radius),
           redStartAngle,
-          clampedDiscretionaryOverspend,
+          redSweep,
           false,
           redPaint,
         );

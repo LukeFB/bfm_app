@@ -35,10 +35,11 @@ import 'package:bfm_app/utils/date_utils.dart';
 import 'package:bfm_app/widgets/dashboard_card.dart';
 import 'package:bfm_app/widgets/bottom_bar_button.dart';
 import 'package:bfm_app/widgets/activity_item.dart';
-import 'package:bfm_app/widgets/semi_circle_chart.dart';
+import 'package:bfm_app/repositories/goal_repository.dart';
 
 import 'package:bfm_app/repositories/transaction_repository.dart';
 
+import 'package:bfm_app/models/alert_model.dart';
 import 'package:bfm_app/models/event_model.dart';
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/tip_model.dart';
@@ -106,48 +107,35 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     final results = await Future.wait([
       DashboardService.getDiscretionaryWeeklyBudget(), // recurring income (fallback: last week)
       DashboardService.discretionarySpendThisWeek(), // Mon to today expenses
-      DashboardService.getPrimaryGoal(),
+      GoalRepository.getAll(), // All goals for the goals card
       DashboardService.getAlerts(),
       TransactionRepository.getRecent(5),
       DashboardService.getFeaturedTip(),
       DashboardService.getUpcomingEvents(limit: 3),
       BudgetStreakService.calculateStreak(),
-      DashboardService.getWeeklyIncome(), // For semi-circle chart
-      DashboardService.getTotalBudgeted(), // For semi-circle chart
-      DashboardService.getSpentOnBudgets(), // For semi-circle chart
-      DashboardService.getTotalExpensesThisWeek(), // For semi-circle chart
     ]);
 
     final discWeeklyBudget = results[0] as double;
     final spentThisWeek = results[1] as double;
-    final goal = results[2] as GoalModel?;
-    final alerts = results[3] as List<String>;
+    final allGoals = results[2] as List<GoalModel>;
+    final alerts = results[3] as List<AlertModel>;
     final recent = results[4] as List<TransactionModel>;
     final tip = results[5] as TipModel?;
     final events = results[6] as List<EventModel>;
     final budgetStreak = results[7] as BudgetStreakData;
-    final weeklyIncome = results[8] as double;
-    final totalBudgeted = results[9] as double;
-    final spentOnBudgets = results[10] as double;
-    final totalExpenses = results[11] as double;
 
     final leftToSpend = discWeeklyBudget - spentThisWeek;
-    // Non-budgeted spend = total expenses - spend on budgeted categories
-    final nonBudgetedSpend = (totalExpenses - spentOnBudgets).clamp(0.0, double.infinity);
 
     final data = DashData(
       leftToSpendThisWeek: leftToSpend,
       totalWeeklyBudget: discWeeklyBudget, // income - budgets
-      primaryGoal: goal,
+      primaryGoal: allGoals.isNotEmpty ? allGoals.first : null,
+      allGoals: allGoals,
       alerts: alerts,
       recent: recent,
       featuredTip: tip,
       events: events,
       budgetStreak: budgetStreak,
-      weeklyIncome: weeklyIncome,
-      totalBudgeted: totalBudgeted,
-      spentOnBudgets: spentOnBudgets,
-      discretionarySpent: nonBudgetedSpend, // Now correctly: total - spent on budgets
     );
     _scheduleWeeklyOverviewCheck();
     return data;
@@ -268,140 +256,112 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 
             final data = snap.data!;
 
-            final primaryGoal = data.primaryGoal;
-            final goalName =
-                (primaryGoal == null || primaryGoal.name.trim().isEmpty)
-                ? "Savings goal"
-                : primaryGoal.name;
-            final goalAmount = primaryGoal?.amount ?? 0.0;
-            final savedAmount = primaryGoal?.savedAmount ?? 0.0;
-            final goalProgress = primaryGoal?.progressFraction ?? 0.0;
             final featuredTip = data.featuredTip;
             final upcomingEvents = data.events;
+            final isOverspent = data.leftToSpendThisWeek < 0;
 
-            return RefreshIndicator(
-              onRefresh: _forceSync,
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Spacer(),
-                        IconButton(
-                          tooltip: 'Settings',
-                          icon: const Icon(Icons.settings_outlined),
-                          onPressed: () => _openRoute('/settings'),
+            return Column(
+              children: [
+                // ---------- STICKY TOP BAR ----------
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          if (data.budgetStreak.streakWeeks > 1)
+                            Text(
+                              '${data.budgetStreak.streakWeeks}🔥',
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          const Spacer(),
+                          IconButton(
+                            tooltip: 'Settings',
+                            icon: const Icon(Icons.settings_outlined),
+                            onPressed: () => _openRoute('/settings'),
+                          ),
+                        ],
+                      ),
+                      // ---------- MOTIVATIONAL MESSAGE ----------
+                      Text(
+                        _headerMessage(
+                          data.leftToSpendThisWeek,
+                          data.totalWeeklyBudget,
                         ),
-                      ],
-                    ),
-                    // ---------- MOTIVATIONAL MESSAGE ----------
-                    Text(
-                      _headerMessage(
-                        data.leftToSpendThisWeek,
-                        data.totalWeeklyBudget,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontFamily: "Roboto",
+                          color: Colors.black54,
+                        ),
                       ),
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontFamily: "Roboto",
-                        color: Colors.black54,
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // ---------- SEMI-CIRCLE CHART ----------
-                    SemiCircleChart(
-                      income: data.weeklyIncome,
-                      totalBudgeted: data.totalBudgeted,
-                      spentOnBudgets: data.spentOnBudgets,
-                      leftToSpend: data.totalWeeklyBudget,
-                      discretionarySpent: data.discretionarySpent,
-                    ),
-
-                    const SizedBox(height: 24),
-                    // ---------- GOALS ----------
-                    DashboardCard(
-                      title: "Savings Goals",
-                      trailing: IconButton(
-                        icon: const Icon(Icons.chevron_right),
-                        tooltip: 'Open goals',
-                        onPressed: () => _openRoute('/goals'),
-                      ),
+                    ],
+                  ),
+                ),
+                // ---------- SCROLLABLE CONTENT ----------
+                Expanded(
+                  child: RefreshIndicator(
+                    onRefresh: _forceSync,
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.all(16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // ---------- BIG LEFT TO SPEND FIGURE ----------
+                    Center(
+                      child: Column(
+                        children: [
                           Text(
-                            goalName,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 8),
-                          if (goalAmount > 0)
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                LinearProgressIndicator(
-                                  value: goalProgress,
-                                  color: bfmBlue,
-                                  backgroundColor: Colors.grey.shade300,
-                                  minHeight: 8,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  "\$${savedAmount.toStringAsFixed(0)} / \$${goalAmount.toStringAsFixed(0)} saved",
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.black54,
-                                  ),
-                                ),
-                              ],
-                            )
-                          else
-                            const Text(
-                              "Click the arrow to set your first goal.",
+                            '\$${data.leftToSpendThisWeek.abs().toStringAsFixed(0)}',
+                            style: TextStyle(
+                              fontSize: 64,
+                              fontWeight: FontWeight.bold,
+                              color: isOverspent ? const Color(0xFFE53935) : bfmBlue,
                             ),
+                          ),
+                          Text(
+                            isOverspent ? 'overspent this week' : 'left to spend this week',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              color: Colors.black54,
+                            ),
+                          ),
                         ],
                       ),
                     ),
 
                     const SizedBox(height: 24),
 
-                    // ---------- ALERTS ----------
-                    DashboardCard(
-                      title: "Alerts",
-                      trailing: IconButton(
-                        icon: const Icon(Icons.chevron_right),
-                        tooltip: 'Manage alerts',
-                        onPressed: () => _openRoute('/alerts/manage'),
-                      ),
-                      child: data.alerts.isEmpty
-                          ? const Text(
-                              "No alerts yet. Tap the arrow to add reminders.",
-                            )
-                          : Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: data.alerts
-                                  .map(
-                                    (msg) {
-                                      final cleaned =
-                                          msg.replaceAll('(tap to review)', '').trim();
-                                      final displayMsg = cleaned.isEmpty
-                                          ? 'Reminder saved for this bill.'
-                                          : cleaned;
-                                      return Padding(
-                                        padding:
-                                            const EdgeInsets.only(bottom: 8.0),
-                                        child: Text(displayMsg),
-                                      );
-                                    },
-                                  )
-                                  .toList(),
+                    // ---------- ALERTS AND GOALS SIDE BY SIDE ----------
+                    SizedBox(
+                      height: 200,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // Alerts Card (Left)
+                          Expanded(
+                            child: _AlertsCard(
+                              alerts: data.alerts,
+                              onAlertsPressed: () => _openRoute('/alerts/manage'),
                             ),
+                          ),
+                          const SizedBox(width: 12),
+                          // Goals Card (Right)
+                          Expanded(
+                            child: _GoalsCard(
+                              goals: data.allGoals,
+                              onGoalsPressed: () => _openRoute('/goals'),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
 
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 12),
 
                     // ---------- RECENT ACTIVITY ----------
                     DashboardCard(
@@ -432,68 +392,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                       ),
                     ),
 
-                    const SizedBox(height: 24),
-
-                    // ---------- STREAKS ----------
-                    DashboardCard(
-                      title: "Budget Streak",
-                      child: data.budgetStreak.streakWeeks > 0
-                          ? Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Center(
-                                  child: Text(
-                                    "🔥${data.budgetStreak.streakWeeks}",
-                                    style: const TextStyle(
-                                      fontSize: 40,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  "You have met your budget ${data.budgetStreak.streakWeeks} ${data.budgetStreak.streakWeeks == 1 ? 'week' : 'weeks'} in a row",
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  "You have saved: \$${data.budgetStreak.totalSaved.toStringAsFixed(data.budgetStreak.totalSaved >= 100 ? 0 : 2)}",
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.green,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            )
-                          : const Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Center(
-                                  child: Text(
-                                    "🔥0",
-                                    style: TextStyle(
-                                      fontSize: 40,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                                SizedBox(height: 16),
-                                Text(
-                                  "Complete a week under budget to start your streak!",
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.black54,
-                                  ),
-                                ),
-                              ],
-                            ),
-                    ),
-
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 12),
 
                     // ---------- FINANCIAL TIP ----------
                     DashboardCard(
@@ -525,7 +424,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                             ),
                     ),
 
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 12),
 
                     // ---------- EVENTS ----------
                     DashboardCard(
@@ -570,9 +469,12 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                               ],
                             ),
                     ),
-                  ],
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             );
           },
         ),
@@ -596,7 +498,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                 child: BottomBarButton(
                   icon: Icons.account_balance_wallet,
                   label: "Budget",
-                  onTap: () => _openRoute('/budget/edit'),
+                  onTap: () => _openRoute('/budgets'),
                 ),
               ),
               Expanded(
@@ -616,6 +518,267 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Scrollable alerts card for the dashboard.
+class _AlertsCard extends StatelessWidget {
+  final List<AlertModel> alerts;
+  final VoidCallback? onAlertsPressed;
+
+  static const Color redOverspent = Color(0xFFE53935);
+
+  const _AlertsCard({
+    required this.alerts,
+    this.onAlertsPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final sortedAlerts = List<AlertModel>.from(alerts)
+      ..sort((a, b) {
+        if (a.dueDate == null && b.dueDate == null) return 0;
+        if (a.dueDate == null) return 1;
+        if (b.dueDate == null) return -1;
+        return a.dueDate!.compareTo(b.dueDate!);
+      });
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Alerts',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: onAlertsPressed,
+                child: const Icon(
+                  Icons.chevron_right,
+                  size: 24,
+                  color: Colors.grey,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: sortedAlerts.isEmpty
+                ? const Center(
+                    child: Text(
+                      'No alerts',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: EdgeInsets.zero,
+                    itemCount: sortedAlerts.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final alert = sortedAlerts[index];
+                      final daysLeft = alert.dueDate != null
+                          ? alert.dueDate!.difference(now).inDays
+                          : null;
+                      final icon = alert.icon ?? '🔔';
+                      final hasAmount = alert.amount != null && alert.amount! > 0;
+
+                      String daysText = '';
+                      if (daysLeft != null) {
+                        daysText = daysLeft <= 0
+                            ? 'Today'
+                            : daysLeft == 1
+                                ? '1d'
+                                : '${daysLeft}d';
+                      }
+
+                      return GestureDetector(
+                        onTap: onAlertsPressed,
+                        child: Row(
+                          children: [
+                            Text(icon, style: const TextStyle(fontSize: 14)),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                alert.title,
+                                style: const TextStyle(fontSize: 13),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (hasAmount) ...[
+                              Text(
+                                '\$${alert.amount!.toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                            ],
+                            if (daysText.isNotEmpty)
+                              Text(
+                                daysText,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: (daysLeft ?? 999) <= 1 ? redOverspent : Colors.grey,
+                                  fontWeight: (daysLeft ?? 999) <= 1 ? FontWeight.w600 : FontWeight.normal,
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Scrollable goals card for the dashboard.
+class _GoalsCard extends StatelessWidget {
+  final List<GoalModel> goals;
+  final VoidCallback? onGoalsPressed;
+
+  const _GoalsCard({
+    required this.goals,
+    this.onGoalsPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Goals',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: onGoalsPressed,
+                child: const Icon(
+                  Icons.chevron_right,
+                  size: 24,
+                  color: Colors.grey,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: goals.isEmpty
+                ? Center(
+                    child: GestureDetector(
+                      onTap: onGoalsPressed,
+                      child: const Text(
+                        'Tap to create a savings goal!',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: EdgeInsets.zero,
+                    itemCount: goals.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (context, index) {
+                      final goal = goals[index];
+                      final progress = goal.progressFraction;
+                      final isComplete = goal.isComplete;
+
+                      return GestureDetector(
+                        onTap: onGoalsPressed,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    goal.name.isEmpty ? 'Goal' : goal.name,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (isComplete)
+                                  const Icon(
+                                    Icons.check_circle,
+                                    size: 16,
+                                    color: Colors.green,
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            LinearProgressIndicator(
+                              value: progress,
+                              color: bfmBlue,
+                              backgroundColor: Colors.grey.shade300,
+                              minHeight: 6,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '\$${goal.savedAmount.toStringAsFixed(0)} / \$${goal.amount.toStringAsFixed(0)}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.black54,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }

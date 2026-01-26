@@ -13,6 +13,7 @@
 ///   UI — no extra queries needed once this is constructed.
 /// ---------------------------------------------------------------------------
 
+import 'package:bfm_app/models/alert_model.dart';
 import 'package:bfm_app/models/event_model.dart';
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/tip_model.dart';
@@ -24,13 +25,14 @@ class DashData {
   final double leftToSpendThisWeek;
   final double totalWeeklyBudget;
   final GoalModel? primaryGoal;
-  final List<String> alerts;
+  final List<GoalModel> allGoals;
+  final List<AlertModel> alerts;
   final List<TransactionModel> recent;
   final TipModel? featuredTip;
   final List<EventModel> events;
   final BudgetStreakData budgetStreak;
 
-  // Semi-circle chart data
+  // Semi-circle chart data (optional, used by budgets screen)
   final double weeklyIncome;
   final double totalBudgeted;
   final double spentOnBudgets;
@@ -41,14 +43,15 @@ class DashData {
     required this.leftToSpendThisWeek,
     required this.totalWeeklyBudget,
     required this.primaryGoal,
+    this.allGoals = const [],
     required this.alerts,
     required this.recent,
     required this.featuredTip,
     required this.events,
     required this.budgetStreak,
-    required this.weeklyIncome,
-    required this.totalBudgeted,
-    required this.spentOnBudgets,
-    required this.discretionarySpent,
+    this.weeklyIncome = 0.0,
+    this.totalBudgeted = 0.0,
+    this.spentOnBudgets = 0.0,
+    this.discretionarySpent = 0.0,
   });
 }
