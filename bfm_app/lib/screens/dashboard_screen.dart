@@ -110,7 +110,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       DashboardService.getTotalBudgeted(), // Sum of all budgets
       DashboardService.getSpentOnBudgets(), // Spent on budgeted categories
       DashboardService.getTotalExpensesThisWeek(), // Total expenses this week
-      GoalRepository.getAll(), // All goals for the goals card
+      GoalRepository.getSavingsGoals(), // Only savings goals for dashboard (excludes recovery)
       DashboardService.getAlerts(),
       TransactionRepository.getRecent(5),
       DashboardService.getFeaturedTip(),

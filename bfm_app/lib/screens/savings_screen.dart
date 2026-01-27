@@ -7,14 +7,14 @@
 ///
 /// Purpose:
 ///   - Displays a comprehensive view of the user's financial position:
-///     - Balance sheet with assets, liabilities, and net worth
-///     - Profit/loss summary for the current month
+///     - Balance sheet with income/expense and profit/loss
+///     - Profit/loss summary for selectable time period
 ///     - List of all connected accounts grouped by bank
-///     - Savings goals progress
+///     - User-entered assets (cash, vehicles, property, etc.)
 ///
 /// Inputs:
 ///   - Fetches data via `SavingsService` which aggregates from accounts,
-///     transactions, and goals.
+///     transactions, and assets.
 ///
 /// Outputs:
 ///   - UI showing complete financial overview like a bank app.
@@ -22,7 +22,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:bfm_app/models/account_model.dart';
-import 'package:bfm_app/models/goal_model.dart';
+import 'package:bfm_app/models/asset_model.dart';
+import 'package:bfm_app/repositories/asset_repository.dart';
 import 'package:bfm_app/services/savings_service.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:bfm_app/widgets/dashboard_card.dart';
@@ -156,10 +157,8 @@ class _SavingsScreenState extends State<SavingsScreen> {
 
                     const SizedBox(height: 24),
 
-                    // ---------- SAVINGS GOALS ----------
-                    if (data.goals.isNotEmpty) ...[
-                      _buildGoalsSection(data),
-                    ],
+                    // ---------- ASSETS ----------
+                    _buildAssetsSection(data),
 
                     const SizedBox(height: 16),
                   ],
@@ -534,101 +533,496 @@ class _SavingsScreenState extends State<SavingsScreen> {
     );
   }
 
-  /// Savings goals progress section.
-  Widget _buildGoalsSection(SavingsData data) {
+  /// Assets section showing user-entered assets.
+  Widget _buildAssetsSection(SavingsData data) {
     return DashboardCard(
-      title: 'Savings Goals',
+      title: 'My Assets',
       trailing: IconButton(
-        icon: const Icon(Icons.chevron_right),
-        onPressed: () => Navigator.pushNamed(context, '/goals'),
-        tooltip: 'View all goals',
+        icon: const Icon(Icons.add_circle_outline),
+        onPressed: () => _showAddAssetDialog(),
+        tooltip: 'Add asset',
       ),
       child: Column(
         children: [
-          // Overall progress
+          // Total assets value
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: _bfmBlue.withOpacity(0.05),
+              color: Colors.green.withOpacity(0.08),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'Total Progress',
-                  style: TextStyle(fontWeight: FontWeight.w500),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.account_balance_wallet_rounded,
+                      color: Colors.green.shade700,
+                      size: 22,
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Total Assets',
+                      style: TextStyle(fontWeight: FontWeight.w500),
+                    ),
+                  ],
                 ),
                 Text(
-                  '${_formatCurrency(data.totalGoalsSaved)} / ${_formatCurrency(data.totalGoalsTarget)}',
-                  style: const TextStyle(
+                  _formatCurrency(data.totalAssetValue),
+                  style: TextStyle(
+                    fontSize: 18,
                     fontWeight: FontWeight.bold,
-                    color: _bfmBlue,
+                    color: Colors.green.shade700,
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
 
-          // Individual goals
-          for (final goal in data.goals.take(3)) ...[
-            _buildGoalTile(goal),
-            if (goal != data.goals.take(3).last)
-              const SizedBox(height: 8),
-          ],
-
-          if (data.goals.length > 3) ...[
-            const SizedBox(height: 12),
-            Text(
-              '+${data.goals.length - 3} more goals',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey.shade600,
+          if (data.assets.isEmpty) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.add_box_outlined,
+                    size: 40,
+                    color: Colors.grey.shade400,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'No assets added yet',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Tap + to add cash, vehicles, property, and more',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade500,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
               ),
             ),
+          ] else ...[
+            const SizedBox(height: 16),
+
+            // Assets list
+            for (final asset in data.assets) ...[
+              _buildAssetTile(asset),
+              if (asset != data.assets.last)
+                const SizedBox(height: 8),
+            ],
           ],
         ],
       ),
     );
   }
 
-  Widget _buildGoalTile(GoalModel goal) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  Widget _buildAssetTile(AssetModel asset) {
+    return InkWell(
+      onTap: () => _showEditAssetDialog(asset),
+      onLongPress: () => _showAssetActionsSheet(asset),
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Row(
           children: [
-            Expanded(
-              child: Text(
-                goal.name.isEmpty ? 'Savings Goal' : goal.name,
-                style: const TextStyle(fontSize: 14),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+            // Category icon
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: _getAssetCategoryColor(asset.category).withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                _getAssetCategoryIcon(asset.category),
+                color: _getAssetCategoryColor(asset.category),
+                size: 20,
               ),
             ),
+            const SizedBox(width: 12),
+
+            // Asset name and category
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    asset.name,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _getAssetCategoryColor(asset.category).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      asset.category.displayName,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                        color: _getAssetCategoryColor(asset.category),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Value
             Text(
-              goal.progressLabel(),
+              _formatCurrency(asset.value),
               style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey.shade600,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.green.shade700,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 6),
-        LinearProgressIndicator(
-          value: goal.progressFraction,
-          backgroundColor: Colors.grey.shade200,
-          valueColor: AlwaysStoppedAnimation(
-            goal.isComplete ? Colors.green : _bfmOrange,
-          ),
-          minHeight: 6,
-          borderRadius: BorderRadius.circular(3),
-        ),
-      ],
+      ),
     );
+  }
+
+  /// Shows dialog to add a new asset.
+  void _showAddAssetDialog() {
+    final nameController = TextEditingController();
+    final valueController = TextEditingController();
+    final notesController = TextEditingController();
+    AssetCategory selectedCategory = AssetCategory.cash;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Add Asset'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Name',
+                    hintText: 'e.g., Emergency Fund, Toyota Corolla',
+                  ),
+                  textCapitalization: TextCapitalization.words,
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<AssetCategory>(
+                  value: selectedCategory,
+                  decoration: const InputDecoration(
+                    labelText: 'Category',
+                  ),
+                  items: AssetCategory.values.map((cat) {
+                    return DropdownMenuItem(
+                      value: cat,
+                      child: Row(
+                        children: [
+                          Icon(
+                            _getAssetCategoryIcon(cat),
+                            size: 18,
+                            color: _getAssetCategoryColor(cat),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(cat.displayName),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setDialogState(() => selectedCategory = value);
+                    }
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: valueController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Value',
+                    prefixText: '\$ ',
+                    hintText: '0.00',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: notesController,
+                  decoration: const InputDecoration(
+                    labelText: 'Notes (optional)',
+                    hintText: 'Any additional details',
+                  ),
+                  maxLines: 2,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final name = nameController.text.trim();
+                if (name.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Please enter a name')),
+                  );
+                  return;
+                }
+                final value = _parseCurrency(valueController.text);
+                final notes = notesController.text.trim();
+
+                final asset = AssetModel(
+                  name: name,
+                  category: selectedCategory,
+                  value: value,
+                  notes: notes.isEmpty ? null : notes,
+                );
+
+                await AssetRepository.insert(asset);
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                _refresh();
+              },
+              child: const Text('Add'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Shows dialog to edit an existing asset.
+  void _showEditAssetDialog(AssetModel asset) {
+    final nameController = TextEditingController(text: asset.name);
+    final valueController = TextEditingController(text: asset.value.toStringAsFixed(2));
+    final notesController = TextEditingController(text: asset.notes ?? '');
+    AssetCategory selectedCategory = asset.category;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Edit Asset'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Name',
+                  ),
+                  textCapitalization: TextCapitalization.words,
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<AssetCategory>(
+                  value: selectedCategory,
+                  decoration: const InputDecoration(
+                    labelText: 'Category',
+                  ),
+                  items: AssetCategory.values.map((cat) {
+                    return DropdownMenuItem(
+                      value: cat,
+                      child: Row(
+                        children: [
+                          Icon(
+                            _getAssetCategoryIcon(cat),
+                            size: 18,
+                            color: _getAssetCategoryColor(cat),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(cat.displayName),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setDialogState(() => selectedCategory = value);
+                    }
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: valueController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Value',
+                    prefixText: '\$ ',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: notesController,
+                  decoration: const InputDecoration(
+                    labelText: 'Notes (optional)',
+                  ),
+                  maxLines: 2,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final name = nameController.text.trim();
+                if (name.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Please enter a name')),
+                  );
+                  return;
+                }
+                final value = _parseCurrency(valueController.text);
+                final notes = notesController.text.trim();
+
+                final updatedAsset = asset.copyWith(
+                  name: name,
+                  category: selectedCategory,
+                  value: value,
+                  notes: notes.isEmpty ? null : notes,
+                );
+
+                await AssetRepository.update(updatedAsset);
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                _refresh();
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Shows bottom sheet with asset actions (edit, delete).
+  void _showAssetActionsSheet(AssetModel asset) {
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Edit'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _showEditAssetDialog(asset);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text('Delete', style: TextStyle(color: Colors.red)),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Delete Asset?'),
+                    content: Text('Are you sure you want to delete "${asset.name}"?'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        style: TextButton.styleFrom(foregroundColor: Colors.red),
+                        child: const Text('Delete'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed == true && asset.id != null) {
+                  await AssetRepository.delete(asset.id!);
+                  _refresh();
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Parses currency string to double.
+  double _parseCurrency(String raw) {
+    if (raw.trim().isEmpty) return 0.0;
+    final sanitized = raw.replaceAll(RegExp(r'[^0-9\.\-]'), '');
+    final value = double.tryParse(sanitized);
+    if (value == null || value.isNaN || value.isInfinite) return 0.0;
+    return value;
+  }
+
+  /// Gets icon for asset category.
+  IconData _getAssetCategoryIcon(AssetCategory category) {
+    switch (category) {
+      case AssetCategory.cash:
+        return Icons.account_balance_wallet_outlined;
+      case AssetCategory.vehicle:
+        return Icons.directions_car_outlined;
+      case AssetCategory.property:
+        return Icons.home_outlined;
+      case AssetCategory.investment:
+        return Icons.trending_up_outlined;
+      case AssetCategory.kiwisaver:
+        return Icons.elderly_outlined;
+      case AssetCategory.valuables:
+        return Icons.diamond_outlined;
+      case AssetCategory.other:
+        return Icons.category_outlined;
+    }
+  }
+
+  /// Gets color for asset category.
+  Color _getAssetCategoryColor(AssetCategory category) {
+    switch (category) {
+      case AssetCategory.cash:
+        return Colors.green;
+      case AssetCategory.vehicle:
+        return Colors.blue;
+      case AssetCategory.property:
+        return Colors.brown;
+      case AssetCategory.investment:
+        return Colors.teal;
+      case AssetCategory.kiwisaver:
+        return Colors.purple;
+      case AssetCategory.valuables:
+        return Colors.amber.shade700;
+      case AssetCategory.other:
+        return Colors.grey;
+    }
   }
 
   // ---------------------------------------------------------------------------

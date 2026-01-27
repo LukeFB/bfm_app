@@ -47,6 +47,44 @@ class GoalRepository {
     );
     return result.map((e) => GoalModel.fromMap(e)).toList();
   }
+  
+  /// Returns only savings goals (excludes recovery goals).
+  /// Used for dashboard display where recovery goals should not appear.
+  static Future<List<GoalModel>> getSavingsGoals() async {
+    final db = await AppDatabase.instance.database;
+    final result = await db.query(
+      'goals',
+      where: "goal_type = ? OR goal_type IS NULL",
+      whereArgs: ['savings'],
+      orderBy: 'id DESC',
+    );
+    return result.map((e) => GoalModel.fromMap(e)).toList();
+  }
+  
+  /// Returns only recovery goals (deficit payback goals).
+  /// Used for the goals screen to show them separately.
+  static Future<List<GoalModel>> getRecoveryGoals() async {
+    final db = await AppDatabase.instance.database;
+    final result = await db.query(
+      'goals',
+      where: "goal_type = ?",
+      whereArgs: ['recovery'],
+      orderBy: 'id DESC',
+    );
+    return result.map((e) => GoalModel.fromMap(e)).toList();
+  }
+  
+  /// Returns incomplete recovery goals for display in weekly overview.
+  static Future<List<GoalModel>> getActiveRecoveryGoals() async {
+    final db = await AppDatabase.instance.database;
+    final result = await db.query(
+      'goals',
+      where: "goal_type = ? AND saved_amount < amount",
+      whereArgs: ['recovery'],
+      orderBy: 'id DESC',
+    );
+    return result.map((e) => GoalModel.fromMap(e)).toList();
+  }
 
   /// Updates the goal row (requires an id) and resyncs the mirrored budget so
   /// weekly contribution changes flow through.

@@ -8,18 +8,19 @@
 /// Purpose:
 ///   - Orchestrates account data fetching and aggregation for the savings view.
 ///   - Calculates profit/loss metrics from transaction history.
+///   - Aggregates user-entered assets for net worth display.
 ///
 /// Inputs:
-///   - Account repository, transaction repository, goal repository.
+///   - Account repository, transaction repository, asset repository.
 ///
 /// Outputs:
 ///   - `SavingsData` bundle with all metrics needed for the UI.
 /// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/models/account_model.dart';
-import 'package:bfm_app/models/goal_model.dart';
+import 'package:bfm_app/models/asset_model.dart';
 import 'package:bfm_app/repositories/account_repository.dart';
-import 'package:bfm_app/repositories/goal_repository.dart';
+import 'package:bfm_app/repositories/asset_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 
 /// Time frame options for profit/loss calculation.
@@ -96,14 +97,14 @@ class SavingsData {
   /// Accounts grouped by bank/connection.
   final Map<String, List<AccountModel>> accountsByBank;
 
-  /// Active savings goals.
-  final List<GoalModel> goals;
+  /// User-entered assets.
+  final List<AssetModel> assets;
 
-  /// Total saved towards goals.
-  final double totalGoalsSaved;
+  /// Assets grouped by category.
+  final Map<AssetCategory, List<AssetModel>> assetsByCategory;
 
-  /// Total goal targets.
-  final double totalGoalsTarget;
+  /// Total value of all assets.
+  final double totalAssetValue;
 
   const SavingsData({
     required this.totalIncome,
@@ -111,9 +112,9 @@ class SavingsData {
     required this.overallProfitLoss,
     required this.accounts,
     required this.accountsByBank,
-    required this.goals,
-    required this.totalGoalsSaved,
-    required this.totalGoalsTarget,
+    required this.assets,
+    required this.assetsByCategory,
+    required this.totalAssetValue,
   });
 }
 
@@ -133,22 +134,18 @@ class SavingsService {
       AccountRepository.getGroupedByConnection(),
       TransactionRepository.sumIncomeBetween(startDate, now),
       _sumExpensesBetween(startDate, now),
-      GoalRepository.getAll(),
+      AssetRepository.getAll(),
+      AssetRepository.getGroupedByCategory(),
+      AssetRepository.getTotalValue(),
     ]);
 
     final accounts = results[0] as List<AccountModel>;
     final accountsByBank = results[1] as Map<String, List<AccountModel>>;
     final totalIncome = results[2] as double;
     final totalExpenses = results[3] as double;
-    final goals = results[4] as List<GoalModel>;
-
-    // Calculate goals totals
-    double totalGoalsSaved = 0.0;
-    double totalGoalsTarget = 0.0;
-    for (final goal in goals) {
-      totalGoalsSaved += goal.savedAmount;
-      totalGoalsTarget += goal.amount;
-    }
+    final assets = results[4] as List<AssetModel>;
+    final assetsByCategory = results[5] as Map<AssetCategory, List<AssetModel>>;
+    final totalAssetValue = results[6] as double;
 
     return SavingsData(
       totalIncome: totalIncome,
@@ -156,9 +153,9 @@ class SavingsService {
       overallProfitLoss: totalIncome - totalExpenses,
       accounts: accounts,
       accountsByBank: accountsByBank,
-      goals: goals,
-      totalGoalsSaved: totalGoalsSaved,
-      totalGoalsTarget: totalGoalsTarget,
+      assets: assets,
+      assetsByCategory: assetsByCategory,
+      totalAssetValue: totalAssetValue,
     );
   }
 

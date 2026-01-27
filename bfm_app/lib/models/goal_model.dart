@@ -19,13 +19,29 @@
 ///   - TODO: map goals to a budget via calculating weekly contribution.
 /// ---------------------------------------------------------------------------
 
-/// Represents a savings goal with progress tracking.
+/// Goal types to distinguish regular savings from recovery goals.
+enum GoalType {
+  savings,
+  recovery,
+}
+
+/// Represents a savings or recovery goal with progress tracking.
 class GoalModel {
   final int? id;
   final String name;
   final double amount;
   final double weeklyContribution;
   final double savedAmount;
+  
+  /// Type of goal: 'savings' for regular goals, 'recovery' for deficit recovery.
+  final GoalType goalType;
+  
+  /// For recovery goals: the original deficit amount that triggered creation.
+  /// Stored for historical reference even after partial repayment.
+  final double? originalDeficit;
+  
+  /// For recovery goals: number of weeks user chose to pay back over.
+  final int? recoveryWeeks;
 
   const GoalModel({
     this.id,
@@ -33,10 +49,17 @@ class GoalModel {
     required this.amount,
     required this.weeklyContribution,
     this.savedAmount = 0,
+    this.goalType = GoalType.savings,
+    this.originalDeficit,
+    this.recoveryWeeks,
   });
 
   /// Creates a goal from DB/JSON maps. Handles legacy columns gracefully.
   factory GoalModel.fromMap(Map<String, dynamic> map) {
+    // Parse goal_type with fallback to 'savings' for legacy rows
+    final typeStr = (map['goal_type'] as String?) ?? 'savings';
+    final goalType = typeStr == 'recovery' ? GoalType.recovery : GoalType.savings;
+    
     return GoalModel(
       id: map['id'] as int?,
       name: (map['name'] ??
@@ -54,6 +77,9 @@ class GoalModel {
               .toDouble()
           : 0.0,
       savedAmount: (map['saved_amount'] as num?)?.toDouble() ?? 0.0,
+      goalType: goalType,
+      originalDeficit: (map['original_deficit'] as num?)?.toDouble(),
+      recoveryWeeks: map['recovery_weeks'] as int?,
     );
   }
 
@@ -64,7 +90,10 @@ class GoalModel {
       'amount': amount,
       'weekly_contribution': weeklyContribution,
       'saved_amount': savedAmount,
+      'goal_type': goalType == GoalType.recovery ? 'recovery' : 'savings',
     };
+    if (originalDeficit != null) m['original_deficit'] = originalDeficit;
+    if (recoveryWeeks != null) m['recovery_weeks'] = recoveryWeeks;
     if (includeId && id != null) m['id'] = id;
     return m;
   }
@@ -76,6 +105,9 @@ class GoalModel {
     double? amount,
     double? weeklyContribution,
     double? savedAmount,
+    GoalType? goalType,
+    double? originalDeficit,
+    int? recoveryWeeks,
   }) {
     return GoalModel(
       id: id ?? this.id,
@@ -83,8 +115,14 @@ class GoalModel {
       amount: amount ?? this.amount,
       weeklyContribution: weeklyContribution ?? this.weeklyContribution,
       savedAmount: savedAmount ?? this.savedAmount,
+      goalType: goalType ?? this.goalType,
+      originalDeficit: originalDeficit ?? this.originalDeficit,
+      recoveryWeeks: recoveryWeeks ?? this.recoveryWeeks,
     );
   }
+  
+  /// True if this is a recovery goal for deficit payback.
+  bool get isRecoveryGoal => goalType == GoalType.recovery;
 
   /// Returns a 0–1 fraction showing how far along the goal is.
   double get progressFraction {

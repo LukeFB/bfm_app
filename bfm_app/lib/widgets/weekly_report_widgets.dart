@@ -296,6 +296,27 @@ class BudgetRingCard extends StatelessWidget {
     );
   }
 
+  /// Gets special color for goal/recovery contributions
+  Color? _getSpecialColor(String label) {
+    final lower = label.toLowerCase();
+    if (lower.contains('goal contribution') || lower.contains('savings')) {
+      return Colors.green.shade500; // Green for savings/goals
+    }
+    if (lower.contains('recovery payment') || lower.contains('recovery')) {
+      return Colors.orange.shade500; // Orange for recovery
+    }
+    return null;
+  }
+  
+  /// Check if label is a special contribution type
+  bool _isContribution(String label) {
+    final lower = label.toLowerCase();
+    return lower.contains('goal contribution') || 
+           lower.contains('recovery payment') ||
+           lower.contains('savings') ||
+           lower.contains('recovery');
+  }
+
   List<_RingSegment> _buildSegments(WeeklyInsightsReport report) {
     final segments = <_RingSegment>[];
     double budgetSpent = 0;
@@ -331,16 +352,17 @@ class BudgetRingCard extends StatelessWidget {
       if (value <= 0) continue;
       usedLabels.add(label.toLowerCase());
       final hasBudget = entry.value.budget > 0;
+      final specialColor = _getSpecialColor(label);
       segments.add(
         _RingSegment(
           value: value,
           label: label,
-          color: _ringPalette[colorIndex % _ringPalette.length],
-          isBudgeted: hasBudget,
+          color: specialColor ?? _ringPalette[colorIndex % _ringPalette.length],
+          isBudgeted: hasBudget || _isContribution(label), // Show contributions in budgeted section
         ),
       );
       budgetSpent += value;
-      colorIndex++;
+      if (specialColor == null) colorIndex++;
     }
 
     // Instead of showing "Other spend" as one item, break it down using topCategories
@@ -361,17 +383,19 @@ class BudgetRingCard extends StatelessWidget {
         usedLabels.add(label.toLowerCase());
         // Check if this label matches a budget (case-insensitive)
         final hasBudget = budgetedLabels.contains(label.toLowerCase());
+        final specialColor = _getSpecialColor(label);
+        final isContrib = _isContribution(label);
         segments.add(
           _RingSegment(
             value: value,
             label: label,
-            color: hasBudget 
+            color: specialColor ?? (hasBudget 
                 ? _ringPalette[colorIndex % _ringPalette.length]
-                : Colors.blueGrey.shade400,
-            isBudgeted: hasBudget,
+                : Colors.blueGrey.shade400),
+            isBudgeted: hasBudget || isContrib,
           ),
         );
-        if (hasBudget) colorIndex++;
+        if (hasBudget && specialColor == null) colorIndex++;
         otherAccountedFor += value;
       }
       

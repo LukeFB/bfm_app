@@ -496,4 +496,21 @@ class TransactionRepository {
     );
     return rows.isNotEmpty;
   }
+
+  /// Returns true when at least one non-excluded transaction exists between
+  /// [start] and [end] (inclusive).
+  static Future<bool> hasTransactionsBetween(DateTime start, DateTime end) async {
+    final db = await AppDatabase.instance.database;
+    final rows = await db.rawQuery(
+      '''
+      SELECT 1
+      FROM transactions
+      WHERE date BETWEEN ? AND ?
+        AND excluded = 0
+      LIMIT 1
+      ''',
+      [_iso(start), _iso(end)],
+    );
+    return rows.isNotEmpty;
+  }
 }

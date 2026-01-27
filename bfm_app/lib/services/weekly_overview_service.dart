@@ -80,8 +80,15 @@ class WeeklyOverviewService {
     final today = DateTime.now();
     if (today.weekday != DateTime.monday) return false;
 
-    final hasMondayTxn = await TransactionRepository.hasTransactionsOn(today);
-    if (!hasMondayTxn) return false;
+    // Check for any transactions in the current week (Mon-Sun).
+    // Bank transactions often have dates from when the purchase was made,
+    // not when they post/sync, so checking for "transactions dated Monday"
+    // would miss purchases made over the weekend that sync on Monday.
+    final mondayThisWeek = DateTime(today.year, today.month, today.day);
+    final sundayThisWeek = mondayThisWeek.add(const Duration(days: 6));
+    final hasCurrentWeekTxn =
+        await TransactionRepository.hasTransactionsBetween(mondayThisWeek, sundayThisWeek);
+    if (!hasCurrentWeekTxn) return false;
 
     final targetWeekStart = _previousWeekStart(today);
     final lastShownIso = prefs.getString(_prefsLastWeekKey);
@@ -99,7 +106,9 @@ class WeeklyOverviewService {
     );
     final summary = report.overviewSummary;
     if (summary == null) return null;
-    final goals = (await GoalRepository.getAll())
+    // Only include savings goals (not recovery) for the regular contribution section
+    // Recovery goals are loaded separately in the WeeklyOverviewSheet
+    final goals = (await GoalRepository.getSavingsGoals())
         .where((goal) => !goal.isComplete)
         .toList();
     return WeeklyOverviewPayload(

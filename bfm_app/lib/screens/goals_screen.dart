@@ -31,9 +31,17 @@ class GoalsScreen extends StatefulWidget {
   State<GoalsScreen> createState() => _GoalsScreenState();
 }
 
+/// Holds both savings and recovery goals for display.
+class _GoalsData {
+  final List<GoalModel> savingsGoals;
+  final List<GoalModel> recoveryGoals;
+  
+  const _GoalsData({required this.savingsGoals, required this.recoveryGoals});
+}
+
 /// Loads goals, handles CRUD dialogs, and keeps the list fresh.
 class _GoalsScreenState extends State<GoalsScreen> {
-  late Future<List<GoalModel>> _goalsFuture;
+  late Future<_GoalsData> _goalsFuture;
 
   /// Bootstraps the goals Future when entering the screen.
   @override
@@ -45,8 +53,19 @@ class _GoalsScreenState extends State<GoalsScreen> {
   /// Reloads goals from SQLite and rebuilds the FutureBuilder in-place.
   void _refreshGoals() {
     setState(() {
-      _goalsFuture = GoalRepository.getAll();
+      _goalsFuture = _loadGoals();
     });
+  }
+  
+  Future<_GoalsData> _loadGoals() async {
+    final results = await Future.wait([
+      GoalRepository.getSavingsGoals(),
+      GoalRepository.getRecoveryGoals(),
+    ]);
+    return _GoalsData(
+      savingsGoals: results[0] as List<GoalModel>,
+      recoveryGoals: results[1] as List<GoalModel>,
+    );
   }
 
   // --- UI ---
@@ -58,75 +77,177 @@ class _GoalsScreenState extends State<GoalsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("My Goals")),
-      body: FutureBuilder<List<GoalModel>>(
+      body: FutureBuilder<_GoalsData>(
         future: _goalsFuture,
         builder: (context, snapshot) {
           if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
-          final goals = snapshot.data!;
-          if (goals.isEmpty) {
+          final data = snapshot.data!;
+          final savingsGoals = data.savingsGoals;
+          final recoveryGoals = data.recoveryGoals;
+          
+          if (savingsGoals.isEmpty && recoveryGoals.isEmpty) {
             return const Center(child: Text("No goals yet. Add one!"));
           }
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: Text(
-                  "Hold a goal card to edit, contribute, or delete.",
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
+          
+          return SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Text(
+                    "Hold a goal card to edit, contribute, or delete.",
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
                 ),
-              ),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: goals.length,
-                  itemBuilder: (context, index) {
-                    final goal = goals[index];
-                    final goalName =
-                        goal.name.trim().isEmpty ? 'Goal' : goal.name;
-                    return Card(
-                      margin: const EdgeInsets.all(8),
-                      child: ListTile(
-                        onLongPress: () => _showGoalActionsSheet(goal),
-                        title: Text(goalName,
-                            style:
-                                const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                                "Goal amount: \$${goal.amount.toStringAsFixed(2)}"),
-                            Text(
-                              "Weekly contribution: \$${goal.weeklyContribution.toStringAsFixed(2)}/wk",
-                            ),
-                            const SizedBox(height: 8),
-                            LinearProgressIndicator(
-                              value: goal.progressFraction,
-                              minHeight: 6,
-                              backgroundColor: Colors.grey.shade300,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              goal.progressLabel(),
-                              style: const TextStyle(
-                                  fontSize: 12, color: Colors.grey),
-                            ),
-                          ],
+                // Recovery Goals Section
+                if (recoveryGoals.isNotEmpty) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.trending_down, 
+                          color: Colors.orange.shade700, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          "Recovery Goals",
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                            color: Colors.orange.shade800,
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
+                      ],
+                    ),
+                  ),
+                  ...recoveryGoals.map((goal) => _buildRecoveryGoalCard(goal)),
+                  const SizedBox(height: 8),
+                ],
+                // Savings Goals Section
+                if (savingsGoals.isNotEmpty) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.savings_outlined, 
+                          color: Theme.of(context).colorScheme.primary, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          "Savings Goals",
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  ...savingsGoals.map((goal) => _buildSavingsGoalCard(goal)),
+                ],
+                const SizedBox(height: 80), // Space for FAB
+              ],
+            ),
           );
         },
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showAddGoalDialog(),
         child: const Icon(Icons.add),
+      ),
+    );
+  }
+
+  Widget _buildSavingsGoalCard(GoalModel goal) {
+    final goalName = goal.name.trim().isEmpty ? 'Goal' : goal.name;
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: ListTile(
+        onLongPress: () => _showGoalActionsSheet(goal),
+        title: Text(goalName,
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("Goal amount: \$${goal.amount.toStringAsFixed(2)}"),
+            Text(
+              "Weekly contribution: \$${goal.weeklyContribution.toStringAsFixed(2)}/wk",
+            ),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+              value: goal.progressFraction,
+              minHeight: 6,
+              backgroundColor: Colors.grey.shade300,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              goal.progressLabel(),
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildRecoveryGoalCard(GoalModel goal) {
+    final remaining = (goal.amount - goal.savedAmount).clamp(0.0, double.infinity);
+    final weeksText = goal.recoveryWeeks != null 
+        ? "${goal.recoveryWeeks} week plan" 
+        : "";
+    final isComplete = goal.isComplete;
+    
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      color: isComplete ? Colors.green.shade50 : Colors.orange.shade50,
+      child: ListTile(
+        onLongPress: () => _showGoalActionsSheet(goal),
+        leading: Icon(
+          isComplete ? Icons.check_circle : Icons.trending_down,
+          color: isComplete ? Colors.green : Colors.orange.shade700,
+        ),
+        title: Text(
+          "\$${goal.amount.toStringAsFixed(0)} to pay back",
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: isComplete ? Colors.green.shade800 : Colors.orange.shade800,
+          ),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Weekly payment: \$${goal.weeklyContribution.toStringAsFixed(2)}/wk",
+              style: const TextStyle(fontSize: 13),
+            ),
+            if (weeksText.isNotEmpty)
+              Text(
+                weeksText,
+                style: TextStyle(fontSize: 12, color: Colors.orange.shade600),
+              ),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+              value: goal.progressFraction,
+              minHeight: 6,
+              backgroundColor: Colors.orange.shade100,
+              color: isComplete ? Colors.green : Colors.orange.shade600,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              isComplete 
+                  ? "Fully paid back!" 
+                  : "\$${goal.savedAmount.toStringAsFixed(0)} paid back, \$${remaining.toStringAsFixed(0)} remaining",
+              style: TextStyle(
+                fontSize: 12,
+                color: isComplete ? Colors.green.shade700 : Colors.grey,
+                fontWeight: isComplete ? FontWeight.w500 : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

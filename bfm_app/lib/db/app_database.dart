@@ -50,7 +50,7 @@ class AppDatabase {
     // Open the database with version and an onUpgrade callback
     return await openDatabase(
       path,
-      version: 22,
+      version: 24,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },
@@ -134,6 +134,7 @@ class AppDatabase {
     if (!await hasTable('goal_progress_log')) await _createGoalProgressLog(db);
     if (!await hasTable('weekly_reports')) await _createWeeklyReports(db);
     if (!await hasTable('accounts')) await _createAccounts(db);
+    if (!await hasTable('assets')) await _createAssets(db);
 
     // Goals schema migration (name, amount, weekly_contribution, saved_amount)
     final hasGoalName = await hasCol('goals', 'name');
@@ -145,6 +146,22 @@ class AppDatabase {
     if (!await hasCol('goals', 'saved_amount')) {
       await db.execute(
         'ALTER TABLE goals ADD COLUMN saved_amount REAL NOT NULL DEFAULT 0;',
+      );
+    }
+    // Recovery goals schema additions
+    if (!await hasCol('goals', 'goal_type')) {
+      await db.execute(
+        "ALTER TABLE goals ADD COLUMN goal_type TEXT NOT NULL DEFAULT 'savings';",
+      );
+    }
+    if (!await hasCol('goals', 'original_deficit')) {
+      await db.execute(
+        'ALTER TABLE goals ADD COLUMN original_deficit REAL;',
+      );
+    }
+    if (!await hasCol('goals', 'recovery_weeks')) {
+      await db.execute(
+        'ALTER TABLE goals ADD COLUMN recovery_weeks INTEGER;',
       );
     }
 
@@ -278,6 +295,7 @@ class AppDatabase {
     await _createGoalProgressLog(db);
     await _createWeeklyReports(db);
     await _createAccounts(db);
+    await _createAssets(db);
     await _ensureIndexesAndTriggers(db);
   }
 
@@ -348,7 +366,10 @@ class AppDatabase {
         name TEXT NOT NULL,
         amount REAL NOT NULL,
         weekly_contribution REAL NOT NULL DEFAULT 0,
-        saved_amount REAL NOT NULL DEFAULT 0
+        saved_amount REAL NOT NULL DEFAULT 0,
+        goal_type TEXT NOT NULL DEFAULT 'savings',
+        original_deficit REAL,
+        recovery_weeks INTEGER
       );
     ''');
   }
@@ -681,6 +702,26 @@ class AppDatabase {
       FROM tips_old;
     ''');
     await db.execute('DROP TABLE tips_old;');
+  }
+
+  /// Stores user-entered assets for net worth tracking.
+  Future<void> _createAssets(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS assets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'other',
+        value REAL NOT NULL DEFAULT 0,
+        notes TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_assets_category ON assets(category);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ix_assets_value ON assets(value DESC);',
+    );
   }
 
   /// Ensures all category usage triggers exist so counts stay accurate even if
