@@ -573,27 +573,36 @@ class PromptModel {
     return buffer.toString();
   }
 
-  /// Lists a few of the latest alerts so the assistant can reinforce them in
-  /// chat responses.
+  /// Lists active alerts with details so AI knows what's already set up.
   Future<String> _buildAlertContext() async {
     final alerts = await _db.query(
       'alerts',
-      columns: ['title', 'message', 'icon'],
-      orderBy: 'id DESC',
-      limit: 4,
+      columns: ['title', 'message', 'icon', 'amount', 'due_date', 'recurring_transaction_id'],
+      where: 'is_active = 1',
+      orderBy: 'due_date ASC',
+      limit: 10,
     );
     if (alerts.isEmpty) {
-      return "";
+      return "No active alerts set up.\n\n";
     }
-    final buffer = StringBuffer("Active alerts:\n");
+    final buffer = StringBuffer("EXISTING ALERTS (do NOT suggest duplicates):\n");
     for (final alert in alerts) {
-      final icon = (alert['icon'] ?? '⚠️').toString();
-      final message = (alert['message'] ?? '').toString().trim();
       final title = (alert['title'] ?? '').toString().trim();
-      final display = message.isNotEmpty
-          ? message
-          : (title.isNotEmpty ? title : 'Alert');
-      buffer.writeln("- $icon $display");
+      final amount = alert['amount'];
+      final dueDate = alert['due_date']?.toString();
+      final linkedToRecurring = alert['recurring_transaction_id'] != null;
+      
+      final parts = <String>[title.isNotEmpty ? title : 'Alert'];
+      if (amount != null && amount is num && amount > 0) {
+        parts.add('\$${amount.toStringAsFixed(0)}');
+      }
+      if (dueDate != null && dueDate.isNotEmpty) {
+        parts.add('due $dueDate');
+      }
+      if (linkedToRecurring) {
+        parts.add('(linked to subscription)');
+      }
+      buffer.writeln("- ${parts.join(' | ')}");
     }
     buffer.writeln();
     return buffer.toString();
@@ -615,7 +624,7 @@ class PromptModel {
     if (rows.isEmpty) {
       return "No recurring payments recorded.\n";
     }
-    final buffer = StringBuffer("Recurring payments:\n");
+    final buffer = StringBuffer("Recurring subscriptions/bills:\n");
     String fmtDate(dynamic value) {
       if (value == null) return '';
       final date = DateTime.tryParse(value.toString());
@@ -630,16 +639,53 @@ class PromptModel {
       final type = (row['transaction_type'] ?? '').toString();
       final amountText =
           amount != null ? '\$${amount.toStringAsFixed(amount >= 100 ? 0 : 2)}' : '';
+      final cancelUrl = _getCancellationUrl(description);
       final pieces = <String>[
         description,
         if (amountText.isNotEmpty) amountText,
         if (frequency.isNotEmpty) frequency,
         if (nextDue.isNotEmpty) 'next due $nextDue',
         if (type.isNotEmpty) type,
+        if (cancelUrl != null) 'CANCEL: $cancelUrl',
       ];
-      buffer.writeln("- ${pieces.join(' • ')}");
+      buffer.writeln("- ${pieces.join(' | ')}");
     }
     buffer.writeln();
     return buffer.toString();
+  }
+  
+  /// Returns cancellation URL for known subscription services.
+  /// If user asks to cancel, provide this link with instructions.
+  String? _getCancellationUrl(String description) {
+    final lower = description.toLowerCase();
+    
+    // Streaming services
+    if (lower.contains('spotify')) return 'https://www.spotify.com/account/subscription/';
+    if (lower.contains('netflix')) return 'https://www.netflix.com/cancelplan';
+    if (lower.contains('disney')) return 'https://www.disneyplus.com/account/subscription';
+    if (lower.contains('apple music') || lower.contains('apple tv') || lower.contains('icloud')) {
+      return 'https://support.apple.com/en-nz/HT202039';
+    }
+    if (lower.contains('youtube') || lower.contains('google')) return 'https://myaccount.google.com/subscriptions';
+    if (lower.contains('amazon') || lower.contains('prime')) return 'https://www.amazon.com/gp/primecentral';
+    if (lower.contains('neon')) return 'https://www.neontv.co.nz/account';
+    
+    // Fitness
+    if (lower.contains('cityfitness') || lower.contains('city fitness')) return 'Contact gym directly or visit cityfitness.co.nz';
+    if (lower.contains('les mills')) return 'https://www.lesmills.co.nz/';
+    if (lower.contains('anytime fitness')) return 'Contact your local club';
+    
+    // Software/Apps
+    if (lower.contains('openai') || lower.contains('chatgpt')) return 'https://platform.openai.com/account/billing';
+    if (lower.contains('microsoft') || lower.contains('xbox')) return 'https://account.microsoft.com/services';
+    if (lower.contains('adobe')) return 'https://account.adobe.com/plans';
+    if (lower.contains('canva')) return 'https://www.canva.com/settings/billing-and-plans';
+    
+    // Other common NZ services
+    if (lower.contains('spark')) return 'https://www.spark.co.nz/myaccount';
+    if (lower.contains('vodafone')) return 'https://www.vodafone.co.nz/my-vodafone';
+    if (lower.contains('2degrees')) return 'https://www.2degrees.nz/my2degrees';
+    
+    return null;
   }
 }

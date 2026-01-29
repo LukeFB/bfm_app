@@ -49,6 +49,7 @@ import 'package:bfm_app/services/budget_streak_service.dart';
 import 'package:bfm_app/services/content_sync_service.dart';
 import 'package:bfm_app/services/weekly_overview_service.dart';
 import 'package:bfm_app/widgets/weekly_overview_sheet.dart';
+import 'package:bfm_app/widgets/help_icon_tooltip.dart';
 
 const Color bfmBlue = Color(0xFF005494); // TODO: make a themes file
 const Color bfmOrange = Color(0xFFFF6934);
@@ -56,7 +57,10 @@ const Color bfmBeige = Color(0xFFF5F5E1);
 
 /// Home surface summarising budgets, goals, alerts, and recent activity.
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  /// When true, the screen is embedded in MainShell and won't show its own bottom nav.
+  final bool embedded;
+
+  const DashboardScreen({super.key, this.embedded = false});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -336,12 +340,28 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                               color: isOverspent ? const Color(0xFFE53935) : bfmBlue,
                             ),
                           ),
-                          const Text(
-                            'left to spend this week',
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: Colors.black54,
-                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text(
+                                'left to spend this week',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              HelpIconTooltip(
+                                title: 'Left to Spend',
+                                message: 'This is how much you have left to spend this week after accounting for:\n\n'
+                                    '• Your budgeted expenses (bills, groceries, etc.)\n'
+                                    '• Any overspending on budgets\n'
+                                    '• Non-budgeted spending\n\n'
+                                    'Formula: Income - Budgeted - Budget Overspend - Non-budget Spend\n\n'
+                                    'Keep this positive to stay on track!',
+                                size: 16,
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -494,44 +514,47 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       ),
 
       // -------------------- BOTTOM NAV --------------------
-      bottomNavigationBar: SafeArea(
-        child: Container(
-          color: bfmBlue,
-          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: BottomBarButton(
-                  icon: Icons.insights,
-                  label: "Insights",
-                  onTap: () => _openRoute('/insights'),
+      // Only show when not embedded in MainShell
+      bottomNavigationBar: widget.embedded
+          ? null
+          : SafeArea(
+              child: Container(
+                color: bfmBlue,
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: BottomBarButton(
+                        icon: Icons.insights,
+                        label: "Insights",
+                        onTap: () => _openRoute('/insights'),
+                      ),
+                    ),
+                    Expanded(
+                      child: BottomBarButton(
+                        icon: Icons.account_balance_wallet,
+                        label: "Budget",
+                        onTap: () => _openRoute('/budgets'),
+                      ),
+                    ),
+                    Expanded(
+                      child: BottomBarButton(
+                        icon: Icons.savings_outlined,
+                        label: "Savings",
+                        onTap: () => _openRoute('/savings'),
+                      ),
+                    ),
+                    Expanded(
+                      child: BottomBarButton(
+                        icon: Icons.chat_bubble,
+                        label: "Moni AI",
+                        onTap: () => _openRoute('/chat'),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              Expanded(
-                child: BottomBarButton(
-                  icon: Icons.account_balance_wallet,
-                  label: "Budget",
-                  onTap: () => _openRoute('/budgets'),
-                ),
-              ),
-              Expanded(
-                child: BottomBarButton(
-                  icon: Icons.savings_outlined,
-                  label: "Savings",
-                  onTap: () => _openRoute('/savings'),
-                ),
-              ),
-              Expanded(
-                child: BottomBarButton(
-                  icon: Icons.chat_bubble,
-                  label: "Moni AI",
-                  onTap: () => _openRoute('/chat'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+            ),
     );
   }
 }

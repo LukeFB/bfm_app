@@ -571,4 +571,142 @@ class DashboardService {
     final match = RegExp(r'\S+').stringMatch(trimmed);
     return match ?? '';
   }
+
+  /// Returns per-budget tracking data (label, budget limit, spent this week).
+  /// Used to display a "Track your spending" chart on the budget screen.
+  static Future<List<BudgetTrackingItem>> getBudgetTrackingData() async {
+    final now = DateTime.now();
+    final monday = now.subtract(Duration(days: now.weekday - 1));
+    final weekEnd = now;
+
+    // Get all budgets
+    final budgets = await BudgetRepository.getAll();
+    if (budgets.isEmpty) return [];
+
+    // Get spend by category
+    final spendByCategory = await TransactionRepository.sumExpensesByCategoryBetween(
+      monday,
+      weekEnd,
+    );
+
+    // Get spend by uncategorized key
+    final spendByUncategorizedKey = await TransactionRepository.sumExpensesByUncategorizedKeyBetween(
+      monday,
+      weekEnd,
+    );
+
+    // Get goal contributions
+    final goalSpendMap = await GoalRepository.weeklyContributionTotals(monday);
+
+    // Get recurring transaction descriptions for matching
+    final recurringIds = budgets
+        .map((b) => b.recurringTransactionId)
+        .whereType<int>()
+        .toSet();
+    final recurringTransactions = await RecurringRepository.getByIds(recurringIds);
+    final recurringById = <int, String>{};
+    final recurringDescById = <int, String>{}; // For display names
+    for (final rt in recurringTransactions) {
+      if (rt.id != null && rt.description != null) {
+        recurringById[rt.id!] = rt.description!.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
+        recurringDescById[rt.id!] = rt.description!;
+      }
+    }
+
+    // Get category names
+    final categoryIds = budgets
+        .where((b) => b.categoryId != null)
+        .map((b) => b.categoryId!)
+        .toSet();
+    final categoryNames = await CategoryRepository.getNamesByIds(categoryIds);
+
+    // Load emoji helper
+    final emojiHelper = await CategoryEmojiHelper.ensureLoaded();
+
+    // Build tracking items
+    final items = <BudgetTrackingItem>[];
+    final usedGroupKeys = <String>{};
+
+    for (final budget in budgets) {
+      // Skip budgets with zero limit
+      if (budget.weeklyLimit <= 0) continue;
+
+      String? groupKey;
+      String label = '';
+      double spent = 0.0;
+
+      if (budget.categoryId != null) {
+        final catName = categoryNames[budget.categoryId];
+        final nameLower = catName?.toLowerCase() ?? '';
+        
+        // Handle "Uncategorized" category with recurring transaction
+        if (nameLower == 'uncategorized' || nameLower == 'uncategorised') {
+          if (budget.recurringTransactionId != null) {
+            final recurringKey = recurringById[budget.recurringTransactionId!];
+            if (recurringKey != null && recurringKey.isNotEmpty) {
+              groupKey = 'rec:${budget.recurringTransactionId}';
+              label = recurringDescById[budget.recurringTransactionId!] ?? 'Subscription';
+              spent = spendByUncategorizedKey[recurringKey]?.abs() ?? 0.0;
+            }
+          }
+          // Skip non-recurring uncategorized category budgets
+        } else {
+          groupKey = 'cat:${budget.categoryId}';
+          label = catName ?? 'Category';
+          spent = spendByCategory[budget.categoryId]?.abs() ?? 0.0;
+        }
+      } else if (budget.goalId != null) {
+        groupKey = 'goal:${budget.goalId}';
+        label = budget.label ?? 'Savings';
+        spent = goalSpendMap[budget.goalId!] ?? 0.0;
+      } else if (budget.recurringTransactionId != null) {
+        final recurringKey = recurringById[budget.recurringTransactionId!];
+        if (recurringKey != null && recurringKey.isNotEmpty) {
+          groupKey = 'rec:${budget.recurringTransactionId}';
+          label = recurringDescById[budget.recurringTransactionId!] ?? 'Subscription';
+          spent = spendByUncategorizedKey[recurringKey]?.abs() ?? 0.0;
+        }
+      } else if (budget.uncategorizedKey != null && budget.uncategorizedKey!.isNotEmpty) {
+        groupKey = 'key:${budget.uncategorizedKey}';
+        label = budget.label ?? budget.uncategorizedKey!;
+        spent = spendByUncategorizedKey[budget.uncategorizedKey]?.abs() ?? 0.0;
+      }
+
+      // Only add each group once
+      if (groupKey != null && !usedGroupKeys.contains(groupKey)) {
+        usedGroupKeys.add(groupKey);
+        final emoji = emojiHelper.emojiForName(label);
+        items.add(BudgetTrackingItem(
+          label: label,
+          emoji: emoji,
+          budgetLimit: budget.weeklyLimit,
+          spent: spent,
+        ));
+      }
+    }
+
+    // Sort by budget limit descending
+    items.sort((a, b) => b.budgetLimit.compareTo(a.budgetLimit));
+    return items;
+  }
+}
+
+/// Represents a single budget item with tracking data.
+class BudgetTrackingItem {
+  final String label;
+  final String emoji;
+  final double budgetLimit;
+  final double spent;
+
+  const BudgetTrackingItem({
+    required this.label,
+    required this.emoji,
+    required this.budgetLimit,
+    required this.spent,
+  });
+
+  double get percentage => budgetLimit > 0 ? (spent / budgetLimit).clamp(0.0, 1.0) : 0.0;
+  bool get isOverBudget => spent > budgetLimit;
+  double get remaining => (budgetLimit - spent).clamp(0.0, double.infinity);
+  double get overspend => (spent - budgetLimit).clamp(0.0, double.infinity);
 }

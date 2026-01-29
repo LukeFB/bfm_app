@@ -15,38 +15,53 @@ class ChatActionExtractor {
   static const _maxTokens = 400;
   static const _reasoningEffort = 'low';
   static const _systemPrompt = '''
-You are an assistant that inspects the most recent chat between a financial coach and a student. Identify any concrete follow-up actions that can be saved inside the app.
+You are an assistant that extracts structured action data from a chat between a financial coach and a student.
 
 Valid action types:
-- goal: a savings goal with a target amount or contribution.
+- goal: a savings goal with a target amount and weekly contribution.
 - budget: a weekly spending cap for a category.
 - alert: a one-off reminder for an upcoming bill or payment.
 
-Rules:
-- When the user mentions an upcoming bill, payment, invoice, or repair they need to cover, emit BOTH a `goal` action (for saving the amount) and an `alert` action (to remind them before it is due). Infer due dates or use due_in_days when only a timeframe is provided.
-- If the user asks for a goal with a timeline (specific date, or number of days/weeks/months), emit BOTH a goal and an alert unless they explicitly ask for only one.
-- If a goal has an amount and timeline, compute weekly_amount using: weekly_amount = amount / max(weeks, 1). Weeks = days / 7. Use 30 days per month, 365 days per year. Round to 2 decimals.
-- Never invent amounts; reuse the user’s numbers. Keep amounts positive.
-- If the user has not named the goal/alert/budget, set "title" to "goal", "alert", or "budget" (do not copy the user's request wording).
+CRITICAL RULES FOR EXTRACTING DATA:
+1. ALWAYS prioritize values from the ASSISTANT's latest reply over the user's raw text.
+   - If the assistant said "Name: Bike, Target: \$2,000, Weekly: \$50", use THOSE exact values.
+   - Do NOT use the user's wording (e.g., "a 2k bike") if the assistant provided cleaner values.
 
-Return ONLY valid JSON using this shape:
+2. For titles/names:
+   - Use the name the ASSISTANT specified (e.g., "Bike" not "a 2k bike").
+   - If no name was specified by either, use "goal", "alert", or "budget".
+
+3. For amounts:
+   - Use the EXACT numbers from the assistant's response when available.
+   - The "amount" field is the TARGET amount (total to save).
+   - The "weekly_amount" field is the WEEKLY CONTRIBUTION (how much per week).
+   - These are DIFFERENT numbers - do not confuse them!
+
+4. For timelines:
+   - If a goal has a timeline, compute weekly_amount = amount / max(weeks, 1).
+   - Weeks = days / 7. Use 30 days per month, 365 days per year.
+
+5. When user mentions a bill/payment:
+   - Emit BOTH a goal (for saving) and an alert (for reminder).
+
+Return ONLY valid JSON:
 [
   {
     "type": "goal" | "budget" | "alert",
-    "title": "short label (optional)",
-    "description": "how the user described it",
-    "amount": 123.45,
-    "weekly_amount": 25.0,
-    "category": "name of category if relevant",
+    "title": "short clean name",
+    "description": "original user request",
+    "amount": 2000.00,
+    "weekly_amount": 50.00,
+    "category": "name if relevant",
     "due_date": "YYYY-MM-DD",
     "due_in_days": 14,
-    "note": "extra instructions"
+    "note": "extra info"
   }
 ]
 
 - Use null when information is missing.
-- Keep numbers positive.
-- If no actions are needed return [].
+- Keep amounts positive.
+- If no actions needed, return [].
 ''';
 
   Future<List<ChatSuggestedAction>> identifyActions(
@@ -64,7 +79,7 @@ Return ONLY valid JSON using this shape:
       {
         'role': 'system',
         'content':
-            'Today is $todayLabel. Use today’s date when reasoning about due dates or pay cycles.',
+            'Today is $todayLabel. Use today\'s date when reasoning about due dates or pay cycles.',
       },
       if (memory.isNotEmpty)
         {
@@ -75,13 +90,13 @@ Return ONLY valid JSON using this shape:
         {
           'role': 'system',
           'content':
-              'Latest assistant reply (use this to extract structured actions if needed):\n${assistantReply.trim()}',
+              'IMPORTANT - Latest assistant reply (EXTRACT VALUES FROM THIS when available):\n${assistantReply.trim()}',
         },
       {'role': 'system', 'content': _systemPrompt},
       ...recentTurns,
       {
         'role': 'system',
-        'content': 'Respond with JSON only. No commentary.',
+        'content': 'Respond with JSON only. No commentary. Remember to use values from the assistant reply above.',
       },
     ];
 
@@ -136,13 +151,13 @@ Return ONLY valid JSON using this shape:
       for (final m in head) {
         if (m.role != ChatRole.user) continue;
         final clipped = _clip(m.content, 140);
-        if (clipped.isNotEmpty) bullets.add('• $clipped');
+        if (clipped.isNotEmpty) bullets.add('- $clipped');
         if (bullets.length >= maxBullets - 2) break;
       }
     }
     for (final m in tail) {
       if (m.role == ChatRole.user) {
-        bullets.add('• recent_user: ${_clip(m.content, 140)}');
+        bullets.add('- recent_user: ${_clip(m.content, 140)}');
       }
       if (bullets.length >= maxBullets) break;
     }
@@ -151,7 +166,7 @@ Return ONLY valid JSON using this shape:
 
   String _clip(String s, int max) {
     final t = s.trim().replaceAll('\n', ' ');
-    return (t.length <= max) ? t : '${t.substring(0, max - 1)}…';
+    return (t.length <= max) ? t : '${t.substring(0, max - 1)}...';
   }
 
   String _todayLabel() {
@@ -174,6 +189,7 @@ Return ONLY valid JSON using this shape:
     final day = now.day.toString().padLeft(2, '0');
     return '$day $month ${now.year} (local NZ time)';
   }
+
   String? _extractAssistantText(Map<String, dynamic> data) {
     final choices = data['choices'];
     if (choices is List) {

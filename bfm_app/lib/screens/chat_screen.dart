@@ -44,7 +44,10 @@ import 'package:bfm_app/widgets/manual_alert_sheet.dart';
 
 /// Top-level chat screen that wraps the Moni messenger UI.
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+  /// When true, the screen is embedded in MainShell.
+  final bool embedded;
+
+  const ChatScreen({super.key, this.embedded = false});
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -203,11 +206,16 @@ class _ChatScreenState extends State<ChatScreen> {
       await _store.saveMessages(_allMessages);
       setState(() {});
       _scrollToBottom(); // scroll to bottom when bot replies.
-      unawaited(_detectActions(
-        _buildRecentTurns(),
-        lastUserMessage: lastUserText,
-        lastAssistantMessage: replyWithLinks,
-      ));
+      
+      // Only run action detection if user is actually asking to CREATE something
+      // Don't suggest actions for simple questions like "what's my left to spend"
+      if (_shouldDetectActions(lastUserText, replyWithLinks)) {
+        unawaited(_detectActions(
+          _buildRecentTurns(),
+          lastUserMessage: lastUserText,
+          lastAssistantMessage: replyWithLinks,
+        ));
+      }
     } catch (e) {
       // Friendly error bubble (keeps your style)
       _messages.add(ChatMessage.assistant(
@@ -224,6 +232,29 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Only run action detection when the AI actually suggests creating something.
+  /// The AI outputs structured details like "Name:", "Target:", "Limit:" when it
+  /// wants to create an action - we just look for those patterns.
+  bool _shouldDetectActions(String userMessage, String assistantReply) {
+    // Strip markdown bold markers and lowercase for matching
+    final cleaned = assistantReply.replaceAll('**', '').toLowerCase();
+    
+    // AI outputs structured details when suggesting actions
+    return cleaned.contains('name:') ||
+        cleaned.contains('target:') ||
+        cleaned.contains('weekly:') ||
+        cleaned.contains('limit:') ||
+        cleaned.contains('amount:') ||
+        cleaned.contains('due:') ||
+        cleaned.contains('category:');
+  }
+  
+  /// Detects actionable items from the conversation.
+  /// 
+  /// Simplified pipeline to avoid duplicate processing bugs:
+  /// 1. Extract actions from AI
+  /// 2. Apply single-pass enhancements
+  /// 3. Filter and normalize
   Future<void> _detectActions(
     List<Map<String, String>> turns, {
     String? lastUserMessage,
@@ -231,33 +262,87 @@ class _ChatScreenState extends State<ChatScreen> {
   }) async {
     if (!_hasApiKey) return;
     setState(() => _actionLoading = true);
-    final actionContext = _buildActionContextText(
-      lastUserMessage: lastUserMessage,
-    );
-    var actions = await _actionExtractor.identifyActions(
-      turns,
-      assistantReply: lastAssistantMessage,
-    );
-    actions = _ensurePromptedGoal(actions, lastUserMessage, lastAssistantMessage);
-    actions = _ensureAlertCoverage(actions, actionContext);
-    actions = _ensureBillCoverage(actions, actionContext);
-    actions = _ensureGoalTimelineAlert(actions, actionContext);
-    actions = _filterActionsForUtterance(
-      actions,
-      lastUserMessage,
-      lastAssistantMessage: lastAssistantMessage,
-    );
-    actions = _ensureAlertCoverage(actions, actionContext);
-    actions = _ensureBillCoverage(actions, actionContext);
-    actions = _normalizeActionTitles(actions, lastUserMessage);
-    actions = _prefillMissingActionData(actions, actionContext);
-    if (!mounted) return;
-    setState(() {
-      _actionLoading = false;
-      _pendingActions
-        ..clear()
-        ..addAll(actions);
-    });
+    
+    try {
+      final actionContext = _buildActionContextText(
+        lastUserMessage: lastUserMessage,
+      );
+      
+      // Step 1: Get base actions from AI
+      var actions = await _actionExtractor.identifyActions(
+        turns,
+        assistantReply: lastAssistantMessage,
+      );
+      
+      // Step 2: Single-pass enhancement (removed duplicate calls)
+      actions = _enhanceActions(
+        actions,
+        userText: lastUserMessage,
+        assistantText: lastAssistantMessage,
+        actionContext: actionContext,
+      );
+      
+      // Step 3: Normalize and prefill - prioritize assistant text for extraction
+      actions = _normalizeActionTitles(actions, lastUserMessage);
+      actions = _prefillMissingActionData(
+        actions,
+        userText: actionContext,
+        assistantText: lastAssistantMessage,
+      );
+      
+      if (!mounted) return;
+      setState(() {
+        _actionLoading = false;
+        _pendingActions
+          ..clear()
+          ..addAll(actions);
+      });
+    } catch (e) {
+      debugPrint('Action detection error: $e');
+      if (mounted) {
+        setState(() => _actionLoading = false);
+      }
+    }
+  }
+
+  /// Minimal enhancement - just adds timeline-based alerts if needed.
+  /// We trust the action extractor's output since _shouldDetectActions already
+  /// verified the AI suggested creating something.
+  List<ChatSuggestedAction> _enhanceActions(
+    List<ChatSuggestedAction> actions, {
+    String? userText,
+    String? assistantText,
+    String? actionContext,
+  }) {
+    // Trust the action extractor - don't filter out what it returns
+    // The AI already decided to suggest these actions
+    if (actions.isEmpty) return actions;
+    
+    var result = List<ChatSuggestedAction>.from(actions);
+    
+    // Only enhancement: if there's a goal with a timeline but no alert, add one
+    final hasGoal = result.any((a) => a.type == ChatActionType.goal);
+    final hasAlert = result.any((a) => a.type == ChatActionType.alert);
+    
+    if (hasGoal && !hasAlert && userText != null) {
+      final extractedDueInDays = _extractDueInDaysFromText(userText);
+      final extractedDueDate = _extractDueDateFromText(userText);
+      final hasTimeline = extractedDueInDays != null || extractedDueDate != null;
+      
+      if (hasTimeline) {
+        final goal = result.firstWhere((a) => a.type == ChatActionType.goal);
+        result.add(ChatSuggestedAction(
+          type: ChatActionType.alert,
+          title: goal.title ?? 'Reminder',
+          description: userText,
+          amount: goal.amount,
+          dueDate: extractedDueDate,
+          dueInDays: extractedDueInDays,
+        ));
+      }
+    }
+    
+    return result;
   }
 
   String _buildActionContextText({String? lastUserMessage}) {
@@ -279,211 +364,147 @@ class _ChatScreenState extends State<ChatScreen> {
     return lastUserMessage ?? '';
   }
 
-  List<ChatSuggestedAction> _ensureBillCoverage(
-    List<ChatSuggestedAction> actions,
-    String? userText,
-  ) {
-    if (userText == null) return actions;
-    final normalized = userText.toLowerCase();
-    if (!_mentionsBill(normalized)) return actions;
-    final alertOnly = _wantsAlertOnly(normalized);
+  // Removed duplicate helper methods - now using _enhanceActions for single-pass processing
 
-    final result = List<ChatSuggestedAction>.from(actions);
-    final hasGoal = result.any((a) => a.type == ChatActionType.goal);
-    final hasAlert = result.any((a) => a.type == ChatActionType.alert);
-    final extractedAmount = _extractAmountFromText(userText);
-    final extractedDueInDays = _extractDueInDaysFromText(userText);
-    final existingAmount = _firstAmount(result);
-    final existingDueDate = _firstDueDate(result);
-    final existingDueInDays =
-        _firstDueInDays(result) ?? extractedDueInDays;
-
-    if (!hasGoal && !alertOnly) {
-      result.add(
-        ChatSuggestedAction(
-          type: ChatActionType.goal,
-          title: 'Upcoming bill',
-          description: userText,
-          amount: extractedAmount ?? existingAmount,
-        ),
-      );
-    }
-
-    if (!hasAlert) {
-      result.add(
-        ChatSuggestedAction(
-          type: ChatActionType.alert,
-          title: 'Upcoming bill',
-          description: userText,
-          amount: extractedAmount ?? existingAmount,
-          dueDate: existingDueDate,
-          dueInDays: existingDueInDays,
-        ),
-      );
-    }
-
-    return result;
-  }
-
-  List<ChatSuggestedAction> _ensureGoalTimelineAlert(
-    List<ChatSuggestedAction> actions,
-    String? userText,
-  ) {
-    if (userText == null) return actions;
-    final normalized = userText.toLowerCase();
-    if (!_mentionsGoal(normalized)) return actions;
-    if (_wantsAlertOnly(normalized)) return actions;
-    final hasTimeline =
-        _extractDueInDaysFromText(userText) != null ||
-        _extractDueDateFromText(userText) != null;
-    if (!hasTimeline) return actions;
-    final hasAlert = actions.any((a) => a.type == ChatActionType.alert);
-    if (hasAlert) return actions;
-    final extractedAmount = _extractAmountFromText(userText);
-    final extractedDueInDays = _extractDueInDaysFromText(userText);
-    final extractedDueDate = _extractDueDateFromText(userText);
-    final result = List<ChatSuggestedAction>.from(actions);
-    result.add(
-      ChatSuggestedAction(
-        type: ChatActionType.alert,
-        title: 'alert',
-        description: userText,
-        amount: extractedAmount,
-        dueDate: extractedDueDate,
-        dueInDays: extractedDueInDays,
-      ),
-    );
-    return result;
-  }
-
-  List<ChatSuggestedAction> _ensureAlertCoverage(
-    List<ChatSuggestedAction> actions,
-    String? userText,
-  ) {
-    if (userText == null) return actions;
-    final normalized = userText.toLowerCase();
-    if (!_mentionsAlert(normalized)) return actions;
-    final result = List<ChatSuggestedAction>.from(actions);
-    final hasAlert = result.any((a) => a.type == ChatActionType.alert);
-    if (hasAlert) return result;
-    final extractedAmount = _extractAmountFromText(userText);
-    final extractedDueInDays = _extractDueInDaysFromText(userText);
-    result.add(
-      ChatSuggestedAction(
-        type: ChatActionType.alert,
-        amount: extractedAmount,
-        dueInDays: extractedDueInDays,
-      ),
-    );
-    return result;
-  }
-
-  List<ChatSuggestedAction> _ensurePromptedGoal(
-    List<ChatSuggestedAction> actions,
+  /// Fills in missing action data by extracting from text.
+  /// PRIORITIZES assistant text over user text to get clean values.
+  List<ChatSuggestedAction> _prefillMissingActionData(
+    List<ChatSuggestedAction> actions, {
     String? userText,
     String? assistantText,
-  ) {
-    if (userText == null || assistantText == null) return actions;
-    if (!_assistantPromptedAction(assistantText.toLowerCase(), ChatActionType.goal)) {
-      return actions;
-    }
-    final hasGoal = actions.any((action) => action.type == ChatActionType.goal);
-    if (hasGoal) return actions;
-    final title = _extractGoalNameFromText(userText);
-    final amount = _extractAmountFromText(userText);
-    final dueInDays = _extractDueInDaysFromText(userText);
-    final result = List<ChatSuggestedAction>.from(actions);
-    result.add(
-      ChatSuggestedAction(
-        type: ChatActionType.goal,
-        title: title,
-        description: userText,
-        amount: amount,
-        dueInDays: dueInDays,
-      ),
-    );
-    return result;
-  }
-
-  List<ChatSuggestedAction> _filterActionsForUtterance(
-    List<ChatSuggestedAction> actions,
-    String? userText, {
-    String? lastAssistantMessage,
   }) {
     if (actions.isEmpty) return actions;
-    final normalized = userText?.toLowerCase() ?? '';
-    final alertOnly = _wantsAlertOnly(normalized);
-    final goalTimeline = _goalNeedsAlert(normalized, actions);
-    final wantsAlert =
-        _mentionsAlert(normalized) || _mentionsBill(normalized) || goalTimeline;
-    final wantsGoal =
-        _mentionsGoal(normalized) || (_mentionsBill(normalized) && !alertOnly);
-    final assistantText = lastAssistantMessage?.toLowerCase() ?? '';
-    final promptedGoal =
-        _assistantPromptedAction(assistantText, ChatActionType.goal);
-    final promptedAlert =
-        _assistantPromptedAction(assistantText, ChatActionType.alert);
-    final promptedBudget =
-        _assistantPromptedAction(assistantText, ChatActionType.budget);
-    return actions.where((action) {
-      if (action.type == ChatActionType.alert &&
-          !wantsAlert &&
-          !promptedAlert) {
-        return false;
-      }
-      if (action.type == ChatActionType.goal &&
-          !wantsGoal &&
-          !promptedGoal) {
-        return false;
-      }
-      if (action.type == ChatActionType.budget &&
-          !_mentionsBudget(normalized) &&
-          !promptedBudget) {
-        return false;
-      }
-      return true;
-    }).toList();
-  }
-
-  List<ChatSuggestedAction> _prefillMissingActionData(
-    List<ChatSuggestedAction> actions,
-    String? userText,
-  ) {
-    if (actions.isEmpty || userText == null) return actions;
-    final extractedAmount = _extractAmountFromText(userText);
-    final extractedDueInDays = _extractDueInDaysFromText(userText);
-    final extractedDueDate = _extractDueDateFromText(userText);
-    final extractedName = _extractGoalNameFromText(userText);
+    
+    // Extract from assistant text first (higher priority - cleaner values)
+    final assistantAmount = assistantText != null ? _extractAmountFromText(assistantText) : null;
+    final assistantWeekly = assistantText != null ? _extractWeeklyFromAssistant(assistantText) : null;
+    final assistantName = assistantText != null ? _extractNameFromAssistant(assistantText) : null;
+    final assistantDueInDays = assistantText != null ? _extractDueInDaysFromText(assistantText) : null;
+    final assistantDueDate = assistantText != null ? _extractDueDateFromText(assistantText) : null;
+    
+    // Extract from user text as fallback
+    final userAmount = userText != null ? _extractAmountFromText(userText) : null;
+    final userName = userText != null ? _extractGoalNameFromText(userText) : null;
+    final userDueInDays = userText != null ? _extractDueInDaysFromText(userText) : null;
+    final userDueDate = userText != null ? _extractDueDateFromText(userText) : null;
+    
     return actions.map((action) {
       var updated = action;
-      if (updated.amount == null && extractedAmount != null) {
-        updated = updated.copyWith(amount: extractedAmount);
-      }
-      if (updated.type == ChatActionType.goal &&
-          (updated.title == null || _isGenericGoalName(updated.title!)) &&
-          extractedName != null) {
-        updated = updated.copyWith(title: extractedName);
-      }
-      if (updated.dueDate == null && extractedDueDate != null) {
-        updated = updated.copyWith(dueDate: extractedDueDate);
-      }
-      if (updated.dueInDays == null && extractedDueInDays != null) {
-        updated = updated.copyWith(dueInDays: extractedDueInDays);
-      }
-      if (updated.type == ChatActionType.goal &&
-          updated.weeklyAmount == null &&
-          updated.amount != null) {
-        final weekly = _calculateWeeklyContribution(
-          updated.amount!,
-          dueDate: updated.dueDate,
-          dueInDays: updated.dueInDays,
-        );
-        if (weekly != null && weekly > 0) {
-          updated = updated.copyWith(weeklyAmount: weekly);
+      
+      // Fill amount - prefer assistant value
+      if (updated.amount == null) {
+        final amount = assistantAmount ?? userAmount;
+        if (amount != null) {
+          updated = updated.copyWith(amount: amount);
         }
       }
+      
+      // Fill weekly amount - ONLY from assistant or calculation, never from user raw text
+      if (updated.type == ChatActionType.goal && updated.weeklyAmount == null) {
+        if (assistantWeekly != null && assistantWeekly > 0) {
+          updated = updated.copyWith(weeklyAmount: assistantWeekly);
+        } else if (updated.amount != null) {
+          // Calculate from amount + timeline
+          final dueIn = updated.dueInDays ?? assistantDueInDays ?? userDueInDays;
+          final dueDate = updated.dueDate ?? assistantDueDate ?? userDueDate;
+          final weekly = _calculateWeeklyContribution(
+            updated.amount!,
+            dueDate: dueDate,
+            dueInDays: dueIn,
+          );
+          if (weekly != null && weekly > 0) {
+            updated = updated.copyWith(weeklyAmount: weekly);
+          }
+        }
+      }
+      
+      // Fill title - prefer assistant's clean name
+      if (updated.type == ChatActionType.goal &&
+          (updated.title == null || _isGenericGoalName(updated.title!))) {
+        final name = assistantName ?? userName;
+        if (name != null) {
+          updated = updated.copyWith(title: name);
+        }
+      }
+      
+      // Fill due date
+      if (updated.dueDate == null) {
+        final date = assistantDueDate ?? userDueDate;
+        if (date != null) {
+          updated = updated.copyWith(dueDate: date);
+        }
+      }
+      
+      // Fill due in days
+      if (updated.dueInDays == null) {
+        final days = assistantDueInDays ?? userDueInDays;
+        if (days != null) {
+          updated = updated.copyWith(dueInDays: days);
+        }
+      }
+      
       return updated;
     }).toList();
+  }
+  
+  /// Extracts weekly contribution from assistant's response.
+  /// Handles markdown: **Weekly**: **$50** or Weekly: $50
+  double? _extractWeeklyFromAssistant(String text) {
+    // Strip markdown bold markers
+    final cleaned = text.replaceAll('**', '');
+    
+    final patterns = [
+      // "Weekly: $50" or "Weekly: 50"
+      RegExp(r'weekly[:\s]+\$?([0-9,]+(?:\.[0-9]{1,2})?)', caseSensitive: false),
+      // "weekly contribution: $50"
+      RegExp(r'weekly contribution[:\s]+\$?([0-9,]+(?:\.[0-9]{1,2})?)', caseSensitive: false),
+      // "contribute $50 per week"
+      RegExp(r'contribute[:\s]+\$?([0-9,]+(?:\.[0-9]{1,2})?)\s*(?:per\s+)?week', caseSensitive: false),
+      // "$50/week" or "$50 per week"
+      RegExp(r'\$([0-9,]+(?:\.[0-9]{1,2})?)\s*(?:/|per\s+)?week', caseSensitive: false),
+    ];
+    
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(cleaned);
+      if (match != null) {
+        final value = double.tryParse(match.group(1)!.replaceAll(',', ''));
+        if (value != null && value > 0) return value;
+      }
+    }
+    return null;
+  }
+  
+  /// Extracts goal/alert name from assistant's response.
+  /// Handles markdown bold format: **Name**: Bike or Name: Bike
+  String? _extractNameFromAssistant(String text) {
+    // Strip markdown bold markers for easier matching
+    final cleaned = text.replaceAll('**', '');
+    
+    final patterns = [
+      // "Name: Bike" or "Name: Bike," or "Name: Bike\n"
+      RegExp(r'name[:\s]+([A-Za-z][A-Za-z0-9\s\-]+?)(?:\s*[-,\n]|\s*$|\s+target|\s+amount)', caseSensitive: false),
+      // "called Bike"
+      RegExp(r'called\s+([A-Za-z][A-Za-z0-9\s\-]+?)(?:\s*[-,\n]|\s*$|\s+for)', caseSensitive: false),
+      // "goal: Bike" at start of line
+      RegExp(r'goal[:\s]+([A-Za-z][A-Za-z0-9\s\-]+?)(?:\s*[-,\n]|\s*$|\s+target)', caseSensitive: false),
+    ];
+    
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(cleaned);
+      if (match != null) {
+        var name = match.group(1)?.trim();
+        if (name != null && name.isNotEmpty && name.length < 30) {
+          // Clean up any trailing punctuation
+          name = name.replaceAll(RegExp(r'[,.\-]+$'), '').trim();
+          // Don't return generic words
+          final lower = name.toLowerCase();
+          if (lower != 'goal' && lower != 'savings' && lower != 'alert' && lower != 'budget' && lower != 'set') {
+            return name;
+          }
+        }
+      }
+    }
+    return null;
   }
   /// Clears history after a confirmation dialog and reseeds the greeting.
   Future<void> _clearChat() async {
@@ -722,6 +743,15 @@ class _ChatScreenState extends State<ChatScreen> {
             .schedule(alert.copyWith(id: id));
       } catch (err) {
         debugPrint('Alert scheduling failed: $err');
+        // Notify user that notification might not work but alert is saved
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Alert saved but notification scheduling failed'),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
       }
       final chatText = form.amount != null
           ? "I’ll remind you about ${form.title} on ${_friendlyDate(form.dueDate)} for ${_formatCurrency(form.amount!)}."
@@ -923,8 +953,10 @@ class _GoalSheetState extends State<_GoalSheet> {
     _amountCtrl = TextEditingController(
       text: _prefillAmount(widget.action.amount),
     );
+    // Don't fall back to amount for weekly - that's completely wrong!
+    // If no weekly amount was extracted, leave empty for user to fill in
     _weeklyCtrl = TextEditingController(
-      text: _prefillAmount(widget.action.weeklyAmount ?? widget.action.amount),
+      text: _prefillAmount(widget.action.weeklyAmount),
     );
     _createAlert = widget.alertSuggestion != null;
     _alertDueDate = _initialAlertDate(widget.alertSuggestion);
@@ -970,12 +1002,16 @@ class _GoalSheetState extends State<_GoalSheet> {
         ),
       );
       if (_createAlert) {
-        await _createGoalAlert(
+        final alertScheduled = await _createGoalAlert(
           name,
           targetAmount: target,
           dueDate: _alertDueDate!,
           suggestion: widget.alertSuggestion,
         );
+        if (!alertScheduled && mounted) {
+          // Alert saved but notification may not fire
+          debugPrint('Alert for goal "$name" saved but notification scheduling failed');
+        }
       }
       if (!mounted) return;
       final alertSuffix = _createAlert
@@ -1115,7 +1151,7 @@ class _GoalSheetState extends State<_GoalSheet> {
     }
   }
 
-  Future<void> _createGoalAlert(
+  Future<bool> _createGoalAlert(
     String goalName, {
     required double targetAmount,
     required DateTime dueDate,
@@ -1133,8 +1169,10 @@ class _GoalSheetState extends State<_GoalSheet> {
     final id = await AlertRepository.insert(alert);
     try {
       await AlertNotificationService.instance.schedule(alert.copyWith(id: id));
+      return true;
     } catch (err) {
       debugPrint('Alert scheduling failed: $err');
+      return false;
     }
   }
 }

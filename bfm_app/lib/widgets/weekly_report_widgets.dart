@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:bfm_app/models/weekly_report.dart';
 import 'package:bfm_app/services/budget_comparison_service.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
+import 'package:bfm_app/widgets/help_icon_tooltip.dart';
 
 /// Card summarising goal outcomes and linking to the goals screen.
 class GoalReportCard extends StatelessWidget {
@@ -100,43 +101,62 @@ class BudgetRingCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            SizedBox(
-              width: 220,
-              height: 220,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  CustomPaint(
-                    size: const Size.square(200),
-                    painter: _BudgetRingPainter(
-                      segments: segments,
-                      strokeWidth: 18,
-                    ),
-                  ),
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
+            Stack(
+              children: [
+                SizedBox(
+                  width: 220,
+                  height: 220,
+                  child: Stack(
+                    alignment: Alignment.center,
                     children: [
-                      const Text(
-                        "Income",
-                        style: TextStyle(fontSize: 12, color: Colors.black54),
-                      ),
-                      Text(
-                        "\$${report.totalIncome.toStringAsFixed(0)}",
-                        style: const TextStyle(
-                            fontSize: 20, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        "Spent: \$${spentFromSegments.toStringAsFixed(0)}",
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.black54,
+                      CustomPaint(
+                        size: const Size.square(200),
+                        painter: _BudgetRingPainter(
+                          segments: segments,
+                          strokeWidth: 18,
                         ),
+                      ),
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            "Income",
+                            style: TextStyle(fontSize: 12, color: Colors.black54),
+                          ),
+                          Text(
+                            "\$${report.totalIncome.toStringAsFixed(0)}",
+                            style: const TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            "Spent: \$${spentFromSegments.toStringAsFixed(0)}",
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.black54,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
-              ),
+                ),
+                const Positioned(
+                  top: 0,
+                  right: 0,
+                  child: HelpIconTooltip(
+                    title: 'Spending Breakdown',
+                    message: 'This chart shows where your money went this week:\n\n'
+                        '• Each colored segment represents a spending category\n'
+                        '• The size of each segment shows how much you spent there\n'
+                        '• Categories you\'ve budgeted for appear in the "budgeted for" section\n'
+                        '• Unbudgeted spending appears separately\n\n'
+                        'The grey "Leftover" shows money you didn\'t spend.\n\n'
+                        'Tip: Try to keep most spending in budgeted categories!',
+                    size: 16,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             _buildLegend(segments),
@@ -654,7 +674,7 @@ class _BudgetComparisonCardState extends State<BudgetComparisonCard> {
     return Card(
       child: Column(
         children: [
-          InkWell(
+            InkWell(
             onTap: () => setState(() => _isExpanded = !_isExpanded),
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -664,9 +684,25 @@ class _BudgetComparisonCardState extends State<BudgetComparisonCard> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          "Budget vs Last Month's Average",
-                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                        Row(
+                          children: [
+                            const Text(
+                              "Monthly Average vs Budget",
+                              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                            ),
+                            const SizedBox(width: 4),
+                            const HelpIconTooltip(
+                              title: 'Monthly Average vs Budget',
+                              message: 'This compares your average monthly spending to your budget limits:\n\n'
+                                  '✅ On track: Your average spending is within your budget\n'
+                                  '✅ Under budget: You typically spend less than budgeted\n'
+                                  '⚠️ Over budget: Your average spending exceeds your budget\n\n'
+                                  'If you\'re consistently over budget in a category, '
+                                  'consider either increasing the budget or finding ways to spend less.\n\n'
+                                  'Tap to expand and see details for each category.',
+                              size: 14,
+                            ),
+                          ],
                         ),
                         Text(
                           _formatWeekLabel(),

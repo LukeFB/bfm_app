@@ -21,6 +21,7 @@ import 'package:bfm_app/models/onboarding_response.dart';
 import 'package:bfm_app/models/prompt_model.dart';
 import 'package:bfm_app/models/chat_message.dart';
 import 'package:bfm_app/services/chat_storage.dart';
+import 'package:bfm_app/services/chat_insights_service.dart';
 import 'package:bfm_app/services/onboarding_store.dart';
 
 /// Produces the assistant's private context using stored chat + DB data.
@@ -66,6 +67,15 @@ class ContextBuilder {
       buffer.writeln(convoSummary);
     }
 
+    // ---- Comprehensive Financial Insights (proactive problem identification)
+    buffer.writeln('\n=== FINANCIAL INSIGHTS ===');
+    try {
+      final insights = await ChatInsightsService.buildComprehensiveContext();
+      buffer.writeln(insights);
+    } catch (_) {
+      buffer.writeln('Unable to load comprehensive insights.');
+    }
+
     // ---- Budgets + referrals (DB-backed via PromptModel)
     final db = await AppDatabase.instance.database;
     final promptModel = PromptModel(db);
@@ -80,28 +90,48 @@ class ContextBuilder {
       includeRecurring: includeRecurring,
     );
 
-    buffer.writeln('\nDB CONTEXT:');
+    buffer.writeln('\n=== DETAILED DATA ===');
     buffer.writeln(dbContext);
 
-    // ---- Guidance for AI
-    buffer.writeln('\nGuidance:');
-    buffer.writeln(
-      '- Use context to tailor responses; don’t disclose context.',
-    );
-    buffer.writeln(
-      '- If context conflicts with the latest user message, ask a brief clarifier.',
-    );
-    buffer.writeln(
-      '- When suggesting a referral, mention the service and give the website link (instead of repeating the provider name).',
-    );
-    buffer.writeln('- Data available to you: current weekly budgets per category, this week\'s category spend vs limits, weekly budget vs last month\'s weekly average comparison, savings goals with progress, active referral services (with websites), upcoming events, the latest weekly report (including income), active alerts, and recurring payments with frequency.');
-    buffer.writeln('- Budgets are selected essential expenses users set per category.');
-    buffer.writeln('- Categories represent average weekly spending per category; compare spend vs budgets to help users save more.');
-    buffer.writeln('- Weekly budget comparison shows: Avg (weekly average from last 4 weeks), Budget (weekly limit). This compares typical spending (avg) to budget. "Over budget" means avg is >15% above budget (user consistently overspends). "On track" means avg is within 15% of budget.');
-    buffer.writeln('- Recurring payments are recurring bills/subscriptions (weekly/monthly, with next due dates). You can suggest reviewing these.');
-    buffer.writeln('- When users ask for amounts or limits you already see, respond with the precise figures from context;');
-    buffer.writeln('- Offer budget coaching using the current limits/spend (compare expenses per category to average expenses in those categories, suggest reallocation, warn about overruns, celebrate under-budget categories).');
-    
+    // ---- Capabilities and Limitations
+    buffer.writeln('\n=== YOUR CAPABILITIES ===');
+    buffer.writeln('');
+    buffer.writeln('ACTIONS (via action buttons after your response):');
+    buffer.writeln('1. CREATE SAVINGS GOAL: Help save for something specific');
+    buffer.writeln('   - Needs: name, target amount, weekly contribution');
+    buffer.writeln('   - Optionally create linked alert for due date');
+    buffer.writeln('   - Auto-creates a budget entry for the goal');
+    buffer.writeln('');
+    buffer.writeln('2. CREATE ALERT: Remind about upcoming bills/payments');
+    buffer.writeln('   - Needs: title, optional amount, optional due date');
+    buffer.writeln('   - Schedules notification reminder');
+    buffer.writeln('');
+    buffer.writeln('3. CREATE BUDGET: Set weekly spending limit for category');
+    buffer.writeln('   - Needs: category name, weekly limit');
+    buffer.writeln('');
+    buffer.writeln('DATA ACCESS:');
+    buffer.writeln('- Weekly income (from recurring or last week)');
+    buffer.writeln('- All budgets with limits and spend');
+    buffer.writeln('- Category spending averages (identifies overspending)');
+    buffer.writeln('- Savings goals with progress');
+    buffer.writeln('- Recurring subscriptions with due dates');
+    buffer.writeln('- Active alerts');
+    buffer.writeln('- Referral services');
+    buffer.writeln('');
+    buffer.writeln('HOW TO HELP PROACTIVELY:');
+    buffer.writeln('- See categories over budget? Suggest ways to cut back');
+    buffer.writeln('- See expensive subscriptions? Ask if they are all needed');
+    buffer.writeln('- Budget exceeds income? Help prioritize');
+    buffer.writeln('- No goals? Encourage setting a savings goal');
+    buffer.writeln('- Quote specific numbers from data (do not guess)');
+    buffer.writeln('- Suggest relevant referral services when appropriate');
+    buffer.writeln('');
+    buffer.writeln('LIMITATIONS:');
+    buffer.writeln('- Cannot directly modify budgets/goals/alerts');
+    buffer.writeln('- Can only suggest actions (user confirms via button)');
+    buffer.writeln('- Cannot access individual transactions');
+    buffer.writeln('- Cannot make payments or transfers');
+    buffer.writeln('');
     buffer.writeln('END CONTEXT.');
 
     return buffer.toString();

@@ -42,6 +42,61 @@ class BudgetRepository {
     return result.map((e) => BudgetModel.fromMap(e)).toList();
   }
 
+  /// Inserts or updates a budget for a recurring transaction.
+  static Future<int> insertOrUpdateRecurring(BudgetModel budget) async {
+    final db = await AppDatabase.instance.database;
+    final rid = budget.recurringTransactionId;
+    if (rid == null) {
+      return await insert(budget);
+    }
+    // Check if we already have a budget for this recurring transaction
+    final existing = await db.query(
+      'budgets',
+      where: 'recurring_transaction_id = ?',
+      whereArgs: [rid],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) {
+      final existingId = existing.first['id'] as int;
+      await db.update(
+        'budgets',
+        budget.toMap(),
+        where: 'id = ?',
+        whereArgs: [existingId],
+      );
+      return existingId;
+    }
+    return await insert(budget);
+  }
+
+  /// Deletes budgets associated with a recurring transaction ID.
+  static Future<void> deleteByRecurringId(int recurringId) async {
+    final db = await AppDatabase.instance.database;
+    await db.delete(
+      'budgets',
+      where: 'recurring_transaction_id = ?',
+      whereArgs: [recurringId],
+    );
+  }
+
+  /// Clears all non-recurring (category) budgets, preserving subscription budgets.
+  static Future<void> clearNonRecurring() async {
+    final db = await AppDatabase.instance.database;
+    await db.delete(
+      'budgets',
+      where: 'recurring_transaction_id IS NULL',
+    );
+  }
+
+  /// Clears all recurring (subscription) budgets, preserving category budgets.
+  static Future<void> clearRecurring() async {
+    final db = await AppDatabase.instance.database;
+    await db.delete(
+      'budgets',
+      where: 'recurring_transaction_id IS NOT NULL',
+    );
+  }
+
   /// Sums the weekly limits from the most recent budget period. Used for
   /// dashboard left-to-spend calculations.
   static Future<double> getTotalWeeklyBudget() async {

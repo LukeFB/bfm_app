@@ -23,7 +23,10 @@ import 'package:bfm_app/widgets/weekly_report_widgets.dart';
 
 /// Screen for viewing weekly insights snapshots.
 class InsightsScreen extends StatefulWidget {
-  const InsightsScreen({super.key});
+  /// When true, the screen is embedded in MainShell.
+  final bool embedded;
+
+  const InsightsScreen({super.key, this.embedded = false});
 
   @override
   State<InsightsScreen> createState() => _InsightsScreenState();

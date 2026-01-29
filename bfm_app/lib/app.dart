@@ -38,10 +38,12 @@ import 'package:bfm_app/screens/settings_screen.dart';
 import 'package:bfm_app/screens/bank_connect_screen.dart'; // BankConnect screen
 import 'package:bfm_app/screens/debug_screen.dart'; // Debug
 import 'package:bfm_app/screens/onboarding_screen.dart';
+import 'package:bfm_app/widgets/main_shell.dart'; // Swipeable navigation shell
 
 import 'package:bfm_app/screens/budget_build_screen.dart';
 import 'package:bfm_app/screens/budget_recurring_screen.dart';
 import 'package:bfm_app/screens/budgets_screen.dart';
+import 'package:bfm_app/screens/subscriptions_screen.dart';
 import 'package:bfm_app/screens/enter_pin_screen.dart';
 import 'package:bfm_app/screens/savings_screen.dart';
 import 'package:bfm_app/screens/set_pin_screen.dart';
@@ -204,7 +206,7 @@ class _LockGateState extends State<LockGate> {
         nextRoute = '/bankconnect';
       } else {
         final budgets = await BudgetRepository.getAll();
-        nextRoute = budgets.isEmpty ? '/budget/build' : '/dashboard';
+        nextRoute = budgets.isEmpty ? '/subscriptions' : '/dashboard';
       }
 
       if (!mounted) return;
@@ -442,15 +444,20 @@ class MyApp extends StatelessWidget {
       routes: {
         '/onboarding': (_) => const OnboardingScreen(),
         '/bankconnect': (_) => const BankConnectScreen(),
-        '/dashboard': (_) => const DashboardScreen(),
+        // Main navigation shell with swipeable screens
+        // Order: Insights(0), Budget(1), Dashboard(2), Savings(3), Chat(4)
+        '/dashboard': (_) => const MainShell(initialPage: 2),
+        '/insights': (_) => const MainShell(initialPage: 0),
+        '/budgets': (_) => const MainShell(initialPage: 1),
+        '/savings': (_) => const MainShell(initialPage: 3),
+        '/chat': (_) => const MainShell(initialPage: 4),
+        // Standalone screens (not in swipe navigation)
         '/transaction': (_) => const TransactionsScreen(),
         '/goals': (_) => const GoalsScreen(),
-        '/chat': (_) => const ChatScreen(),
-        '/insights': (_) => const InsightsScreen(),
         '/settings': (_) => const SettingsScreen(),
-        '/savings': (_) => const SavingsScreen(),
-        '/debug': (_) => const DebugScreen(), // Debug
-        '/budgets': (_) => const BudgetsScreen(),
+        '/debug': (_) => const DebugScreen(),
+        '/subscriptions': (_) => const SubscriptionsScreen(),
+        '/subscriptions/edit': (_) => const SubscriptionsScreen(editMode: true),
         '/budget/build': (_) => const BudgetBuildScreen(),
         '/budget/edit': (_) => const BudgetBuildScreen(editMode: true),
         '/alerts/manage': (_) => const BudgetRecurringScreen(),

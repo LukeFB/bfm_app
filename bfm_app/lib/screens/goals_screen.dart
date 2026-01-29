@@ -21,6 +21,7 @@ import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/transaction_model.dart';
+import 'package:bfm_app/widgets/help_icon_tooltip.dart';
 
 /// Stateful wrapper because the screen owns dialog controllers and refreshes
 /// its own Future each time a CRUD action completes.
@@ -118,6 +119,18 @@ class _GoalsScreenState extends State<GoalsScreen> {
                             fontSize: 16,
                             color: Colors.orange.shade800,
                           ),
+                        ),
+                        const SizedBox(width: 4),
+                        HelpIconTooltip(
+                          title: 'Recovery Goals',
+                          message: 'Recovery goals help you bounce back after overspending.\n\n'
+                              'When you go over budget, instead of stressing, Moni creates a '
+                              'recovery goal that spreads the deficit over several weeks.\n\n'
+                              'Each week, pay the suggested amount to gradually get back on track. '
+                              'Once fully paid back, the goal will be marked complete!\n\n'
+                              'Tip: The weekly overview will automatically prompt you to contribute.',
+                          size: 16,
+                          color: Colors.orange.shade600,
                         ),
                       ],
                     ),

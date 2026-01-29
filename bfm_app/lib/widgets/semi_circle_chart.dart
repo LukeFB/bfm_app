@@ -625,28 +625,37 @@ class _SemiCircleChartPainter extends CustomPainter {
     final isScenario4 = !isOverspentBudget && isOverspentDiscretionary;
 
     if (isScenario1) {
-      // ===== SCENARIO 1: Budget OK, Non-budget OK - use income as base =====
-      final budgetAngle = totalAngle * (totalBudgeted / income).clamp(0.0, 1.0);
-      final leftToSpendAngle = totalAngle * (leftToSpend / income).clamp(0.0, 1.0);
+      // ===== SCENARIO 1: Budget OK, Non-budget OK =====
+      // Use the actual sum of components as base to prevent wrap-around
+      final totalBase = totalBudgeted + leftToSpend;
+      if (totalBase <= 0) return;
+      
+      final budgetAngle = totalAngle * (totalBudgeted / totalBase).clamp(0.0, 1.0);
+      final leftToSpendAngle = totalAngle * (leftToSpend / totalBase).clamp(0.0, 1.0);
       
       var currentPos = startAngle;
       
       // Orange outline (budget) with orange fill based on spent
       if (budgetAngle > 0.01) {
-        _drawArc(canvas, center, radius, currentPos, budgetAngle - gapAngle/2, _orangeLight, strokeWidth);
+        final drawAngle = (budgetAngle - gapAngle/2).clamp(0.0, totalAngle);
+        _drawArc(canvas, center, radius, currentPos, drawAngle, _orangeLight, strokeWidth);
         if (spentOnBudgets > 0) {
           final fillRatio = (spentOnBudgets / totalBudgeted).clamp(0.0, 1.0);
-          _drawArc(canvas, center, radius, currentPos, (budgetAngle - gapAngle/2) * fillRatio, _orangeBright, strokeWidth - 4);
+          _drawArc(canvas, center, radius, currentPos, drawAngle * fillRatio, _orangeBright, strokeWidth - 4);
         }
         currentPos += budgetAngle + gapAngle/2;
       }
       
       // Blue outline (weekly limit) with blue fill based on non-budget spent
-      if (leftToSpendAngle > 0.01) {
-        _drawArc(canvas, center, radius, currentPos, leftToSpendAngle - gapAngle/2, _blueLight, strokeWidth);
-        if (discretionarySpent > 0) {
+      // Clamp to remaining space in semi-circle
+      final remainingAngle = (startAngle + totalAngle - currentPos).clamp(0.0, totalAngle);
+      final actualLeftAngle = leftToSpendAngle.clamp(0.0, remainingAngle);
+      if (actualLeftAngle > 0.01) {
+        final drawAngle = (actualLeftAngle - gapAngle/2).clamp(0.0, remainingAngle);
+        _drawArc(canvas, center, radius, currentPos, drawAngle, _blueLight, strokeWidth);
+        if (discretionarySpent > 0 && leftToSpend > 0) {
           final fillRatio = (discretionarySpent / leftToSpend).clamp(0.0, 1.0);
-          _drawArc(canvas, center, radius, currentPos, (leftToSpendAngle - gapAngle/2) * fillRatio, _blueBright, strokeWidth - 4);
+          _drawArc(canvas, center, radius, currentPos, drawAngle * fillRatio, _blueBright, strokeWidth - 4);
         }
       }
       
@@ -656,32 +665,36 @@ class _SemiCircleChartPainter extends CustomPainter {
       final totalBase = totalBudgeted + budgetOverspend + effectiveLeftToSpend;
       if (totalBase <= 0) return;
       
-      final budgetAngle = totalAngle * (totalBudgeted / totalBase);
-      final budgetOverspendAngle = totalAngle * (budgetOverspend / totalBase);
-      final effectiveLimitAngle = totalAngle * (effectiveLeftToSpend / totalBase);
+      final budgetAngle = (totalAngle * (totalBudgeted / totalBase)).clamp(0.0, totalAngle);
+      final budgetOverspendAngle = (totalAngle * (budgetOverspend / totalBase)).clamp(0.0, totalAngle);
+      final effectiveLimitAngle = (totalAngle * (effectiveLeftToSpend / totalBase)).clamp(0.0, totalAngle);
       
       var currentPos = startAngle;
       
       // Orange filled (100% since overspent)
       if (budgetAngle > 0.01) {
-        _drawArc(canvas, center, radius, currentPos, budgetAngle, _orangeLight, strokeWidth);
-        _drawArc(canvas, center, radius, currentPos, budgetAngle, _orangeBright, strokeWidth - 4);
-        currentPos += budgetAngle;
+        final drawAngle = budgetAngle.clamp(0.0, startAngle + totalAngle - currentPos);
+        _drawArc(canvas, center, radius, currentPos, drawAngle, _orangeLight, strokeWidth);
+        _drawArc(canvas, center, radius, currentPos, drawAngle, _orangeBright, strokeWidth - 4);
+        currentPos += drawAngle;
       }
       
       // Red (budget overspend)
       if (budgetOverspendAngle > 0.01) {
-        _drawArc(canvas, center, radius, currentPos, budgetOverspendAngle, _redOverspent, strokeWidth - 4);
-        currentPos += budgetOverspendAngle;
+        final drawAngle = budgetOverspendAngle.clamp(0.0, startAngle + totalAngle - currentPos);
+        _drawArc(canvas, center, radius, currentPos, drawAngle, _redOverspent, strokeWidth - 4);
+        currentPos += drawAngle;
       }
       
       // Blue outline with fill based on non-budget spent
-      if (effectiveLimitAngle > 0.01) {
+      final remainingAngle = (startAngle + totalAngle - currentPos - gapAngle).clamp(0.0, totalAngle);
+      if (remainingAngle > 0.01) {
         currentPos += gapAngle;
-        _drawArc(canvas, center, radius, currentPos, effectiveLimitAngle, _blueLight, strokeWidth);
-        if (discretionarySpent > 0) {
+        final drawAngle = effectiveLimitAngle.clamp(0.0, remainingAngle);
+        _drawArc(canvas, center, radius, currentPos, drawAngle, _blueLight, strokeWidth);
+        if (discretionarySpent > 0 && effectiveLeftToSpend > 0) {
           final fillRatio = (discretionarySpent / effectiveLeftToSpend).clamp(0.0, 1.0);
-          _drawArc(canvas, center, radius, currentPos, effectiveLimitAngle * fillRatio, _blueBright, strokeWidth - 4);
+          _drawArc(canvas, center, radius, currentPos, drawAngle * fillRatio, _blueBright, strokeWidth - 4);
         }
       }
       
@@ -694,29 +707,33 @@ class _SemiCircleChartPainter extends CustomPainter {
         final totalBase = totalBudgeted + budgetOverspend + discretionarySpent;
         if (totalBase <= 0) return;
         
-        final budgetAngle = totalAngle * (totalBudgeted / totalBase);
-        final budgetOverspendAngle = totalAngle * (budgetOverspend / totalBase);
-        final nonBudgetSpentAngle = totalAngle * (discretionarySpent / totalBase);
+        final budgetAngle = (totalAngle * (totalBudgeted / totalBase)).clamp(0.0, totalAngle);
+        final budgetOverspendAngle = (totalAngle * (budgetOverspend / totalBase)).clamp(0.0, totalAngle);
+        final nonBudgetSpentAngle = (totalAngle * (discretionarySpent / totalBase)).clamp(0.0, totalAngle);
         
         var currentPos = startAngle;
         
         // Orange filled (100% since overspent)
         if (budgetAngle > 0.01) {
-          _drawArc(canvas, center, radius, currentPos, budgetAngle, _orangeLight, strokeWidth);
-          _drawArc(canvas, center, radius, currentPos, budgetAngle, _orangeBright, strokeWidth - 4);
-          currentPos += budgetAngle;
+          final drawAngle = budgetAngle.clamp(0.0, startAngle + totalAngle - currentPos);
+          _drawArc(canvas, center, radius, currentPos, drawAngle, _orangeLight, strokeWidth);
+          _drawArc(canvas, center, radius, currentPos, drawAngle, _orangeBright, strokeWidth - 4);
+          currentPos += drawAngle;
         }
         
         // Red (budget overspend)
         if (budgetOverspendAngle > 0.01) {
-          _drawArc(canvas, center, radius, currentPos, budgetOverspendAngle, _redOverspent, strokeWidth - 4);
-          currentPos += budgetOverspendAngle;
+          final drawAngle = budgetOverspendAngle.clamp(0.0, startAngle + totalAngle - currentPos);
+          _drawArc(canvas, center, radius, currentPos, drawAngle, _redOverspent, strokeWidth - 4);
+          currentPos += drawAngle;
         }
         
         // Red (non-budget spent - all red since no weekly limit left)
-        if (nonBudgetSpentAngle > 0.01) {
+        final remainingAngle = (startAngle + totalAngle - currentPos - gapAngle).clamp(0.0, totalAngle);
+        if (remainingAngle > 0.01) {
           currentPos += gapAngle;
-          _drawArc(canvas, center, radius, currentPos, nonBudgetSpentAngle, _redOverspent, strokeWidth - 4);
+          final drawAngle = nonBudgetSpentAngle.clamp(0.0, remainingAngle);
+          _drawArc(canvas, center, radius, currentPos, drawAngle, _redOverspent, strokeWidth - 4);
         }
         
       } else {
@@ -725,37 +742,43 @@ class _SemiCircleChartPainter extends CustomPainter {
         final totalBase = totalBudgeted + budgetOverspend + effectiveLeftToSpend + discretionaryOverspend;
         if (totalBase <= 0) return;
         
-        final budgetAngle = totalAngle * (totalBudgeted / totalBase);
-        final budgetOverspendAngle = totalAngle * (budgetOverspend / totalBase);
-        final weeklyLimitAngle = totalAngle * (effectiveLeftToSpend / totalBase);
-        final nonBudgetOverspendAngle = totalAngle * (discretionaryOverspend / totalBase);
+        final budgetAngle = (totalAngle * (totalBudgeted / totalBase)).clamp(0.0, totalAngle);
+        final budgetOverspendAngle = (totalAngle * (budgetOverspend / totalBase)).clamp(0.0, totalAngle);
+        final weeklyLimitAngle = (totalAngle * (effectiveLeftToSpend / totalBase)).clamp(0.0, totalAngle);
+        final nonBudgetOverspendAngle = (totalAngle * (discretionaryOverspend / totalBase)).clamp(0.0, totalAngle);
         
         var currentPos = startAngle;
         
         // Orange filled (100% since overspent)
         if (budgetAngle > 0.01) {
-          _drawArc(canvas, center, radius, currentPos, budgetAngle, _orangeLight, strokeWidth);
-          _drawArc(canvas, center, radius, currentPos, budgetAngle, _orangeBright, strokeWidth - 4);
-          currentPos += budgetAngle;
+          final drawAngle = budgetAngle.clamp(0.0, startAngle + totalAngle - currentPos);
+          _drawArc(canvas, center, radius, currentPos, drawAngle, _orangeLight, strokeWidth);
+          _drawArc(canvas, center, radius, currentPos, drawAngle, _orangeBright, strokeWidth - 4);
+          currentPos += drawAngle;
         }
         
         // Red (budget overspend)
         if (budgetOverspendAngle > 0.01) {
-          _drawArc(canvas, center, radius, currentPos, budgetOverspendAngle, _redOverspent, strokeWidth - 4);
-          currentPos += budgetOverspendAngle;
+          final drawAngle = budgetOverspendAngle.clamp(0.0, startAngle + totalAngle - currentPos);
+          _drawArc(canvas, center, radius, currentPos, drawAngle, _redOverspent, strokeWidth - 4);
+          currentPos += drawAngle;
         }
         
         // Blue (effective weekly limit)
-        if (weeklyLimitAngle > 0.01) {
+        var remainingAngle = (startAngle + totalAngle - currentPos - gapAngle).clamp(0.0, totalAngle);
+        if (remainingAngle > 0.01 && weeklyLimitAngle > 0.01) {
           currentPos += gapAngle;
-          _drawArc(canvas, center, radius, currentPos, weeklyLimitAngle, _blueLight, strokeWidth);
-          _drawArc(canvas, center, radius, currentPos, weeklyLimitAngle, _blueBright, strokeWidth - 4);
-          currentPos += weeklyLimitAngle;
+          final drawAngle = weeklyLimitAngle.clamp(0.0, remainingAngle);
+          _drawArc(canvas, center, radius, currentPos, drawAngle, _blueLight, strokeWidth);
+          _drawArc(canvas, center, radius, currentPos, drawAngle, _blueBright, strokeWidth - 4);
+          currentPos += drawAngle;
         }
         
         // Red (non-budget overspend)
-        if (nonBudgetOverspendAngle > 0.01) {
-          _drawArc(canvas, center, radius, currentPos, nonBudgetOverspendAngle, _redOverspent, strokeWidth - 4);
+        remainingAngle = (startAngle + totalAngle - currentPos).clamp(0.0, totalAngle);
+        if (remainingAngle > 0.01 && nonBudgetOverspendAngle > 0.01) {
+          final drawAngle = nonBudgetOverspendAngle.clamp(0.0, remainingAngle);
+          _drawArc(canvas, center, radius, currentPos, drawAngle, _redOverspent, strokeWidth - 4);
         }
       }
       
@@ -765,32 +788,37 @@ class _SemiCircleChartPainter extends CustomPainter {
       final totalBase = totalBudgeted + leftToSpend + discretionaryOverspend;
       if (totalBase <= 0) return;
       
-      final budgetAngle = totalAngle * (totalBudgeted / totalBase);
-      final weeklyLimitAngle = totalAngle * (leftToSpend / totalBase);
-      final overspendAngle = totalAngle * (discretionaryOverspend / totalBase);
+      final budgetAngle = (totalAngle * (totalBudgeted / totalBase)).clamp(0.0, totalAngle);
+      final weeklyLimitAngle = (totalAngle * (leftToSpend / totalBase)).clamp(0.0, totalAngle);
+      final overspendAngle = (totalAngle * (discretionaryOverspend / totalBase)).clamp(0.0, totalAngle);
       
       var currentPos = startAngle;
       
       // Orange outline with fill based on spent
       if (budgetAngle > 0.01) {
-        _drawArc(canvas, center, radius, currentPos, budgetAngle - gapAngle/2, _orangeLight, strokeWidth);
-        if (spentOnBudgets > 0) {
+        final drawAngle = (budgetAngle - gapAngle/2).clamp(0.0, startAngle + totalAngle - currentPos);
+        _drawArc(canvas, center, radius, currentPos, drawAngle, _orangeLight, strokeWidth);
+        if (spentOnBudgets > 0 && totalBudgeted > 0) {
           final fillRatio = (spentOnBudgets / totalBudgeted).clamp(0.0, 1.0);
-          _drawArc(canvas, center, radius, currentPos, (budgetAngle - gapAngle/2) * fillRatio, _orangeBright, strokeWidth - 4);
+          _drawArc(canvas, center, radius, currentPos, drawAngle * fillRatio, _orangeBright, strokeWidth - 4);
         }
         currentPos += budgetAngle + gapAngle/2;
       }
       
       // Blue filled (100% since non-budget overspent)
-      if (weeklyLimitAngle > 0.01) {
-        _drawArc(canvas, center, radius, currentPos, weeklyLimitAngle, _blueLight, strokeWidth);
-        _drawArc(canvas, center, radius, currentPos, weeklyLimitAngle, _blueBright, strokeWidth - 4);
-        currentPos += weeklyLimitAngle;
+      var remainingAngle = (startAngle + totalAngle - currentPos).clamp(0.0, totalAngle);
+      if (remainingAngle > 0.01 && weeklyLimitAngle > 0.01) {
+        final drawAngle = weeklyLimitAngle.clamp(0.0, remainingAngle);
+        _drawArc(canvas, center, radius, currentPos, drawAngle, _blueLight, strokeWidth);
+        _drawArc(canvas, center, radius, currentPos, drawAngle, _blueBright, strokeWidth - 4);
+        currentPos += drawAngle;
       }
       
       // Red (non-budget overspend)
-      if (overspendAngle > 0.01) {
-        _drawArc(canvas, center, radius, currentPos, overspendAngle, _redOverspent, strokeWidth - 4);
+      remainingAngle = (startAngle + totalAngle - currentPos).clamp(0.0, totalAngle);
+      if (remainingAngle > 0.01 && overspendAngle > 0.01) {
+        final drawAngle = overspendAngle.clamp(0.0, remainingAngle);
+        _drawArc(canvas, center, radius, currentPos, drawAngle, _redOverspent, strokeWidth - 4);
       }
     }
   }

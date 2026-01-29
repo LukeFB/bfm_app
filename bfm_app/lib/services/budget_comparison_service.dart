@@ -8,6 +8,7 @@
 /// ---------------------------------------------------------------------------
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
+import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 
 /// Comparison data for a budget item's spend this week vs weekly average.
@@ -48,7 +49,7 @@ class BudgetSpendComparison {
 /// Service for comparing budget spend against historical averages.
 class BudgetComparisonService {
   /// Compares spend per budget vs weekly average over the prior month.
-  /// Groups multiple budgets under the same category to avoid double-counting.
+  /// Each budget is shown individually (not grouped) to ensure correct limits.
   /// 
   /// If [forWeekStart] is provided, compares that week's spend vs prior 4 weeks.
   /// Otherwise uses the current week (week-to-date).
@@ -90,63 +91,82 @@ class BudgetComparisonService {
       {...thisWeekUncategorized.keys, ...lastMonthUncategorized.keys}, monthStart, weekEnd,
     );
     
-    // Group budgets by category to avoid double-counting
-    final categoryBudgets = <int, double>{};
-    final uncategorizedBudgets = <String, double>{};
-    
-    for (final budget in budgets) {
-      if (budget.categoryId != null) {
-        categoryBudgets[budget.categoryId!] = 
-            (categoryBudgets[budget.categoryId!] ?? 0.0) + budget.weeklyLimit;
-      } else if (budget.uncategorizedKey != null && budget.uncategorizedKey!.isNotEmpty) {
-        uncategorizedBudgets[budget.uncategorizedKey!] = 
-            (uncategorizedBudgets[budget.uncategorizedKey!] ?? 0.0) + budget.weeklyLimit;
+    // Load recurring transactions to get their descriptions as keys
+    final recurringIds = budgets
+        .map((b) => b.recurringTransactionId)
+        .whereType<int>()
+        .toSet();
+    final recurringTransactions = await RecurringRepository.getByIds(recurringIds);
+    final recurringKeyById = <int, String>{};
+    for (final rt in recurringTransactions) {
+      if (rt.id != null && rt.description != null) {
+        // Normalize the description the same way as uncategorizedSpendMap keys
+        recurringKeyById[rt.id!] = rt.description!.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
       }
     }
     
     final comparisons = <BudgetSpendComparison>[];
+    // Track what we've already added to avoid showing duplicate entries
+    // for the same category/key (use first budget's limit only)
+    final seenCategoryIds = <int>{};
+    final seenUncategorizedKeys = <String>{};
+    final seenRecurringIds = <int>{};
     
-    // Process categorized budgets (grouped by category)
-    for (final entry in categoryBudgets.entries) {
-      final catId = entry.key;
-      final totalBudget = entry.value;
+    for (final budget in budgets) {
+      String label;
+      bool isCategorized;
+      double thisWeek;
+      double weeklyAvg;
       
-      final catName = categoryNames[catId];
-      if (catName == null) continue;
-      final nameLower = catName.toLowerCase();
-      if (nameLower == 'uncategorized' || nameLower == 'uncategorised') continue;
+      // Check if this is linked to the "Uncategorized" category
+      bool isUncategorizedCategory = false;
+      if (budget.categoryId != null) {
+        final catName = categoryNames[budget.categoryId!];
+        if (catName != null) {
+          final nameLower = catName.toLowerCase();
+          isUncategorizedCategory = nameLower == 'uncategorized' || nameLower == 'uncategorised';
+        }
+      }
       
-      final thisWeek = thisWeekSpend[catId]?.abs() ?? 0.0;
-      // Weekly average = total over 4 weeks / 4
-      final weeklyAvg = (lastMonthSpend[catId]?.abs() ?? 0.0) / 4;
-      
-      if (thisWeek == 0 && weeklyAvg == 0) continue;
-      
-      final difference = thisWeek - weeklyAvg;
-      final percentChange = weeklyAvg > 0 
-          ? ((thisWeek - weeklyAvg) / weeklyAvg * 100) 
-          : (thisWeek > 0 ? 100.0 : 0.0);
-      
-      comparisons.add(BudgetSpendComparison(
-        label: catName,
-        budgetLimit: totalBudget,
-        thisWeekSpend: thisWeek,
-        weeklyAvgSpend: weeklyAvg,
-        difference: difference,
-        percentChange: percentChange,
-        isCategorized: true,
-      ));
-    }
-    
-    // Process uncategorized budgets (grouped by key)
-    for (final entry in uncategorizedBudgets.entries) {
-      final key = entry.key;
-      final totalBudget = entry.value;
-      
-      final label = uncategorizedNames[key] ?? _titleCase(key);
-      
-      final thisWeek = thisWeekUncategorized[key]?.abs() ?? 0.0;
-      final weeklyAvg = (lastMonthUncategorized[key]?.abs() ?? 0.0) / 4;
+      if (budget.categoryId != null && !isUncategorizedCategory) {
+        // Regular categorized budget - skip if we've already seen this category
+        final catId = budget.categoryId!;
+        if (seenCategoryIds.contains(catId)) continue;
+        seenCategoryIds.add(catId);
+        
+        label = categoryNames[catId] ?? 'Category';
+        isCategorized = true;
+        thisWeek = thisWeekSpend[catId]?.abs() ?? 0.0;
+        weeklyAvg = (lastMonthSpend[catId]?.abs() ?? 0.0) / 4;
+      } else if (budget.recurringTransactionId != null) {
+        // Recurring transaction budget - skip if we've already seen this recurring ID
+        final recId = budget.recurringTransactionId!;
+        if (seenRecurringIds.contains(recId)) continue;
+        seenRecurringIds.add(recId);
+        
+        final key = recurringKeyById[recId];
+        if (key == null || key.isEmpty) continue;
+        
+        // Use the budget's custom label if set
+        label = _getBudgetLabel(budget, uncategorizedNames, key);
+        isCategorized = false;
+        thisWeek = thisWeekUncategorized[key]?.abs() ?? 0.0;
+        weeklyAvg = (lastMonthUncategorized[key]?.abs() ?? 0.0) / 4;
+      } else if (budget.uncategorizedKey != null && budget.uncategorizedKey!.isNotEmpty) {
+        // Uncategorized budget by key - skip if we've already seen this key
+        final key = budget.uncategorizedKey!;
+        if (seenUncategorizedKeys.contains(key)) continue;
+        seenUncategorizedKeys.add(key);
+        
+        // Use the budget's custom label if set
+        label = _getBudgetLabel(budget, uncategorizedNames, key);
+        isCategorized = false;
+        thisWeek = thisWeekUncategorized[key]?.abs() ?? 0.0;
+        weeklyAvg = (lastMonthUncategorized[key]?.abs() ?? 0.0) / 4;
+      } else {
+        // Skip budgets with no identifiable key
+        continue;
+      }
       
       if (thisWeek == 0 && weeklyAvg == 0) continue;
       
@@ -157,17 +177,45 @@ class BudgetComparisonService {
       
       comparisons.add(BudgetSpendComparison(
         label: label,
-        budgetLimit: totalBudget,
+        budgetLimit: budget.weeklyLimit, // Use THIS budget's limit only
         thisWeekSpend: thisWeek,
         weeklyAvgSpend: weeklyAvg,
         difference: difference,
         percentChange: percentChange,
-        isCategorized: false,
+        isCategorized: isCategorized,
       ));
     }
     
     comparisons.sort((a, b) => b.difference.abs().compareTo(a.difference.abs()));
     return comparisons;
+  }
+  
+  /// Gets the display label for a budget, preferring custom label over transaction name.
+  static String _getBudgetLabel(
+    dynamic budget,
+    Map<String, String> uncategorizedNames,
+    String key,
+  ) {
+    // Use budget's custom label if set and not generic
+    final customLabel = (budget.label as String?)?.trim() ?? '';
+    if (customLabel.isNotEmpty) {
+      final labelLower = customLabel.toLowerCase();
+      if (labelLower != 'uncategorized' && 
+          labelLower != 'uncategorised' &&
+          labelLower != 'other transaction') {
+        return customLabel;
+      }
+    }
+    // Fall back to transaction name from uncategorizedNames
+    final transactionName = uncategorizedNames[key];
+    if (transactionName != null && transactionName.trim().isNotEmpty) {
+      final nameLower = transactionName.trim().toLowerCase();
+      if (nameLower != 'uncategorized' && nameLower != 'uncategorised') {
+        return transactionName.trim();
+      }
+    }
+    // Final fallback: title case the key
+    return _titleCase(key);
   }
   
   /// Builds a context string for the AI chatbot describing spend comparisons.

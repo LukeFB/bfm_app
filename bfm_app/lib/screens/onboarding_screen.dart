@@ -3,10 +3,8 @@
 /// Author: Luke Fraser-Brown
 ///
 /// Purpose:
-///   - Guides new Moni users through an optional onboarding questionnaire right
-///     after they unlock the app for the first time (before bank connect).
-///   - Captures lightweight demographic context, explains data privacy, and
-///     teaches the core screens so people know what to expect.
+///   - Polished onboarding flow that welcomes new users, explains Moni's value,
+///     collects optional context, and connects their bank account.
 /// ---------------------------------------------------------------------------
 
 import 'package:flutter/material.dart';
@@ -19,35 +17,59 @@ import 'package:bfm_app/services/onboarding_store.dart';
 class OnboardingScreen extends StatefulWidget {
   final String onCompleteRoute;
 
-  const OnboardingScreen({super.key, this.onCompleteRoute = '/budget/build'});
+  const OnboardingScreen({super.key, this.onCompleteRoute = '/subscriptions'});
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-class _OnboardingScreenState extends State<OnboardingScreen> {
+class _OnboardingScreenState extends State<OnboardingScreen>
+    with SingleTickerProviderStateMixin {
   final PageController _pageController = PageController();
+  final OnboardingStore _store = OnboardingStore();
+
+  // Form controllers
   final _ageCtrl = TextEditingController();
   final _genderCtrl = TextEditingController();
   final _locationCtrl = TextEditingController();
   final _referrerCtrl = TextEditingController();
   final _reasonCtrl = TextEditingController();
-  final _situationCtrl = TextEditingController();
   final _bankAppTokenCtrl = TextEditingController();
   final _bankUserTokenCtrl = TextEditingController();
-  final OnboardingStore _store = OnboardingStore();
 
   int _currentPage = 0;
   bool _saving = false;
-  bool _loadingTriggered = false;
   bool _bankConnecting = false;
   bool _bankConnected = false;
   String? _bankConnectError;
+
+  late AnimationController _fadeController;
+  late Animation<double> _fadeAnimation;
+
+  // Page indices
+  static const int _welcomeIndex = 0;
+  static const int _feature1Index = 1;
+  static const int _feature2Index = 2;
+  static const int _feature3Index = 3;
+  static const int _aboutYouIndex = 4;
+  static const int _yourWhyIndex = 5;
+  static const int _privacyIndex = 6;
+  static const int _bankConnectIndex = 7;
+  static const int _totalPages = 8;
 
   @override
   void initState() {
     super.initState();
     _hydrateBankStatus();
+    _fadeController = AnimationController(
+      duration: const Duration(milliseconds: 400),
+      vsync: this,
+    );
+    _fadeAnimation = CurvedAnimation(
+      parent: _fadeController,
+      curve: Curves.easeOut,
+    );
+    _fadeController.forward();
   }
 
   Future<void> _hydrateBankStatus() async {
@@ -60,12 +82,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   void dispose() {
     _pageController.dispose();
+    _fadeController.dispose();
     _ageCtrl.dispose();
     _genderCtrl.dispose();
     _locationCtrl.dispose();
     _referrerCtrl.dispose();
     _reasonCtrl.dispose();
-    _situationCtrl.dispose();
     _bankAppTokenCtrl.dispose();
     _bankUserTokenCtrl.dispose();
     super.dispose();
@@ -73,74 +95,47 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = _buildPages(context);
-    final totalPages = pages.length;
-    final lastPageIndex = totalPages - 1;
-    final bankConnectIndex = totalPages >= 2 ? totalPages - 2 : 0;
-    final isLastPage = _currentPage >= lastPageIndex;
-    final isLoadingPage = _currentPage == lastPageIndex;
-    final isBankConnectPage = _currentPage == bankConnectIndex;
     final isProcessing = _saving || _bankConnecting;
-    final nextLabel = isLoadingPage
-        ? 'Start using Moni'
-        : isBankConnectPage
-        ? (_bankConnected ? 'Continue' : 'Connect bank')
-        : 'Next';
-    final nextIcon = isLoadingPage
-        ? Icons.rocket_launch
-        : isBankConnectPage
-        ? Icons.link
-        : Icons.arrow_forward;
+    final showBackButton = _currentPage > 0 && !isProcessing;
 
     return Scaffold(
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        title: const Text('Welcome to Moni'),
-        actions: const [],
-      ),
       body: SafeArea(
         child: Column(
           children: [
-            _ProgressDots(currentIndex: _currentPage, total: totalPages),
+            // Progress indicator
+            _OnboardingProgress(
+              currentPage: _currentPage,
+              totalPages: _totalPages,
+            ),
+            // Page content
             Expanded(
               child: PageView(
                 controller: _pageController,
                 physics: const NeverScrollableScrollPhysics(),
                 onPageChanged: (index) {
                   setState(() => _currentPage = index);
-                  if (index == lastPageIndex) {
-                    _startFakeLoading();
-                  }
+                  _fadeController.reset();
+                  _fadeController.forward();
                 },
-                children: pages,
+                children: [
+                  _buildWelcomePage(),
+                  _buildTrackSpendingPage(),
+                  _buildBudgetsPage(),
+                  _buildFeaturePage(
+                    icon: Icons.lightbulb_outline,
+                    title: 'Get personalised guidance',
+                    description:
+                        'Your AI coach helps you stay on track and reach your goals.',
+                  ),
+                  _buildAboutYouPage(),
+                  _buildYourWhyPage(),
+                  _buildPrivacyPage(),
+                  _buildBankConnectPage(),
+                ],
               ),
             ),
-            if (!isLoadingPage)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                child: Row(
-                  children: [
-                    TextButton.icon(
-                      icon: const Icon(Icons.arrow_back),
-                      label: const Text('Back'),
-                      onPressed: isProcessing || _currentPage == 0
-                          ? null
-                          : () => _pageController.previousPage(
-                              duration: const Duration(milliseconds: 250),
-                              curve: Curves.easeInOut,
-                            ),
-                    ),
-                    const Spacer(),
-                    FilledButton.icon(
-                      icon: Icon(nextIcon),
-                      label: Text(nextLabel),
-                      onPressed: isProcessing
-                          ? null
-                          : () => _handleNext(isLastPage, bankConnectIndex),
-                    ),
-                  ],
-                ),
-              ),
+            // Navigation buttons
+            _buildNavigation(showBackButton, isProcessing),
             if (isProcessing) const LinearProgressIndicator(minHeight: 2),
           ],
         ),
@@ -148,224 +143,433 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  List<Widget> _buildPages(BuildContext context) {
-    final questionSteps = _questionSteps();
-    final questionPages = questionSteps.map(_buildQuestionPage).toList();
-    final loadingPage = _buildLoadingPage(context);
-    final bankConnectPage = _buildBankConnectPage(context);
-    return [
-      ...questionPages,
-      _buildPrivacyPage(context),
-      bankConnectPage,
-      loadingPage,
-    ];
-  }
+  Widget _buildNavigation(bool showBackButton, bool isProcessing) {
+    final isWelcome = _currentPage == _welcomeIndex;
+    final isBankConnect = _currentPage == _bankConnectIndex;
+    final isSkippablePage =
+        _currentPage == _aboutYouIndex || _currentPage == _yourWhyIndex;
 
-  List<_QuestionStep> _questionSteps() {
-    return [
-      _QuestionStep(
-        title: 'Tell us about yourself',
-        description:
-            'Age, gender, and location help us tailor tips to your life stage.',
-        groupedFields: [
-          _FieldConfig(
-            controller: _ageCtrl,
-            label: 'Age',
-            keyboardType: TextInputType.number,
-          ),
-          _FieldConfig(
-            controller: _genderCtrl,
-            label: 'Gender',
-          ),
-          _FieldConfig(
-            controller: _locationCtrl,
-            label: 'Location',
-            hint: 'City or region',
-          ),
-        ],
-        showInfo: false,
-      ),
-      _QuestionStep(
-        title: 'Who pointed you to Moni?',
-        description: 'Helps us thank the right people and understand reach.',
-        fieldLabel: 'Referrer',
-        controller: _referrerCtrl,
-        showInfo: false,
-      ),
-      _QuestionStep(
-        title:
-            'Tell us a little about your situation and why you want to use Moni',
-        description:
-            'Helps the coach focus advice on what matters most to you.',
-        controller: _reasonCtrl,
-        fieldLabel: 'Share anything helpful',
-        hint:
-            'I’m studying full-time, supporting whānau, and want to stay on top of weekly spending…',
-        maxLines: 6,
-      ),
-    ];
-  }
+    String nextLabel;
+    IconData nextIcon;
 
-  Widget _buildQuestionPage(_QuestionStep step) {
-    return _OnboardingPageShell(
-      title: step.title,
-      description: step.description,
-      child: Column(
+    if (isWelcome) {
+      nextLabel = 'Get started';
+      nextIcon = Icons.arrow_forward;
+    } else if (isBankConnect) {
+      nextLabel = _bankConnected ? 'Continue' : 'Connect bank';
+      nextIcon = _bankConnected ? Icons.arrow_forward : Icons.link;
+    } else {
+      nextLabel = 'Continue';
+      nextIcon = Icons.arrow_forward;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      child: Row(
         children: [
-          if (step.groupedFields != null)
-            Column(
-              children: [
-                for (final field in step.groupedFields!) ...[
-                  _LabeledField(
-                    controller: field.controller,
-                    label: field.label,
-                    hint: field.hint,
-                    maxLines: field.maxLines,
-                    keyboardType: field.keyboardType,
-                  ),
-                  const SizedBox(height: 12),
-                ],
-              ],
+          if (showBackButton)
+            TextButton.icon(
+              icon: const Icon(Icons.arrow_back, size: 18),
+              label: const Text('Back'),
+              onPressed: () => _pageController.previousPage(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              ),
             )
           else
-            _LabeledField(
-              controller: step.controller!,
-              label: step.fieldLabel ?? '',
-              hint: step.hint,
-              maxLines: step.maxLines,
-              keyboardType: step.keyboardType,
+            const SizedBox(width: 80),
+          const Spacer(),
+          if (isSkippablePage)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: TextButton(
+                onPressed: isProcessing ? null : _goToNextPage,
+                child: const Text('Skip'),
+              ),
             ),
-          if (step.showInfo) ...[
-            const SizedBox(height: 12),
-            _InfoBanner(
-              icon: Icons.info_outline,
-              message:
-                  step.infoMessage ??
-                  'All user data is kept on device and is optional.',
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPrivacyPage(BuildContext context) {
-    return const _OnboardingPageShell(
-      title: 'Your data, protected',
-      description:
-          'Moni keeps budgeting data on your device. We only send anonymous analytics '
-          'events to improve the experience.',
-      child: Column(
-        children: [
-          _PrivacyPoint(
-            icon: Icons.shield_outlined,
-            title: 'Local-first storage',
-            copy:
-                'Budgets, transactions, and onboarding answers never leave your phone.',
-          ),
-          _PrivacyPoint(
-            icon: Icons.analytics_outlined,
-            title: 'Minimal analytics',
-            copy:
-                'We collect lightweight usage metrics (no personal data) so we know which features to improve.',
+          FilledButton.icon(
+            icon: Icon(nextIcon, size: 18),
+            label: Text(nextLabel),
+            onPressed: isProcessing ? null : _handleNext,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildBankConnectPage(BuildContext context) {
-    final theme = Theme.of(context);
-    return _OnboardingPageShell(
-      title: 'Connect your bank',
-      description:
-          'Paste the Akahu tokens we shared so Moni can securely pull your transactions.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (_bankConnected)
-            const _InfoBanner(
-              icon: Icons.check_circle_outline,
-              message:
-                  'Your bank is already connected. Tap Continue to keep going.',
-            )
-          else ...[
-            const Text(
-              'These tokens only ever talk to Akahu so we can fetch your data for budgeting.',
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _bankAppTokenCtrl,
-              enabled: !_bankConnecting,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: const InputDecoration(
-                labelText: 'App Token (X-Akahu-Id)',
-                border: OutlineInputBorder(),
+  // ---------------------------------------------------------------------------
+  // Page Builders
+  // ---------------------------------------------------------------------------
+
+  Widget _buildWelcomePage() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 100,
+              height: 100,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.savings_outlined,
+                size: 48,
+                color: Theme.of(context).colorScheme.primary,
               ),
             ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _bankUserTokenCtrl,
-              enabled: !_bankConnecting,
-              autocorrect: false,
-              enableSuggestions: false,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'User Token (Bearer)',
-                border: OutlineInputBorder(),
-              ),
+            const SizedBox(height: 32),
+            Text(
+              'Welcome to Moni',
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
             Text(
-              'We store them securely on your device and you can update them later in Settings.',
-              style: theme.textTheme.bodySmall,
+              'Your personal money coach',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: Colors.black54,
+                  ),
+              textAlign: TextAlign.center,
             ),
-          ],
-          if (_bankConnectError != null) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: 48),
             Text(
-              _bankConnectError!,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.error,
-                fontWeight: FontWeight.w600,
-              ),
+              "Let's set up your account in just a few steps.",
+              style: Theme.of(context).textTheme.bodyLarge,
+              textAlign: TextAlign.center,
             ),
           ],
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildLoadingPage(BuildContext context) {
-    return _OnboardingPageShell(
-      title: 'Almost there...',
-      description:
-          'One moment while Moni calculates where your money’s going so we can tee up your budget builder.',
-      child: const _LoadingCard(),
+  Widget _buildFeaturePage({
+    required IconData icon,
+    required String title,
+    required String description,
+  }) {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 100,
+              height: 100,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                icon,
+                size: 48,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 32),
+            Text(
+              title,
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              description,
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    color: Colors.black87,
+                    height: 1.5,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
-  void _handleNext(bool isLastPage, int bankConnectIndex) {
-    if (_currentPage == bankConnectIndex) {
+  Widget _buildTrackSpendingPage() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              'Track your spending',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'See exactly where your money goes with automatic categorisation.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.black54,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            // Demo insights chart
+            const _DemoInsightsChart(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBudgetsPage() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              'Build smart budgets',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Create weekly budgets based on your detected average spending.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.black54,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            // Demo budget items
+            const _DemoBudgetList(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAboutYouPage() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'A bit about you',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'This helps us tailor advice to your situation.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.black54,
+                  ),
+            ),
+            const SizedBox(height: 24),
+            _StyledTextField(
+              controller: _ageCtrl,
+              label: 'Age',
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 16),
+            _StyledTextField(
+              controller: _genderCtrl,
+              label: 'Gender',
+            ),
+            const SizedBox(height: 16),
+            _StyledTextField(
+              controller: _locationCtrl,
+              label: 'Location',
+              hint: 'City or region',
+            ),
+            const SizedBox(height: 16),
+            _StyledTextField(
+              controller: _referrerCtrl,
+              label: 'Who referred you to Moni?',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildYourWhyPage() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Your goals',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'What would you like help with?',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.black54,
+                  ),
+            ),
+            const SizedBox(height: 24),
+            _StyledTextField(
+              controller: _reasonCtrl,
+              label: 'Share your situation',
+              hint:
+                  'e.g., I want to save for a holiday, pay off debt, or just get better at budgeting...',
+              maxLines: 5,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPrivacyPage() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Your data is safe',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'We take your privacy seriously.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.black54,
+                  ),
+            ),
+            const SizedBox(height: 24),
+            _PrivacyCard(
+              icon: Icons.phone_android_outlined,
+              title: 'Stored on your device',
+              description:
+                  'Your financial data stays on your phone. Nothing is uploaded to external servers.',
+            ),
+            const SizedBox(height: 12),
+            _PrivacyCard(
+              icon: Icons.lock_outline,
+              title: 'Bank-grade security',
+              description:
+                  'We use Akahu, a trusted NZ service, to securely connect to your bank.',
+            ),
+            const SizedBox(height: 12),
+            _PrivacyCard(
+              icon: Icons.visibility_off_outlined,
+              title: 'We never see your login',
+              description:
+                  'Your bank credentials are handled directly by Akahu, not by us.',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBankConnectPage() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Connect your bank',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Enter the Akahu tokens we provided to securely link your account.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.black54,
+                  ),
+            ),
+            const SizedBox(height: 24),
+            if (_bankConnected) ...[
+              _SuccessBanner(
+                icon: Icons.check_circle_outline,
+                message: 'Your bank is connected! Tap Continue to proceed.',
+              ),
+            ] else ...[
+              _StyledTextField(
+                controller: _bankAppTokenCtrl,
+                label: 'App Token',
+                hint: 'X-Akahu-Id',
+                enabled: !_bankConnecting,
+                obscure: false,
+              ),
+              const SizedBox(height: 16),
+              _StyledTextField(
+                controller: _bankUserTokenCtrl,
+                label: 'User Token',
+                hint: 'Bearer token',
+                enabled: !_bankConnecting,
+                obscure: true,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Tokens are stored securely on your device.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.black45,
+                    ),
+              ),
+            ],
+            if (_bankConnectError != null) ...[
+              const SizedBox(height: 16),
+              _ErrorBanner(message: _bankConnectError!),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Navigation Logic
+  // ---------------------------------------------------------------------------
+
+  void _handleNext() {
+    if (_currentPage == _bankConnectIndex) {
       if (_bankConnected) {
-        _pageController.nextPage(
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeInOut,
-        );
+        _completeOnboarding();
       } else {
         _handleBankConnect();
       }
       return;
     }
+    _goToNextPage();
+  }
 
-    if (isLastPage) {
-      _startFakeLoading();
-      return;
-    }
-
+  void _goToNextPage() {
     _pageController.nextPage(
-      duration: const Duration(milliseconds: 250),
+      duration: const Duration(milliseconds: 300),
       curve: Curves.easeInOut,
     );
   }
@@ -378,7 +582,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
     if (appToken.isEmpty || userToken.isEmpty) {
       setState(() {
-        _bankConnectError = 'Enter both tokens to continue.';
+        _bankConnectError = 'Please enter both tokens to continue.';
       });
       return;
     }
@@ -392,183 +596,191 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
     try {
       await BankService.connect(appToken: appToken, userToken: userToken);
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _bankConnecting = false;
         _bankConnected = true;
       });
-      await _pageController.nextPage(
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeInOut,
-      );
+      // Auto-proceed after successful connection
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (mounted) _completeOnboarding();
     } catch (err) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _bankConnecting = false;
         _bankConnectError = err is ArgumentError
             ? err.message ?? 'Unable to connect. Check your tokens.'
-            : 'Unable to connect. Double-check your tokens and try again.';
+            : 'Connection failed. Please check your tokens and try again.';
       });
     }
   }
 
-  void _startFakeLoading() {
-    if (_loadingTriggered || _saving) return;
-    setState(() => _loadingTriggered = true);
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        _completeOnboarding();
-      }
-    });
-  }
-
-  Future<void> _completeOnboarding({bool skipAnswers = false}) async {
+  Future<void> _completeOnboarding() async {
     if (_saving) return;
     setState(() => _saving = true);
+
     final response = OnboardingResponse(
-      age: _valueOrNull(_ageCtrl.text, skipAnswers),
-      gender: _valueOrNull(_genderCtrl.text, skipAnswers),
-      location: _valueOrNull(_locationCtrl.text, skipAnswers),
-      referrer: _valueOrNull(_referrerCtrl.text, skipAnswers),
-      mainReason: _valueOrNull(_reasonCtrl.text, skipAnswers),
-      situation: _valueOrNull(_situationCtrl.text, skipAnswers),
+      age: _trimOrNull(_ageCtrl.text),
+      gender: _trimOrNull(_genderCtrl.text),
+      location: _trimOrNull(_locationCtrl.text),
+      referrer: _trimOrNull(_referrerCtrl.text),
+      mainReason: _trimOrNull(_reasonCtrl.text),
     );
 
     await _store.saveResponse(response);
 
     if (!mounted) return;
     setState(() => _saving = false);
-    final route = widget.onCompleteRoute;
-    Navigator.pushReplacementNamed(context, route);
+    Navigator.pushReplacementNamed(context, widget.onCompleteRoute);
   }
 
-  String? _valueOrNull(String text, bool skip) {
-    if (skip) return null;
+  String? _trimOrNull(String text) {
     final trimmed = text.trim();
     return trimmed.isEmpty ? null : trimmed;
   }
 }
 
-class _OnboardingPageShell extends StatelessWidget {
-  final String title;
-  final String description;
-  final Widget child;
+// -----------------------------------------------------------------------------
+// Shared Widgets
+// -----------------------------------------------------------------------------
 
-  const _OnboardingPageShell({
-    required this.title,
-    required this.description,
+class _OnboardingProgress extends StatelessWidget {
+  final int currentPage;
+  final int totalPages;
+
+  const _OnboardingProgress({
+    required this.currentPage,
+    required this.totalPages,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+      child: Row(
+        children: List.generate(totalPages, (index) {
+          final isActive = index <= currentPage;
+          final isCurrent = index == currentPage;
+          return Expanded(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              height: 4,
+              margin: EdgeInsets.only(right: index < totalPages - 1 ? 4 : 0),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(2),
+                color: isActive
+                    ? Theme.of(context).colorScheme.primary
+                    : Colors.black12,
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+}
+
+class _PageShell extends StatelessWidget {
+  final Widget child;
+  final Alignment alignment;
+
+  const _PageShell({
     required this.child,
+    this.alignment = Alignment.topLeft,
   });
 
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+      padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(height: 8),
-              Text(description, style: Theme.of(context).textTheme.bodyMedium),
-              const SizedBox(height: 24),
-              child,
-            ],
-          ),
+          constraints: const BoxConstraints(maxWidth: 440),
+          child: alignment == Alignment.center
+              ? child
+              : Align(alignment: alignment, child: child),
         ),
       ),
     );
   }
 }
 
-class _LabeledField extends StatelessWidget {
+class _StyledTextField extends StatelessWidget {
   final TextEditingController controller;
   final String label;
   final String? hint;
   final int maxLines;
   final TextInputType? keyboardType;
+  final bool enabled;
+  final bool obscure;
 
-  const _LabeledField({
+  const _StyledTextField({
     required this.controller,
     required this.label,
     this.hint,
     this.maxLines = 1,
     this.keyboardType,
+    this.enabled = true,
+    this.obscure = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: TextField(
-        controller: controller,
-        keyboardType: keyboardType,
-        maxLines: maxLines,
-        decoration: InputDecoration(
-          labelText: label,
-          hintText: hint,
-          border: const OutlineInputBorder(),
-          helperText: 'Optional',
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      maxLines: maxLines,
+      enabled: enabled,
+      obscureText: obscure,
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
         ),
+        filled: true,
+        fillColor: Colors.grey.shade50,
       ),
     );
   }
 }
 
-class _InfoBanner extends StatelessWidget {
+class _PrivacyCard extends StatelessWidget {
   final IconData icon;
-  final String message;
+  final String title;
+  final String description;
 
-  const _InfoBanner({required this.icon, required this.message});
+  const _PrivacyCard({
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        color: Theme.of(
-          context,
-        ).colorScheme.secondaryContainer.withValues(alpha: 0.5),
+        color: Colors.grey.shade50,
+        border: Border.all(color: Colors.black.withOpacity(0.05)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: Theme.of(context).colorScheme.onSecondaryContainer),
-          const SizedBox(width: 12),
-          Expanded(child: Text(message)),
-        ],
-      ),
-    );
-  }
-}
-
-class _PrivacyPoint extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String copy;
-
-  const _PrivacyPoint({
-    required this.icon,
-    required this.title,
-    required this.copy,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: Theme.of(context).colorScheme.primary),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              icon,
+              size: 20,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -579,7 +791,14 @@ class _PrivacyPoint extends StatelessWidget {
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 4),
-                Text(copy),
+                Text(
+                  description,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.black.withOpacity(0.6),
+                    height: 1.4,
+                  ),
+                ),
               ],
             ),
           ),
@@ -589,70 +808,30 @@ class _PrivacyPoint extends StatelessWidget {
   }
 }
 
-class _QuestionStep {
-  final String title;
-  final String description;
-  final String? fieldLabel;
-  final TextEditingController? controller;
-  final String? hint;
-  final int maxLines;
-  final TextInputType? keyboardType;
-  final String? infoMessage;
-  final List<_FieldConfig>? groupedFields;
-  final bool showInfo;
+class _SuccessBanner extends StatelessWidget {
+  final IconData icon;
+  final String message;
 
-  const _QuestionStep({
-    required this.title,
-    required this.description,
-    this.fieldLabel,
-    this.controller,
-    this.hint,
-    this.maxLines = 1,
-    this.keyboardType,
-    this.infoMessage,
-    this.groupedFields,
-    this.showInfo = true,
-  });
-}
-
-class _FieldConfig {
-  final TextEditingController controller;
-  final String label;
-  final String? hint;
-  final int maxLines;
-  final TextInputType? keyboardType;
-
-  const _FieldConfig({
-    required this.controller,
-    required this.label,
-    this.hint,
-    this.maxLines = 1,
-    this.keyboardType,
-  });
-}
-
-class _LoadingCard extends StatelessWidget {
-  const _LoadingCard();
+  const _SuccessBanner({required this.icon, required this.message});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(top: 24),
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: Theme.of(context).colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.green.shade50,
+        border: Border.all(color: Colors.green.shade200),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: const [
-          CircularProgressIndicator(),
-          SizedBox(height: 16),
-          Text(
-            'One moment as Moni calculates where your money’s going…',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontWeight: FontWeight.w600),
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.green.shade700),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(color: Colors.green.shade800),
+            ),
           ),
         ],
       ),
@@ -660,33 +839,266 @@ class _LoadingCard extends StatelessWidget {
   }
 }
 
-class _ProgressDots extends StatelessWidget {
-  final int currentIndex;
-  final int total;
+class _ErrorBanner extends StatelessWidget {
+  final String message;
 
-  const _ProgressDots({required this.currentIndex, required this.total});
+  const _ErrorBanner({required this.message});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.red.shade50,
+        border: Border.all(color: Colors.red.shade200),
+      ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          for (var i = 0; i < total; i++)
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              margin: const EdgeInsets.symmetric(horizontal: 4),
-              width: i == currentIndex ? 24 : 10,
-              height: 10,
-              decoration: BoxDecoration(
-                color: i == currentIndex
-                    ? Theme.of(context).colorScheme.primary
-                    : Colors.black26,
-                borderRadius: BorderRadius.circular(12),
+          Icon(Icons.error_outline, color: Colors.red.shade700),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(color: Colors.red.shade800),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DemoInsightsChart extends StatelessWidget {
+  const _DemoInsightsChart();
+
+  @override
+  Widget build(BuildContext context) {
+    // Using actual NZFCC category names
+    final demoData = [
+      _DemoChartItem(
+          '🍽️', 'Supermarkets and grocery stores', 0.35, const Color(0xFF4CAF50)),
+      _DemoChartItem(
+          '🏡', 'Rent for permanent accommodation', 0.28, const Color(0xFF2196F3)),
+      _DemoChartItem('🚌', 'Fuel stations', 0.15, const Color(0xFFFF9800)),
+      _DemoChartItem('⚡️', 'Electricity services', 0.12, const Color(0xFF9C27B0)),
+      _DemoChartItem('🎉', 'Cafes and restaurants', 0.10, const Color(0xFFE91E63)),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Horizontal bar chart
+          for (final item in demoData) ...[
+            _DemoChartBar(item: item),
+            if (item != demoData.last) const SizedBox(height: 12),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DemoChartItem {
+  final String emoji;
+  final String label;
+  final double percentage;
+  final Color color;
+
+  const _DemoChartItem(this.emoji, this.label, this.percentage, this.color);
+}
+
+class _DemoChartBar extends StatelessWidget {
+  final _DemoChartItem item;
+
+  const _DemoChartBar({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(item.emoji, style: const TextStyle(fontSize: 20)),
+        const SizedBox(width: 10),
+        Expanded(
+          flex: 3,
+          child: Text(
+            item.label,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          flex: 2,
+          child: Container(
+            height: 20,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              color: Colors.grey.shade100,
+            ),
+            child: FractionallySizedBox(
+              alignment: Alignment.centerLeft,
+              widthFactor: item.percentage,
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  color: item.color,
+                ),
               ),
             ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 36,
+          child: Text(
+            '${(item.percentage * 100).toInt()}%',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.black.withOpacity(0.5),
+            ),
+            textAlign: TextAlign.right,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DemoBudgetList extends StatelessWidget {
+  const _DemoBudgetList();
+
+  @override
+  Widget build(BuildContext context) {
+    // Using actual NZFCC category names
+    final demoBudgets = [
+      _DemoBudgetItem('🍽️', 'Supermarkets and grocery stores', 150.0),
+      _DemoBudgetItem('🎉', 'Cafes and restaurants', 50.0),
+      _DemoBudgetItem('🚌', 'Fuel stations', 80.0),
+      _DemoBudgetItem('⚕️', 'Gyms, fitness, aquatic facilities, yoga, pilates', 40.0),
+    ];
+
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.black.withOpacity(0.08)),
+      ),
+      child: Column(
+        children: [
+          for (var i = 0; i < demoBudgets.length; i++) ...[
+            _DemoBudgetTile(item: demoBudgets[i]),
+            if (i < demoBudgets.length - 1)
+              Divider(height: 1, color: Colors.black.withOpacity(0.06)),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class _DemoBudgetItem {
+  final String emoji;
+  final String label;
+  final double budget;
+
+  const _DemoBudgetItem(this.emoji, this.label, this.budget);
+}
+
+class _DemoBudgetTile extends StatelessWidget {
+  final _DemoBudgetItem item;
+
+  const _DemoBudgetTile({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primary.withOpacity(0.08),
+        border: Border(
+          left: BorderSide(
+            width: 3,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Text(item.emoji, style: const TextStyle(fontSize: 28)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.label,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(4),
+                          color: Theme.of(context)
+                              .colorScheme
+                              .primary
+                              .withOpacity(0.1),
+                        ),
+                        child: Text(
+                          '\$${item.budget.toStringAsFixed(0)}/week',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // Selection indicator
+            Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Theme.of(context).colorScheme.primary,
+                border: Border.all(
+                  width: 2,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              child: const Icon(Icons.check, size: 16, color: Colors.white),
+            ),
+          ],
+        ),
       ),
     );
   }

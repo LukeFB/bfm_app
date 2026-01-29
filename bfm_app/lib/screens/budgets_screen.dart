@@ -27,13 +27,18 @@ import 'package:bfm_app/services/dashboard_service.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:bfm_app/widgets/semi_circle_chart.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
+import 'package:bfm_app/widgets/help_icon_tooltip.dart';
+import 'package:bfm_app/widgets/budget_tracking_card.dart';
 
 const Color bfmBlue = Color(0xFF005494);
 const Color bfmOrange = Color(0xFFFF6934);
 
 /// Budget overview screen with chart and detailed breakdowns.
 class BudgetsScreen extends StatefulWidget {
-  const BudgetsScreen({super.key});
+  /// When true, the screen is embedded in MainShell.
+  final bool embedded;
+
+  const BudgetsScreen({super.key, this.embedded = false});
 
   @override
   State<BudgetsScreen> createState() => _BudgetsScreenState();
@@ -135,6 +140,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       _fetchCategoryBudgets(),
       _fetchUncategorizedBudgets(),
       CategoryEmojiHelper.ensureLoaded(),
+      DashboardService.getBudgetTrackingData(),
     ]);
 
     final weeklyIncome = results[0] as double;
@@ -147,6 +153,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     final categoryBudgets = results[7] as List<_CategoryBudgetItem>;
     final uncategorizedBudgets = results[8] as List<_UncategorizedItem>;
     final emojiHelper = results[9] as CategoryEmojiHelper;
+    final trackingItems = results[10] as List<BudgetTrackingItem>;
 
     final nonBudgetedSpend = (totalExpenses - spentOnBudgets).clamp(0.0, double.infinity);
 
@@ -295,6 +302,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
         subscriptions: subscriptions,
         categoryBudgets: categoryBudgets,
         uncategorizedBudgets: uncategorizedBudgets,
+        trackingItems: trackingItems,
       );
       _emojiHelper = emojiHelper;
       _loading = false;
@@ -932,15 +940,34 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SemiCircleChart(
-                      income: _data!.weeklyIncome,
-                      totalBudgeted: _data!.totalBudgeted,
-                      spentOnBudgets: _data!.spentOnBudgets,
-                      leftToSpend: _data!.leftToSpend,
-                      discretionarySpent: _data!.discretionarySpent,
-                      alerts: _data!.alerts,
-                      onAlertsPressed: () => Navigator.pushNamed(context, '/alerts/manage'),
-                      streakWeeks: 0,
+                    Stack(
+                      children: [
+                        SemiCircleChart(
+                          income: _data!.weeklyIncome,
+                          totalBudgeted: _data!.totalBudgeted,
+                          spentOnBudgets: _data!.spentOnBudgets,
+                          leftToSpend: _data!.leftToSpend,
+                          discretionarySpent: _data!.discretionarySpent,
+                          alerts: _data!.alerts,
+                          onAlertsPressed: () => Navigator.pushNamed(context, '/alerts/manage'),
+                          streakWeeks: 0,
+                        ),
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: HelpIconTooltip(
+                            title: 'Budget Overview Chart',
+                            message: 'This chart shows how your weekly income is divided:\n\n'
+                                '🟠 Orange section: Your budgeted expenses (subscriptions, bills, categories)\n'
+                                '🔵 Blue section: Your weekly spending limit (what\'s left after budgets)\n'
+                                '🔴 Red: Overspending beyond your limits\n\n'
+                                'The filled portion shows what you\'ve spent, '
+                                'the outlined portion shows what\'s remaining.\n\n'
+                                'Tip: Keep the blue section from turning red to stay on budget!',
+                            size: 18,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 24),
                     _buildDropdownCard(
@@ -950,6 +977,13 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                       onToggle: () => setState(() => _subscriptionsExpanded = !_subscriptionsExpanded),
                       hasChanges: _data!.subscriptions.any((s) => 
                           _recurringShowAlert[s.recurringId] == true),
+                      helpTitle: 'Subscriptions',
+                      helpMessage: 'These are recurring expenses Moni detected from your transactions '
+                          '(like Netflix, Spotify, gym memberships, etc.)\n\n'
+                          '• Tap a subscription to include it in your budget\n'
+                          '• Long press to edit the weekly amount\n'
+                          '• Orange (!) means a new subscription or price change was detected\n\n'
+                          'Monthly subscriptions are automatically converted to weekly amounts.',
                       children: _data!.subscriptions.isEmpty
                           ? [const Padding(
                               padding: EdgeInsets.all(16),
@@ -967,6 +1001,14 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                           _categoryShowAlert[c.categoryId] == true) ||
                           _data!.uncategorizedBudgets.any((u) => 
                           _uncatShowAlert[u.key] == true),
+                      helpTitle: 'Category Budgets',
+                      helpMessage: 'These are spending categories detected from your transactions '
+                          '(like groceries, transport, eating out, etc.)\n\n'
+                          '• Tap a category to include it in your budget\n'
+                          '• Long press to edit the weekly limit\n'
+                          '• Orange (!) means new spending or a significant change was detected\n'
+                          '• Orange text = uncategorized transactions grouped by name\n\n'
+                          'Suggested amounts are calculated from your average weekly expenditure in each category.',
                       children: [
                         if (_data!.categoryBudgets.isEmpty && _data!.uncategorizedBudgets.isEmpty)
                           const Padding(
@@ -976,6 +1018,10 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                         else ..._buildCombinedBudgetRows(),
                       ],
                     ),
+                    const SizedBox(height: 24),
+                    // Budget tracking card - shows spending progress per budget
+                    if (_data!.trackingItems.isNotEmpty)
+                      BudgetTrackingCard(items: _data!.trackingItems),
                     const SizedBox(height: 24),
                   ],
                 ),
@@ -991,6 +1037,8 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     required VoidCallback onToggle,
     required List<Widget> children,
     bool hasChanges = false,
+    String? helpTitle,
+    String? helpMessage,
   }) {
     return Card(
       elevation: 1,
@@ -1006,7 +1054,19 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                   Icon(icon, color: bfmBlue),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                    child: Row(
+                      children: [
+                        Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                        if (helpMessage != null) ...[
+                          const SizedBox(width: 4),
+                          HelpIconTooltip(
+                            title: helpTitle ?? title,
+                            message: helpMessage,
+                            size: 16,
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                   if (hasChanges) ...[
                     _buildSectionChangeIndicator(),
@@ -1330,6 +1390,7 @@ class _BudgetsData {
   final List<_SubscriptionItem> subscriptions;
   final List<_CategoryBudgetItem> categoryBudgets;
   final List<_UncategorizedItem> uncategorizedBudgets;
+  final List<BudgetTrackingItem> trackingItems;
 
   const _BudgetsData({
     required this.weeklyIncome,
@@ -1341,6 +1402,7 @@ class _BudgetsData {
     required this.subscriptions,
     required this.categoryBudgets,
     required this.uncategorizedBudgets,
+    required this.trackingItems,
   });
 }
 

@@ -333,16 +333,15 @@ class InsightsService {
     final discretionaryBudget = actualWeekIncome - nonGoalBudgetTotal;
     final discretionaryLeft = discretionaryBudget - nonGoalSpend;
 
-    // Calculate leftToSpend matching the dashboard formula:
-    // (income - totalBudgets) - discretionarySpend
-    // Where discretionarySpend = overages for budgeted categories + full spend for non-budgeted
+    // Calculate leftToSpend matching the dashboard formula exactly:
+    // leftToSpend = income - budgeted - budgetOverspend - nonBudgetSpend
+    // Where:
+    //   budgetOverspend = max(0, spentOnBudgets - totalBudgeted)  [aggregate, not per-category]
+    //   nonBudgetSpend = max(0, totalExpenses - spentOnBudgets)
     // Use displayIncome (previous week when usePreviousWeekIncome=true) to match dashboard
-    final discretionarySpend = await _calculateDiscretionarySpend(
-      period.start,
-      period.end,
-      budgets,
-    );
-    final leftToSpend = (displayIncome - totalBudget) - discretionarySpend;
+    final budgetOverspend = math.max(budgetSpend - totalBudget, 0.0);
+    final nonBudgetSpend = math.max(totalSpentAll - budgetSpend, 0.0);
+    final leftToSpend = displayIncome - totalBudget - budgetOverspend - nonBudgetSpend;
 
     final overviewSummary = WeeklyOverviewSummary(
       weekStart: period.start,
@@ -538,47 +537,6 @@ class InsightsService {
       return "Set a weekly contribution to grow ${goal.name}.";
     }
     return "No contribution was applied to ${goal.name} this week.";
-  }
-
-  /// Calculates discretionary spend matching the dashboard formula:
-  /// - For budgeted categories: only count overages (spend - budget, if > 0)
-  /// - For non-budgeted/uncategorized: count full amount
-  static Future<double> _calculateDiscretionarySpend(
-    DateTime start,
-    DateTime end,
-    List<BudgetModel> budgets,
-  ) async {
-    // Build a map of category_id -> weekly budget limit
-    final budgetsByCategory = <int, double>{};
-    for (final budget in budgets) {
-      final catId = budget.categoryId;
-      if (catId != null) {
-        budgetsByCategory[catId] =
-            (budgetsByCategory[catId] ?? 0.0) + budget.weeklyLimit;
-      }
-    }
-
-    // Get spend grouped by category for the period
-    final spendByCategory =
-        await TransactionRepository.sumExpensesByCategoryBetween(start, end);
-
-    double discretionary = 0.0;
-    for (final entry in spendByCategory.entries) {
-      final catId = entry.key;
-      final spent = entry.value.abs();
-
-      if (catId == null || !budgetsByCategory.containsKey(catId)) {
-        // Non-budgeted or uncategorized: count full amount
-        discretionary += spent;
-      } else {
-        // Budgeted category: only count overage
-        final budget = budgetsByCategory[catId] ?? 0.0;
-        final overage = math.max(spent - budget, 0.0);
-        discretionary += overage;
-      }
-    }
-
-    return discretionary;
   }
 
 }

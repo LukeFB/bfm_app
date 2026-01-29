@@ -28,6 +28,7 @@ import 'package:bfm_app/services/savings_service.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:bfm_app/widgets/dashboard_card.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bfm_app/widgets/help_icon_tooltip.dart';
 
 const Color _bfmBlue = Color(0xFF005494);
 const Color _bfmOrange = Color(0xFFFF6934);
@@ -35,7 +36,10 @@ const String _timeFramePrefKey = 'savings_profit_loss_time_frame';
 
 /// Screen displaying comprehensive financial overview with balance sheet.
 class SavingsScreen extends StatefulWidget {
-  const SavingsScreen({super.key});
+  /// When true, the screen is embedded in MainShell.
+  final bool embedded;
+
+  const SavingsScreen({super.key, this.embedded = false});
 
   @override
   State<SavingsScreen> createState() => _SavingsScreenState();
@@ -178,7 +182,23 @@ class _SavingsScreenState extends State<SavingsScreen> {
 
     return DashboardCard(
       title: 'Profit / Loss',
-      trailing: _buildTimeFrameDropdown(),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const HelpIconTooltip(
+            title: 'Profit / Loss',
+            message: 'This shows your financial balance for the selected time period:\n\n'
+                '📈 Net Profit: You earned more than you spent\n'
+                '📉 Net Loss: You spent more than you earned\n\n'
+                'Income includes all money coming in (wages, transfers to you, etc.)\n'
+                'Expenses include all money going out (purchases, bills, transfers out, etc.)\n\n'
+                'Use the dropdown to see your balance over different time periods.',
+            size: 16,
+          ),
+          const SizedBox(width: 8),
+          _buildTimeFrameDropdown(),
+        ],
+      ),
       child: Column(
         children: [
           // Profit/Loss row
