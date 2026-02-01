@@ -6,6 +6,7 @@
 ///   - Provides a Clash Royale-style swipeable navigation shell.
 ///   - Contains a PageView for horizontal swiping between screens.
 ///   - Bottom navigation bar syncs with the current page.
+///   - Sticky top bar with settings and motivational message across all pages.
 /// ---------------------------------------------------------------------------
 
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import 'package:bfm_app/screens/insights_screen.dart';
 import 'package:bfm_app/screens/budgets_screen.dart';
 import 'package:bfm_app/screens/savings_screen.dart';
 import 'package:bfm_app/screens/chat_screen.dart';
+import 'package:bfm_app/services/dashboard_service.dart';
 
 const Color bfmBlue = Color(0xFF005494);
 const Color bfmOrange = Color(0xFFFF6934);
@@ -48,6 +50,11 @@ class MainShellState extends State<MainShell> {
   late PageController _pageController;
   late int _currentIndex;
   double _pageOffset = 2.0; // For smooth animation tracking
+  
+  // Data for sticky top bar
+  double _leftToSpend = 0.0;
+  double _totalWeeklyBudget = 0.0;
+  bool _dataLoaded = false;
 
   /// Navigation items in order: Insights, Budget, Dashboard, Savings, Chat
   final List<_NavItem> _navItems = [
@@ -90,6 +97,64 @@ class MainShellState extends State<MainShell> {
     _pageOffset = widget.initialPage.toDouble();
     _pageController = PageController(initialPage: widget.initialPage);
     _pageController.addListener(_onPageScroll);
+    _loadTopBarData();
+  }
+
+  /// Loads data needed for the sticky top bar (motivational message).
+  Future<void> _loadTopBarData() async {
+    try {
+      final results = await Future.wait([
+        DashboardService.getWeeklyIncome(),
+        DashboardService.getTotalBudgeted(),
+        DashboardService.getSpentOnBudgets(),
+        DashboardService.getTotalExpensesThisWeek(),
+      ]);
+
+      final weeklyIncome = results[0];
+      final totalBudgeted = results[1];
+      final spentOnBudgets = results[2];
+      final totalExpenses = results[3];
+
+      // Calculate left to spend
+      final budgetOverspend = (spentOnBudgets - totalBudgeted).clamp(0.0, double.infinity);
+      final nonBudgetSpend = (totalExpenses - spentOnBudgets).clamp(0.0, double.infinity);
+      final leftToSpend = weeklyIncome - totalBudgeted - budgetOverspend - nonBudgetSpend;
+
+      if (mounted) {
+        setState(() {
+          _leftToSpend = leftToSpend;
+          _totalWeeklyBudget = weeklyIncome - totalBudgeted;
+          _dataLoaded = true;
+        });
+      }
+    } catch (e) {
+      // Silently fail - top bar will show default message
+      if (mounted) {
+        setState(() => _dataLoaded = true);
+      }
+    }
+  }
+
+  /// Friendly, dynamic header based on how much is left this week.
+  String _headerMessage() {
+    if (!_dataLoaded) return "Loading...";
+    if (_totalWeeklyBudget <= 0) {
+      return "Let's set up your budget and make a plan 🚀";
+    }
+    if (_leftToSpend < 0) {
+      return "Slightly over — no stress. Fresh week, fresh start";
+    }
+    final ratio = _leftToSpend / _totalWeeklyBudget;
+    if (ratio >= 0.75) return "Crushing it — plenty left this week 💪";
+    if (ratio >= 0.50) return "You're on track! 🌟";
+    if (ratio >= 0.25) return "You're doing fine — keep an eye on it 👀";
+    if (ratio >= 0.10) return "Tight but doable — small choices win 💡";
+    return "Almost tapped out — press pause on extras if you can ⏸️";
+  }
+
+  /// Refreshes the top bar data (called when returning from settings, etc.).
+  void refreshTopBarData() {
+    _loadTopBarData();
   }
 
   @override
@@ -131,14 +196,54 @@ class MainShellState extends State<MainShell> {
     }
   }
 
+  /// Opens settings and refreshes data when returning.
+  Future<void> _openSettings() async {
+    await Navigator.pushNamed(context, '/settings');
+    if (mounted) {
+      _loadTopBarData();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: PageView(
-        controller: _pageController,
-        onPageChanged: _onPageChanged,
-        physics: const BouncingScrollPhysics(),
-        children: _navItems.map((item) => item.screen).toList(),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // ---------- STICKY TOP BAR ----------
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _headerMessage(),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontFamily: "Roboto",
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Settings',
+                    icon: const Icon(Icons.settings_outlined),
+                    onPressed: _openSettings,
+                  ),
+                ],
+              ),
+            ),
+            // ---------- SWIPEABLE PAGES ----------
+            Expanded(
+              child: PageView(
+                controller: _pageController,
+                onPageChanged: _onPageChanged,
+                physics: const BouncingScrollPhysics(),
+                children: _navItems.map((item) => item.screen).toList(),
+              ),
+            ),
+          ],
+        ),
       ),
       bottomNavigationBar: _buildBottomNav(),
     );

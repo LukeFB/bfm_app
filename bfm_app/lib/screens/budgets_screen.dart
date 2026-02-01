@@ -21,6 +21,7 @@ import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/services/budget_analysis_service.dart';
 import 'package:bfm_app/services/budget_seen_store.dart';
 import 'package:bfm_app/services/dashboard_service.dart';
+import 'package:bfm_app/services/manual_budget_store.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
 import 'package:bfm_app/widgets/help_icon_tooltip.dart';
@@ -68,6 +69,10 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
   final Map<String, bool> _uncatShowAlert = {}; // Show orange alert indicator
   final Map<String, bool> _uncatHasSuggestion = {}; // Show suggested amount text
   
+  // Manual budget tracking (user-created budgets not from detected transactions)
+  final List<_ManualBudgetItem> _manualBudgets = [];
+  final Set<int> _selectedManualBudgetIndices = {}; // Track which manual budgets are selected
+  
   // Seen data loaded from persistent store (tracks what user has acknowledged)
   Set<int> _seenSubscriptionIds = {};
   Map<int, double> _seenSubscriptionAmounts = {};
@@ -90,9 +95,8 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
 
   @override
   void dispose() {
-    // Mark all items as seen when leaving the screen
-    // This dismisses alerts until a new change is detected
-    _markAllItemsAsSeen();
+    // Save changes and mark all items as seen when leaving the screen
+    _saveChanges(showSnackbar: false);
     super.dispose();
   }
 
@@ -164,6 +168,23 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
         existingCategoryBudgets[b.categoryId!] = b;
       } else if (b.uncategorizedKey != null) {
         existingUncatBudgets[b.uncategorizedKey!.toLowerCase()] = b;
+      }
+      // Note: Manual budgets are now loaded from ManualBudgetStore, not DB
+    }
+    
+    // Load manual budgets from persistent store (remembers unselected ones too)
+    final storedManualBudgets = await ManualBudgetStore.getAll();
+    _manualBudgets.clear();
+    _selectedManualBudgetIndices.clear();
+    for (int i = 0; i < storedManualBudgets.length; i++) {
+      final stored = storedManualBudgets[i];
+      _manualBudgets.add(_ManualBudgetItem(
+        id: null,
+        name: stored.name,
+        weeklyLimit: stored.weeklyLimit,
+      ));
+      if (stored.isSelected) {
+        _selectedManualBudgetIndices.add(i);
       }
     }
 
@@ -488,6 +509,31 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       saved += 1;
     }
 
+    // Save selected manual budgets to DB (for budget tracking)
+    for (int i = 0; i < _manualBudgets.length; i++) {
+      if (!_selectedManualBudgetIndices.contains(i)) continue;
+      final manual = _manualBudgets[i];
+      final m = BudgetModel(
+        categoryId: null,
+        label: manual.name,
+        weeklyLimit: manual.weeklyLimit,
+        periodStart: periodStart,
+      );
+      await BudgetRepository.insert(m);
+      saved += 1;
+    }
+    
+    // Save ALL manual budgets (including unselected) to persistent store
+    final manualBudgetsToStore = <ManualBudget>[];
+    for (int i = 0; i < _manualBudgets.length; i++) {
+      manualBudgetsToStore.add(ManualBudget(
+        name: _manualBudgets[i].name,
+        weeklyLimit: _manualBudgets[i].weeklyLimit,
+        isSelected: _selectedManualBudgetIndices.contains(i),
+      ));
+    }
+    await ManualBudgetStore.saveAll(manualBudgetsToStore);
+
     // Mark ALL items as seen with their current detected amounts
     // This ensures items are no longer marked as "new" after save
     await _markAllItemsAsSeen();
@@ -637,6 +683,228 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     });
     await _dismissUncatAlert(key, suggestedAmount);
     await _saveChanges(showSnackbar: false);
+  }
+
+  /// Shows dialog to create a new manual budget.
+  Future<void> _showCreateManualBudgetDialog() async {
+    final nameController = TextEditingController();
+    final amountController = TextEditingController();
+    
+    final result = await showDialog<_ManualBudgetItem>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Create Budget', style: TextStyle(fontWeight: FontWeight.w600)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  autofocus: true,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(
+                    labelText: 'Budget name',
+                    hintText: 'e.g., Coffee, Entertainment',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: amountController,
+                  keyboardType: const TextInputType.numberWithOptions(signed: false, decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Weekly limit',
+                    prefixText: '\$',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final name = nameController.text.trim();
+                final amount = double.tryParse(amountController.text.trim()) ?? 0.0;
+                if (name.isEmpty || amount <= 0) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(content: Text('Please enter a name and amount')),
+                  );
+                  return;
+                }
+                Navigator.pop(dialogContext, _ManualBudgetItem(
+                  id: null,
+                  name: name,
+                  weeklyLimit: amount,
+                ));
+              },
+              child: const Text('Create'),
+            ),
+          ],
+        );
+      },
+    );
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      nameController.dispose();
+      amountController.dispose();
+    });
+    
+    if (result != null) {
+      setState(() {
+        // Shift existing indices up since we're inserting at 0
+        final shiftedIndices = _selectedManualBudgetIndices.map((i) => i + 1).toSet();
+        _selectedManualBudgetIndices.clear();
+        _selectedManualBudgetIndices.addAll(shiftedIndices);
+        // Insert new budget at top and select it
+        _manualBudgets.insert(0, result);
+        _selectedManualBudgetIndices.add(0);
+      });
+      await _saveManualBudgetsToStore();
+      await _saveChanges(showSnackbar: false);
+    }
+  }
+  
+  /// Saves manual budgets to the persistent store.
+  Future<void> _saveManualBudgetsToStore() async {
+    final manualBudgetsToStore = <ManualBudget>[];
+    for (int i = 0; i < _manualBudgets.length; i++) {
+      manualBudgetsToStore.add(ManualBudget(
+        name: _manualBudgets[i].name,
+        weeklyLimit: _manualBudgets[i].weeklyLimit,
+        isSelected: _selectedManualBudgetIndices.contains(i),
+      ));
+    }
+    await ManualBudgetStore.saveAll(manualBudgetsToStore);
+  }
+
+  /// Deletes a manual budget.
+  Future<void> _deleteManualBudget(_ManualBudgetItem item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Delete Budget'),
+          content: Text('Are you sure you want to delete "${item.name}"?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    
+    if (confirmed == true) {
+      final index = _manualBudgets.indexOf(item);
+      setState(() {
+        _manualBudgets.remove(item);
+        // Update selection indices
+        _selectedManualBudgetIndices.remove(index);
+        // Shift down indices that were above the removed item
+        final shiftedIndices = _selectedManualBudgetIndices
+            .where((i) => i > index)
+            .map((i) => i - 1)
+            .toSet();
+        _selectedManualBudgetIndices.removeWhere((i) => i > index);
+        _selectedManualBudgetIndices.addAll(shiftedIndices);
+      });
+      await _saveManualBudgetsToStore();
+      await _saveChanges(showSnackbar: false);
+    }
+  }
+
+  /// Edits a manual budget.
+  Future<void> _editManualBudget(_ManualBudgetItem item) async {
+    final nameController = TextEditingController(text: item.name);
+    final amountController = TextEditingController(text: item.weeklyLimit.toStringAsFixed(2));
+    nameController.selection = TextSelection(baseOffset: 0, extentOffset: nameController.text.length);
+    
+    final result = await showDialog<_ManualBudgetItem>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Edit Budget', style: TextStyle(fontWeight: FontWeight.w600)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  autofocus: true,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(
+                    labelText: 'Budget name',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: amountController,
+                  keyboardType: const TextInputType.numberWithOptions(signed: false, decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Weekly limit',
+                    prefixText: '\$',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final name = nameController.text.trim();
+                final amount = double.tryParse(amountController.text.trim()) ?? 0.0;
+                if (name.isEmpty || amount <= 0) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(content: Text('Please enter a name and amount')),
+                  );
+                  return;
+                }
+                Navigator.pop(dialogContext, _ManualBudgetItem(
+                  id: item.id,
+                  name: name,
+                  weeklyLimit: amount,
+                ));
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      nameController.dispose();
+      amountController.dispose();
+    });
+    
+    if (result != null) {
+      final index = _manualBudgets.indexOf(item);
+      if (index != -1) {
+        setState(() {
+          _manualBudgets[index] = result;
+        });
+        await _saveManualBudgetsToStore();
+        await _saveChanges(showSnackbar: false);
+      }
+    }
   }
 
   BoxDecoration _rowDecoration(bool isSelected) {
@@ -919,7 +1187,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     return total;
   }
   
-  /// Calculate total budgeted for category budgets + uncategorized
+  /// Calculate total budgeted for category budgets + uncategorized + manual
   double _getCategoryBudgetsBudgeted() {
     double total = 0.0;
     for (final entry in _selectedCategories.entries) {
@@ -929,6 +1197,12 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     }
     for (final key in _selectedUncatKeys) {
       total += _uncatCurrentAmounts[key] ?? 0.0;
+    }
+    // Add selected manual budgets
+    for (int i = 0; i < _manualBudgets.length; i++) {
+      if (_selectedManualBudgetIndices.contains(i)) {
+        total += _manualBudgets[i].weeklyLimit;
+      }
     }
     return total;
   }
@@ -940,16 +1214,6 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     final totalBudgeted = subscriptionsBudgeted + categoryBudgetsBudgeted;
     
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Budget'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh',
-            onPressed: _loading ? null : _load,
-          ),
-        ],
-      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
@@ -1004,8 +1268,12 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                           '• Orange (!) means new spending or a significant change was detected\n'
                           '• Orange text = uncategorized transactions grouped by name\n\n'
                           'Suggested amounts are calculated from your average weekly expenditure in each category.',
+                      headerAction: _buildCreateBudgetButton(),
                       children: [
-                        if (_data!.categoryBudgets.isEmpty && _data!.uncategorizedBudgets.isEmpty)
+                        // Show manual budgets at the top
+                        for (int i = 0; i < _manualBudgets.length; i++)
+                          _buildManualBudgetRow(_manualBudgets[i], i),
+                        if (_data!.categoryBudgets.isEmpty && _data!.uncategorizedBudgets.isEmpty && _manualBudgets.isEmpty)
                           const Padding(
                             padding: EdgeInsets.all(16),
                             child: Text('No budgets detected', style: TextStyle(color: Colors.black54)),
@@ -1076,6 +1344,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     double? budgetedAmount,
     String? helpTitle,
     String? helpMessage,
+    Widget? headerAction,
   }) {
     return Card(
       elevation: 1,
@@ -1132,6 +1401,10 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
           ),
           if (isExpanded) ...[
             const Divider(height: 1),
+            if (headerAction != null) ...[
+              headerAction,
+              const Divider(height: 1),
+            ],
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Column(children: children),
@@ -1416,6 +1689,102 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       ),
     );
   }
+
+  /// Builds the "+ Create Budget" button shown at the top of the Budgets dropdown.
+  Widget _buildCreateBudgetButton() {
+    return InkWell(
+      onTap: _showCreateManualBudgetDialog,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: bfmBlue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.add, color: bfmBlue, size: 20),
+            ),
+            const SizedBox(width: 12),
+            const Text(
+              'Create Budget',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: bfmBlue,
+                fontSize: 15,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Toggles selection of a manual budget.
+  void _handleManualBudgetToggle(int index) {
+    setState(() {
+      if (_selectedManualBudgetIndices.contains(index)) {
+        _selectedManualBudgetIndices.remove(index);
+      } else {
+        _selectedManualBudgetIndices.add(index);
+      }
+    });
+    // Save selection state immediately
+    _saveManualBudgetsToStore();
+  }
+
+  /// Builds a row for a manually created budget (with delete button).
+  Widget _buildManualBudgetRow(_ManualBudgetItem item, int index) {
+    final emoji = _getEmoji(item.name);
+    final isSelected = _selectedManualBudgetIndices.contains(index);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _handleManualBudgetToggle(index),
+        onLongPress: () => _editManualBudget(item),
+        child: Container(
+          decoration: _rowDecoration(isSelected),
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(emoji, style: const TextStyle(fontSize: 24)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.name,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Weekly limit: \$${item.weeklyLimit.toStringAsFixed(2)}',
+                      style: const TextStyle(fontSize: 12, color: Colors.black54),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline, color: Colors.red, size: 22),
+                onPressed: () => _deleteManualBudget(item),
+                tooltip: 'Delete budget',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Helper class for combining and sorting budget rows
@@ -1511,4 +1880,16 @@ class _UncatEditResult {
   final String name;
   final String amount;
   const _UncatEditResult({required this.name, required this.amount});
+}
+
+class _ManualBudgetItem {
+  final int? id;
+  final String name;
+  final double weeklyLimit;
+
+  const _ManualBudgetItem({
+    this.id,
+    required this.name,
+    required this.weeklyLimit,
+  });
 }

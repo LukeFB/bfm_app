@@ -182,21 +182,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     _refresh();
   }
 
-  /// Friendly, dynamic header based on how much is left this week.
-  String _headerMessage(double left, double total) {
-    if (total <= 0) {
-      return "Let’s set up your budget and make a plan 🚀";
-    }
-    if (left < 0) {
-      return "Slightly over — no stress. Fresh week, fresh start";
-    }
-    final ratio = left / total; // 0.0 to 1.0
-    if (ratio >= 0.75) return "Crushing it — plenty left this week 💪";
-    if (ratio >= 0.50) return "You're on track! 🌟";
-    if (ratio >= 0.25) return "You're doing fine — keep an eye on it 👀";
-    if (ratio >= 0.10) return "Tight but doable — small choices win 💡";
-    return "Almost tapped out — press pause on extras if you can ⏸️";
-  }
 
   /// Tiny helper for "Apr 12" style date labels.
   String _formatShortDate(DateTime date) {
@@ -277,58 +262,15 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
             final upcomingEvents = data.events;
             final isOverspent = data.leftToSpendThisWeek < 0;
 
-            return Column(
-              children: [
-                // ---------- STICKY TOP BAR ----------
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          if (data.budgetStreak.streakWeeks > 1)
-                            Text(
-                              '${data.budgetStreak.streakWeeks}🔥',
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          const Spacer(),
-                          IconButton(
-                            tooltip: 'Settings',
-                            icon: const Icon(Icons.settings_outlined),
-                            onPressed: () => _openRoute('/settings'),
-                          ),
-                        ],
-                      ),
-                      // ---------- MOTIVATIONAL MESSAGE ----------
-                      Text(
-                        _headerMessage(
-                          data.leftToSpendThisWeek,
-                          data.totalWeeklyBudget,
-                        ),
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontFamily: "Roboto",
-                          color: Colors.black54,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                // ---------- SCROLLABLE CONTENT ----------
-                Expanded(
-                  child: RefreshIndicator(
-                    onRefresh: _forceSync,
-                    child: SingleChildScrollView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // ---------- BIG LEFT TO SPEND FIGURE ----------
+            return RefreshIndicator(
+              onRefresh: _forceSync,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // ---------- BIG LEFT TO SPEND FIGURE ----------
                     Center(
                       child: Column(
                         children: [
@@ -502,12 +444,9 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                               ],
                             ),
                     ),
-                        ],
-                      ),
-                    ),
-                  ),
+                  ],
                 ),
-              ],
+              ),
             );
           },
         ),

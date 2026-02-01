@@ -103,12 +103,6 @@ class _SavingsScreenState extends State<SavingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Savings & Accounts'),
-        backgroundColor: _bfmBlue,
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
       body: SafeArea(
         child: !_initialized
             ? const Center(child: CircularProgressIndicator())

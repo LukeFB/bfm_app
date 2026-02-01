@@ -42,6 +42,17 @@ import 'package:bfm_app/services/chat_storage.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:bfm_app/widgets/manual_alert_sheet.dart';
 
+/// Example questions that scroll through to show chatbot capabilities.
+const List<String> _exampleQuestions = [
+  '"What\'s my left to spend?"',
+  '"Help me save for a holiday"',
+  '"Set a budget for groceries"',
+  '"Remind me about my rent"',
+  '"How am I tracking this week?"',
+  '"Can I afford takeaways tonight?"',
+  '"Create a savings goal for \$500"',
+];
+
 /// Top-level chat screen that wraps the Moni messenger UI.
 class ChatScreen extends StatefulWidget {
   /// When true, the screen is embedded in MainShell.
@@ -54,7 +65,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 /// Handles conversation state, persistence, and network calls.
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   // Replaced _Message with ChatMessage to integrate with storage + AI.
   final List<ChatMessage> _messages = [];
   final List<ChatMessage> _allMessages = [];
@@ -77,6 +88,12 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _savingAction = false;
   final List<ChatSuggestedAction> _pendingActions = [];
 
+  // Hint animation state
+  int _hintIndex = 0;
+  late AnimationController _hintFadeController;
+  late Animation<double> _hintFadeAnimation;
+  Timer? _hintCycleTimer;
+
   // How many most-recent turns to send with each request
   static const int kContextWindowTurns = kChatContextWindowTurns;
   static const int _kMaxUiMessages = 100;
@@ -87,12 +104,43 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _ai = AiClient(); // pulls API key internally from ApiKeyStore
     _store = ChatStorage();
+    _initHintAnimation();
     _bootstrap();
+  }
+
+  void _initHintAnimation() {
+    _hintFadeController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+    _hintFadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _hintFadeController, curve: Curves.easeInOut),
+    );
+    // Start with fade in
+    _hintFadeController.forward();
+    // Start cycling through hints
+    _hintCycleTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      _cycleHint();
+    });
+  }
+
+  void _cycleHint() {
+    // Fade out
+    _hintFadeController.reverse().then((_) {
+      if (!mounted) return;
+      setState(() {
+        _hintIndex = (_hintIndex + 1) % _exampleQuestions.length;
+      });
+      // Fade in
+      _hintFadeController.forward();
+    });
   }
 
   /// Disposes controllers to avoid leaks.
   @override
   void dispose() {
+    _hintCycleTimer?.cancel();
+    _hintFadeController.dispose();
     _controller.dispose();
     _scroll.dispose();
     super.dispose();
@@ -808,18 +856,8 @@ class _ChatScreenState extends State<ChatScreen> {
         ? _pendingActions.where((action) => action.type != ChatActionType.alert).toList()
         : _pendingActions;
     return Scaffold(
-      backgroundColor: Colors.white, // keep your background color
-      appBar: AppBar(
-        title: const Text("Moni AI"),
-        actions: [
-          IconButton(
-            tooltip: 'Clear chat',
-            icon: const Icon(Icons.delete_outline),
-            onPressed: _sending ? null : _clearChat, // disabled while sending
-          ),
-        ],
-      ),
-      body: Column(
+      body: SafeArea(
+        child: Column(
         children: [
           Expanded(
             child: ListView.separated(
@@ -876,20 +914,35 @@ class _ChatScreenState extends State<ChatScreen> {
             padding: const EdgeInsets.all(8),
             child: Row(
               children: [
+                IconButton(
+                  tooltip: 'Clear chat',
+                  icon: const Icon(Icons.delete_outline, size: 20),
+                  onPressed: _sending ? null : _clearChat,
+                ),
                 Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    // allow Enter to send. TODO: not working
-                    onSubmitted: (_) {
-                      if (_hasApiKey && !_sending) _sendMessage();
+                  child: AnimatedBuilder(
+                    animation: _hintFadeAnimation,
+                    builder: (context, child) {
+                      final hintText = _hasApiKey
+                          ? _exampleQuestions[_hintIndex].replaceAll('"', '')
+                          : "Type a message... (Add API key in Settings)";
+                      return TextField(
+                        controller: _controller,
+                        // allow Enter to send. TODO: not working
+                        onSubmitted: (_) {
+                          if (_hasApiKey && !_sending) _sendMessage();
+                        },
+                        decoration: InputDecoration(
+                          hintText: hintText,
+                          hintStyle: TextStyle(
+                            color: Colors.grey.shade500.withOpacity(
+                              _hasApiKey ? _hintFadeAnimation.value : 1.0,
+                            ),
+                          ),
+                          border: const OutlineInputBorder(),
+                        ),
+                      );
                     },
-                    // Hint shows a gentle nudge if no key is present
-                    decoration: InputDecoration(
-                      hintText: _hasApiKey
-                          ? "Type a message..."
-                          : "Type a message... (Add API key in Settings)",
-                      border: const OutlineInputBorder(),
-                    ),
                   ),
                 ),
                 IconButton(
@@ -900,13 +953,14 @@ class _ChatScreenState extends State<ChatScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.send),
-                  onPressed: (_hasApiKey && !_sending) ? _sendMessage : null, // Added: guard on API key.
+                  onPressed: (_hasApiKey && !_sending) ? _sendMessage : null,
                 ),
               ],
             ),
           ),
         ],
       ),
+    ),
     );
   }
 }
