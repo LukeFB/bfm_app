@@ -24,6 +24,7 @@ import 'package:flutter/material.dart';
 import 'package:bfm_app/models/account_model.dart';
 import 'package:bfm_app/models/asset_model.dart';
 import 'package:bfm_app/repositories/asset_repository.dart';
+import 'package:bfm_app/services/app_savings_store.dart';
 import 'package:bfm_app/services/savings_service.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:bfm_app/widgets/dashboard_card.dart';
@@ -49,6 +50,7 @@ class _SavingsScreenState extends State<SavingsScreen> {
   late Future<SavingsData> _future;
   ProfitLossTimeFrame _selectedTimeFrame = ProfitLossTimeFrame.allTime;
   bool _initialized = false;
+  double _appSavingsTotal = 0.0;
 
   @override
   void initState() {
@@ -68,6 +70,13 @@ class _SavingsScreenState extends State<SavingsScreen> {
 
   Future<SavingsData> _load() async {
     await TransactionSyncService().syncIfStale();
+    // Load app savings total
+    final appSavings = await AppSavingsStore.getTotal();
+    if (mounted) {
+      setState(() {
+        _appSavingsTotal = appSavings;
+      });
+    }
     return SavingsService.loadSavingsData(timeFrame: _selectedTimeFrame);
   }
 
@@ -147,6 +156,12 @@ class _SavingsScreenState extends State<SavingsScreen> {
                   children: [
                     // ---------- OVERALL PROFIT/LOSS BALANCE SHEET ----------
                     _buildBalanceSheet(data),
+
+                    // ---------- APP SAVINGS ----------
+                    if (_appSavingsTotal > 0) ...[
+                      const SizedBox(height: 16),
+                      _buildAppSavingsCard(),
+                    ],
 
                     const SizedBox(height: 24),
 
@@ -274,6 +289,61 @@ class _SavingsScreenState extends State<SavingsScreen> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// Builds the app savings card showing money saved via the app.
+  Widget _buildAppSavingsCard() {
+    return DashboardCard(
+      title: 'App Savings',
+      trailing: HelpIconTooltip(
+        title: 'App Savings',
+        message: 'Money you\'ve saved by staying under budget each week.\n\n'
+            'This tracks your cumulative savings achieved through the app\'s '
+            'budgeting features. When you have money left over at the end of '
+            'a week, you can add it to your app savings.\n\n'
+            'If you ever go over budget, these savings can automatically '
+            'cover the deficit before creating a recovery goal.',
+        size: 16,
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.teal.shade50,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.savings,
+                  color: Colors.teal.shade700,
+                  size: 28,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Total Saved',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.teal.shade700,
+                  ),
+                ),
+              ],
+            ),
+            Text(
+              _formatCurrency(_appSavingsTotal),
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.teal.shade700,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

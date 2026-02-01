@@ -5,6 +5,7 @@ import 'package:bfm_app/models/transaction_model.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/repositories/weekly_report_repository.dart';
+import 'package:bfm_app/services/app_savings_store.dart';
 import 'package:bfm_app/services/insights_service.dart';
 import 'package:bfm_app/services/weekly_overview_service.dart';
 import 'package:bfm_app/widgets/help_icon_tooltip.dart';
@@ -61,6 +62,12 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
   bool _createOrAddToRecovery = false;
   int _recoveryWeeks = 4;
   
+  /// App savings state - tracks money saved via the app
+  double _appSavingsTotal = 0.0;
+  bool _addToAppSavings = false;
+  bool _useAppSavingsForRecovery = false;
+  double _appSavingsToAdd = 0.0;
+  
   /// New deficit from this week (base overspend + any savings contributions)
   double get _totalDeficit {
     final baseDeficit = _baseLeftToSpend < 0 ? _baseLeftToSpend.abs() : 0.0;
@@ -84,6 +91,18 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
   /// Weekly payment based on total recovery amount and selected weeks
   double get _recoveryWeeklyPayment => 
       _recoveryWeeks > 0 ? _totalRecoveryAmount / _recoveryWeeks : 0.0;
+  
+  /// Amount of deficit that can be covered by app savings
+  double get _savingsCoverageAmount {
+    if (!_useAppSavingsForRecovery || _appSavingsTotal <= 0) return 0.0;
+    return _totalDeficit.clamp(0.0, _appSavingsTotal);
+  }
+  
+  /// Remaining deficit after using app savings
+  double get _deficitAfterSavings => (_totalDeficit - _savingsCoverageAmount).clamp(0.0, double.infinity);
+  
+  /// Whether the deficit is fully covered by savings
+  bool get _deficitFullyCoveredBySavings => _useAppSavingsForRecovery && _savingsCoverageAmount >= _totalDeficit;
 
   double get _selectedContributionTotal {
     double total = 0;
@@ -120,10 +139,28 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
     // Don't auto-select savings goals here - wait for recovery to load first
     // so recovery takes priority
     _loadRecoveryGoals();
-    // Auto-select recovery checkbox if over budget
-    if (_baseLeftToSpend < 0) {
-      _createOrAddToRecovery = true;
-    }
+    _loadAppSavings();
+  }
+  
+  Future<void> _loadAppSavings() async {
+    final total = await AppSavingsStore.getTotal();
+    if (!mounted) return;
+    setState(() {
+      _appSavingsTotal = total;
+      // Auto-select savings checkbox if user has money left
+      if (_baseLeftToSpend > 0) {
+        _addToAppSavings = true;
+        _appSavingsToAdd = _baseLeftToSpend;
+      }
+      // Auto-select recovery checkbox if over budget
+      if (_baseLeftToSpend < 0) {
+        _createOrAddToRecovery = true;
+        // If we have app savings and a deficit, auto-select to use them
+        if (_appSavingsTotal > 0) {
+          _useAppSavingsForRecovery = true;
+        }
+      }
+    });
   }
   
   Future<void> _loadRecoveryGoals() async {
@@ -346,6 +383,10 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
                       key: ValueKey(_payload.weekStart),
                       forWeekStart: _payload.weekStart,
                     ),
+                    if (_shouldShowAppSavingsSection) ...[
+                      const SizedBox(height: 16),
+                      _buildAppSavingsSection(),
+                    ],
                     if (_shouldShowRecoverySection) ...[
                       const SizedBox(height: 16),
                       _buildRecoverySection(),
@@ -485,6 +526,140 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
       _selectedGoalIds.any((id) => _amountForGoal(id) > 0) ||
       _selectedRecoveryGoalIds.any((id) => _amountForRecoveryGoal(id) > 0);
   
+  /// Whether the app savings section should be visible.
+  /// Shows when user has money left to spend (positive leftToSpend).
+  bool get _shouldShowAppSavingsSection => _baseLeftToSpend > 0;
+  
+  /// Builds the app savings card for adding leftover money to savings.
+  Widget _buildAppSavingsSection() {
+    final leftover = _baseLeftToSpend - _selectedContributionTotal;
+    final effectiveLeftover = leftover.clamp(0.0, double.infinity);
+    
+    return Card(
+      color: Colors.teal.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.savings, color: Colors.teal.shade700, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  "App Savings",
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 16,
+                    color: Colors.teal.shade800,
+                  ),
+                ),
+                const Spacer(),
+                HelpIconTooltip(
+                  title: 'App Savings',
+                  message: 'Money you save by staying under budget each week.\n\n'
+                      'This tracks your cumulative savings achieved through the app. '
+                      'If you ever go over budget, these savings can automatically cover the deficit.',
+                  size: 16,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            
+            // Current savings total
+            if (_appSavingsTotal > 0) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      "Current savings",
+                      style: TextStyle(fontSize: 14),
+                    ),
+                    Text(
+                      "\$${_appSavingsTotal.toStringAsFixed(0)}",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.teal.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            
+            // Add to savings option
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _addToAppSavings ? Colors.teal.shade400 : Colors.teal.shade200,
+                  width: _addToAppSavings ? 2 : 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Checkbox(
+                    value: _addToAppSavings,
+                    activeColor: Colors.teal.shade600,
+                    onChanged: (value) {
+                      setState(() {
+                        _addToAppSavings = value ?? false;
+                        if (_addToAppSavings) {
+                          _appSavingsToAdd = effectiveLeftover;
+                        }
+                      });
+                    },
+                  ),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _addToAppSavings = !_addToAppSavings;
+                          if (_addToAppSavings) {
+                            _appSavingsToAdd = effectiveLeftover;
+                          }
+                        });
+                      },
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Save \$${effectiveLeftover.toStringAsFixed(0)} to app savings",
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          Text(
+                            "New total: \$${(_appSavingsTotal + effectiveLeftover).toStringAsFixed(0)}",
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.teal.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
   /// Whether the recovery section should be visible.
   bool get _shouldShowRecoverySection =>
       _baseLeftToSpend < 0 || _recoveryGoals.isNotEmpty;
@@ -585,17 +760,149 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
   
   /// Checkbox section for creating new or adding to existing recovery goal.
   Widget _buildRecoveryCheckboxSection(bool hasExisting, GoalModel? existingGoal) {
+    // Show savings coverage option first if user has app savings
+    final hasSavings = _appSavingsTotal > 0;
+    final canCoverFully = _savingsCoverageAmount >= _totalDeficit;
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Option to use app savings if available
+        if (hasSavings) ...[
+          _buildSavingsCoverageOption(canCoverFully),
+          if (!_deficitFullyCoveredBySavings) ...[
+            const SizedBox(height: 12),
+          ],
+        ],
+        
+        // Only show recovery goal option if deficit isn't fully covered by savings
+        if (!_deficitFullyCoveredBySavings) ...[
+          _buildRecoveryGoalOption(hasExisting, existingGoal),
+        ],
+      ],
+    );
+  }
+  
+  /// Builds the option to use app savings to cover the deficit.
+  Widget _buildSavingsCoverageOption(bool canCoverFully) {
+    final coverageText = canCoverFully
+        ? "Use \$${_totalDeficit.toStringAsFixed(0)} from app savings"
+        : "Use \$${_appSavingsTotal.toStringAsFixed(0)} from app savings";
+    final subtitleText = canCoverFully
+        ? "Fully covers this week's deficit!"
+        : "Covers \$${_savingsCoverageAmount.toStringAsFixed(0)} of \$${_totalDeficit.toStringAsFixed(0)} deficit";
+    final remainingAfter = _appSavingsTotal - _savingsCoverageAmount;
+    
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.teal.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: _useAppSavingsForRecovery ? Colors.teal.shade400 : Colors.teal.shade200,
+          width: _useAppSavingsForRecovery ? 2 : 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Checkbox(
+                value: _useAppSavingsForRecovery,
+                activeColor: Colors.teal.shade600,
+                onChanged: (value) {
+                  setState(() {
+                    _useAppSavingsForRecovery = value ?? false;
+                    // If fully covered, disable recovery goal creation
+                    if (_useAppSavingsForRecovery && canCoverFully) {
+                      _createOrAddToRecovery = false;
+                    }
+                  });
+                },
+              ),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _useAppSavingsForRecovery = !_useAppSavingsForRecovery;
+                      if (_useAppSavingsForRecovery && canCoverFully) {
+                        _createOrAddToRecovery = false;
+                      }
+                    });
+                  },
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.savings, size: 16, color: Colors.teal.shade700),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              coverageText,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        subtitleText,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: canCoverFully ? Colors.teal.shade700 : Colors.teal.shade600,
+                          fontWeight: canCoverFully ? FontWeight.w500 : FontWeight.normal,
+                        ),
+                      ),
+                      if (_useAppSavingsForRecovery)
+                        Text(
+                          "Savings after: \$${remainingAfter.toStringAsFixed(0)}",
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.teal.shade600,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+  
+  /// Builds the recovery goal creation/update option.
+  Widget _buildRecoveryGoalOption(bool hasExisting, GoalModel? existingGoal) {
+    // Calculate amounts considering savings usage
+    final effectiveDeficit = _deficitAfterSavings;
     final String actionText;
     final String? subtitleText;
     
     if (hasExisting) {
       final existingRemaining = _existingRecoveryRemaining;
-      actionText = "Update recovery goal to \$${_totalRecoveryAmount.toStringAsFixed(0)}";
-      subtitleText = "\$${existingRemaining.toStringAsFixed(0)} existing + \$${_totalDeficit.toStringAsFixed(0)} new";
+      final newTotal = existingRemaining + effectiveDeficit;
+      actionText = "Update recovery goal to \$${newTotal.toStringAsFixed(0)}";
+      if (_useAppSavingsForRecovery && _savingsCoverageAmount > 0) {
+        subtitleText = "\$${existingRemaining.toStringAsFixed(0)} existing + \$${effectiveDeficit.toStringAsFixed(0)} remaining";
+      } else {
+        subtitleText = "\$${existingRemaining.toStringAsFixed(0)} existing + \$${effectiveDeficit.toStringAsFixed(0)} new";
+      }
     } else {
-      actionText = "Create recovery goal for \$${_totalDeficit.toStringAsFixed(0)}";
-      subtitleText = null;
+      actionText = "Create recovery goal for \$${effectiveDeficit.toStringAsFixed(0)}";
+      if (_useAppSavingsForRecovery && _savingsCoverageAmount > 0) {
+        subtitleText = "After using \$${_savingsCoverageAmount.toStringAsFixed(0)} from savings";
+      } else {
+        subtitleText = null;
+      }
     }
+    
+    final effectiveRecoveryAmount = _existingRecoveryRemaining + effectiveDeficit;
+    final effectiveWeeklyPayment = _recoveryWeeks > 0 ? effectiveRecoveryAmount / _recoveryWeeks : 0.0;
     
     return Container(
       padding: const EdgeInsets.all(12),
@@ -709,7 +1016,7 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
-                "\$${_recoveryWeeklyPayment.toStringAsFixed(2)} per week",
+                "\$${effectiveWeeklyPayment.toStringAsFixed(2)} per week",
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
@@ -882,13 +1189,45 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
       _submitting = true;
     });
     
+    final scaffold = ScaffoldMessenger.of(context);
+    
     try {
       // Apply savings goal contributions first
       await _applySelectedContributionsIfNeeded();
       if (!mounted) return;
       
-      // Handle recovery goal creation/update if checkbox is selected
-      if (_createOrAddToRecovery && _totalDeficit > 0) {
+      // Handle app savings - add leftover money if selected
+      if (_addToAppSavings && _baseLeftToSpend > 0) {
+        final leftover = (_baseLeftToSpend - _selectedContributionTotal).clamp(0.0, double.infinity);
+        if (leftover > 0) {
+          final newTotal = await AppSavingsStore.add(leftover);
+          scaffold.showSnackBar(
+            SnackBar(content: Text("Added \$${leftover.toStringAsFixed(0)} to app savings (total: \$${newTotal.toStringAsFixed(0)})")),
+          );
+        }
+      }
+      
+      // Handle app savings withdrawal to cover deficit
+      if (_useAppSavingsForRecovery && _savingsCoverageAmount > 0) {
+        final withdrawn = await AppSavingsStore.withdraw(_savingsCoverageAmount);
+        if (withdrawn > 0) {
+          if (_deficitFullyCoveredBySavings) {
+            scaffold.showSnackBar(
+              SnackBar(
+                content: Text("Deficit covered! Used \$${withdrawn.toStringAsFixed(0)} from app savings"),
+                backgroundColor: Colors.teal,
+              ),
+            );
+          } else {
+            scaffold.showSnackBar(
+              SnackBar(content: Text("Used \$${withdrawn.toStringAsFixed(0)} from app savings towards deficit")),
+            );
+          }
+        }
+      }
+      
+      // Handle recovery goal creation/update if checkbox is selected AND there's remaining deficit
+      if (_createOrAddToRecovery && _deficitAfterSavings > 0) {
         await _processRecoveryGoal();
       }
       
@@ -912,19 +1251,21 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
   }
   
   /// Creates a new recovery goal or adds to an existing one.
+  /// Uses _deficitAfterSavings to account for any savings used to cover the deficit.
   Future<void> _processRecoveryGoal() async {
     final scaffold = ScaffoldMessenger.of(context);
+    final effectiveDeficit = _deficitAfterSavings;
     
     if (_recoveryGoals.isNotEmpty) {
       // Add to existing recovery goal
       final existingGoal = _recoveryGoals.first;
       final currentRemaining = (existingGoal.amount - existingGoal.savedAmount).clamp(0.0, double.infinity);
-      final newTotal = currentRemaining + _totalDeficit;
+      final newTotal = currentRemaining + effectiveDeficit;
       final newWeeklyPayment = _recoveryWeeks > 0 ? newTotal / _recoveryWeeks : 0.0;
       
       final updated = existingGoal.copyWith(
         amount: existingGoal.savedAmount + newTotal, // Total = already paid + new remaining
-        originalDeficit: (existingGoal.originalDeficit ?? existingGoal.amount) + _totalDeficit,
+        originalDeficit: (existingGoal.originalDeficit ?? existingGoal.amount) + effectiveDeficit,
         recoveryWeeks: _recoveryWeeks,
         weeklyContribution: newWeeklyPayment,
       );
@@ -937,20 +1278,21 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
       );
     } else {
       // Create new recovery goal
+      final weeklyPayment = _recoveryWeeks > 0 ? effectiveDeficit / _recoveryWeeks : 0.0;
       final goal = GoalModel(
         name: "Budget Recovery",
-        amount: _totalDeficit,
-        weeklyContribution: _recoveryWeeklyPayment,
+        amount: effectiveDeficit,
+        weeklyContribution: weeklyPayment,
         savedAmount: 0,
         goalType: GoalType.recovery,
-        originalDeficit: _totalDeficit,
+        originalDeficit: effectiveDeficit,
         recoveryWeeks: _recoveryWeeks,
       );
       
       await GoalRepository.insert(goal);
       scaffold.showSnackBar(
         SnackBar(
-          content: Text("Recovery goal created: \$${_recoveryWeeklyPayment.toStringAsFixed(2)}/week for $_recoveryWeeks weeks"),
+          content: Text("Recovery goal created: \$${weeklyPayment.toStringAsFixed(2)}/week for $_recoveryWeeks weeks"),
         ),
       );
     }
@@ -977,7 +1319,7 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
     final refreshedReport = await InsightsService.generateReportForWeek(
       _payload.weekStart,
       persist: true,
-      usePreviousWeekIncome: false,
+      usePreviousWeekIncome: true,
     );
     final summary = refreshedReport.overviewSummary;
     if (!mounted || summary == null) return;

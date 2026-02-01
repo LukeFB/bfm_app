@@ -103,7 +103,7 @@ class WeeklyOverviewService {
     final report = await InsightsService.generateReportForWeek(
       weekStart,
       persist: true,
-      usePreviousWeekIncome: false,
+      usePreviousWeekIncome: true,
     );
     final summary = report.overviewSummary;
     if (summary == null) return null;
