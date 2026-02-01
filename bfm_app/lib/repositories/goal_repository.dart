@@ -298,6 +298,16 @@ class GoalRepository {
     });
   }
 
+  /// Clears all goals and their associated progress logs.
+  /// Used when disconnecting the bank to reset user data.
+  static Future<void> clearAll() async {
+    final db = await AppDatabase.instance.database;
+    await db.transaction((txn) async {
+      await txn.delete('goal_progress_log');
+      await txn.delete('goals');
+    });
+  }
+
   /// Aggregates contribution totals for every goal for a specific week.
   /// Useful for dashboards that need quick per-goal bars without extra SQL.
   static Future<Map<int, double>> weeklyContributionTotals(

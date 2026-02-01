@@ -13,6 +13,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:bfm_app/models/alert_model.dart';
+import 'package:bfm_app/widgets/help_icon_tooltip.dart';
 
 /// Semi-circle chart displaying income breakdown with budget tracking.
 class SemiCircleChart extends StatelessWidget {
@@ -24,6 +25,8 @@ class SemiCircleChart extends StatelessWidget {
   final List<AlertModel> alerts;
   final VoidCallback? onAlertsPressed;
   final int streakWeeks;
+  /// When true, hides the alerts section and centers the legend labels.
+  final bool hideAlerts;
 
   // Colors - brighter orange
   static const Color orangeBright = Color(0xFFFF7A00);
@@ -42,6 +45,7 @@ class SemiCircleChart extends StatelessWidget {
     this.alerts = const [],
     this.onAlertsPressed,
     this.streakWeeks = 0,
+    this.hideAlerts = false,
   });
 
   @override
@@ -53,15 +57,10 @@ class SemiCircleChart extends StatelessWidget {
     final effectiveWeeklyLimit = (leftToSpend - budgetOverspend).clamp(0.0, double.infinity);
     final isOverspentDiscretionary = discretionarySpent > effectiveWeeklyLimit;
 
-    // Total left to spend (can be negative if overspent)
+    // Total left to spend: income - budget spent - non-budget spent
+    // This shows how much is left for both budgets AND non-budgets combined
     final totalLeftToSpend = income - spentOnBudgets - discretionarySpent;
     final isOverspentTotal = totalLeftToSpend < 0;
-    
-    // When overspent, subtract remaining budget allocation from the display
-    final budgetLeft = (totalBudgeted - spentOnBudgets).clamp(0.0, double.infinity);
-    final displayLeftToSpend = isOverspentTotal 
-        ? totalLeftToSpend - budgetLeft 
-        : totalLeftToSpend;
 
     return Card(
       elevation: 0,
@@ -93,19 +92,34 @@ class SemiCircleChart extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          '${isOverspentTotal ? '-' : ''}\$${displayLeftToSpend.abs().toStringAsFixed(0)}',
+                          '${isOverspentTotal ? '-' : ''}\$${totalLeftToSpend.abs().toStringAsFixed(0)}',
                           style: TextStyle(
                             fontSize: 32,
                             fontWeight: FontWeight.bold,
                             color: isOverspentTotal ? redOverspent : Colors.black87,
                           ),
                         ),
-                        const Text(
-                          'left to spend',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey,
-                          ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'left for budgets & non-budgets',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            HelpIconTooltip(
+                              title: 'Left for Budgets & Non-budgets',
+                              message: 'Total remaining after all spending.\n\n'
+                                  'Calculation: Income − Budget Spent − Non-budget Spent\n\n'
+                                  'This shows how much you have left to cover:\n'
+                                  '• Remaining budget allocations\n'
+                                  '• Any additional non-budget spending',
+                              size: 12,
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -150,6 +164,301 @@ class SemiCircleChart extends StatelessWidget {
     final isScenario3 = isOverspentOnBudgets && (noWeeklyLimitLeft || isOverspentDiscretionary);
     final isScenario4 = !isOverspentOnBudgets && isOverspentDiscretionary;
 
+    // Build legend items list
+    final legendItems = <Widget>[
+      // === BUDGET SECTION ===
+      if (isScenario1 || isScenario4) ...[
+        // Scenario 1 & 4: Budget OK
+        // (Orange) Budget spent
+        _LegendItem(
+          color: orangeBright,
+          label: 'Budget Spent',
+          value: '\$${spentOnBudgets.toStringAsFixed(0)}',
+          isFilled: true,
+          centered: hideAlerts,
+          helpTitle: 'Budget Spent',
+          helpMessage: 'Amount spent in budget categories (bills, groceries, etc.).\n\n'
+              'This is spending in categories where you\'ve set a budget limit.',
+        ),
+        const SizedBox(height: 4),
+        // (Light Orange) budget left
+        _LegendItem(
+          color: orangeBright,
+          outlineColor: orangeLight,
+          label: 'budget left',
+          value: '\$${leftOnBudgets.toStringAsFixed(0)}',
+          isFilled: false,
+          centered: hideAlerts,
+          helpTitle: 'Budget Left',
+          helpMessage: 'Remaining budget allocation.\n\n'
+              'Calculation: Total Budgeted − Budget Spent\n\n'
+              'This is how much more you can spend before exceeding your budget limits.',
+        ),
+        const SizedBox(height: 4),
+        // Budget: (no color)
+        _LegendItem(
+          color: orangeBright,
+          label: 'Budget',
+          value: '\$${totalBudgeted.toStringAsFixed(0)}',
+          isFilled: true,
+          showIndicator: false,
+          centered: hideAlerts,
+          helpTitle: 'Total Budget',
+          helpMessage: 'Sum of all your weekly budget limits.\n\n'
+              'This is the total amount allocated to budget categories.',
+        ),
+      ] else ...[
+        // Scenario 2 & 3: Budget overspent
+        // Budget spent: (no color)
+        _LegendItem(
+          color: orangeBright,
+          label: 'Budget Spent',
+          value: '\$${spentOnBudgets.toStringAsFixed(0)}',
+          isFilled: true,
+          showIndicator: false,
+          centered: hideAlerts,
+          helpTitle: 'Budget Spent',
+          helpMessage: 'Amount spent in budget categories.\n\n'
+              'You\'ve exceeded your budget limits.',
+        ),
+        const SizedBox(height: 4),
+        // (Orange) Budgeted
+        _LegendItem(
+          color: orangeBright,
+          label: 'Budgeted',
+          value: '\$${totalBudgeted.toStringAsFixed(0)}',
+          isFilled: true,
+          centered: hideAlerts,
+          helpTitle: 'Total Budgeted',
+          helpMessage: 'Sum of all your weekly budget limits.',
+        ),
+        const SizedBox(height: 4),
+        // (Red) Budget overspend
+        _LegendItem(
+          color: redOverspent,
+          label: 'Budget overspend',
+          value: '\$${budgetOverspend.toStringAsFixed(0)}',
+          isFilled: true,
+          centered: hideAlerts,
+          helpTitle: 'Budget Overspend',
+          helpMessage: 'Amount spent beyond your budget limits.\n\n'
+              'Calculation: Budget Spent − Total Budgeted\n\n'
+              'This reduces your available weekly limit.',
+        ),
+      ],
+      const SizedBox(height: 8),
+      
+      // === DISCRETIONARY SECTION ===
+      if (isScenario1) ...[
+        // Scenario 1: Budget OK, Non-budget OK
+        // (Blue) non-budget spent
+        _LegendItem(
+          color: blueBright,
+          label: 'non-budget spent',
+          value: '\$${discretionarySpent.toStringAsFixed(0)}',
+          isFilled: true,
+          centered: hideAlerts,
+          helpTitle: 'Non-budget Spent',
+          helpMessage: 'Spending in categories without a budget.\n\n'
+              'This is discretionary spending outside your budget categories.',
+        ),
+        const SizedBox(height: 4),
+        // (Light blue) left to spend
+        _LegendItem(
+          color: blueBright,
+          outlineColor: blueLight,
+          label: 'left to spend',
+          value: '\$${actualLeftToSpend.clamp(0.0, double.infinity).toStringAsFixed(0)}',
+          isFilled: false,
+          centered: hideAlerts,
+          helpTitle: 'Left to Spend',
+          helpMessage: 'Remaining discretionary budget.\n\n'
+              'Calculation: Weekly Limit − Non-budget Spent\n\n'
+              'This is how much more you can spend on non-budget items.',
+        ),
+        const SizedBox(height: 4),
+        // Weekly limit: (no color)
+        _LegendItem(
+          color: blueBright,
+          label: 'Weekly limit',
+          value: '\$${leftToSpend.toStringAsFixed(0)}',
+          isFilled: true,
+          showIndicator: false,
+          centered: hideAlerts,
+          helpTitle: 'Weekly Limit',
+          helpMessage: 'Your discretionary budget for non-budget spending.\n\n'
+              'Calculation: Income − Total Budgeted\n\n'
+              'This is your allowance for spending outside budget categories.',
+        ),
+      ] else if (isScenario2) ...[
+        // Scenario 2: Budget overspent, still left to spend from weekly limit
+        // (light blue) Left to spend
+        _LegendItem(
+          color: blueBright,
+          outlineColor: blueLight,
+          label: 'Left to spend',
+          value: '\$${actualLeftToSpend.clamp(0.0, double.infinity).toStringAsFixed(0)}',
+          isFilled: false,
+          centered: hideAlerts,
+          helpTitle: 'Left to Spend',
+          helpMessage: 'Remaining after budget overspend and non-budget spending.',
+        ),
+        const SizedBox(height: 4),
+        // (Blue) Non-budget spent
+        _LegendItem(
+          color: blueBright,
+          label: 'Non-budget spent',
+          value: '\$${discretionarySpent.toStringAsFixed(0)}',
+          isFilled: true,
+          centered: hideAlerts,
+          helpTitle: 'Non-budget Spent',
+          helpMessage: 'Spending in categories without a budget.',
+        ),
+        const SizedBox(height: 4),
+        // Weekly limit: (no color) - reduced by budget overspend
+        _LegendItem(
+          color: blueBright,
+          label: 'Weekly limit',
+          value: '\$${effectiveLimit.clamp(0.0, double.infinity).toStringAsFixed(0)}',
+          isFilled: true,
+          showIndicator: false,
+          centered: hideAlerts,
+          helpTitle: 'Reduced Weekly Limit',
+          helpMessage: 'Your weekly limit reduced by budget overspend.\n\n'
+              'Budget overspending eats into your discretionary budget.',
+        ),
+      ] else if (isScenario3) ...[
+        // Scenario 3: Budget overspent AND (no effective left OR non-budget overspent)
+        if (noWeeklyLimitLeft) ...[
+          // Sub-case: Budget overspend consumed ALL weekly limit
+          // All non-budget spending is red (no weekly limit left)
+          if (discretionarySpent > 0)
+            _LegendItem(
+              color: redOverspent,
+              label: 'Non-budget spent',
+              value: '\$${discretionarySpent.toStringAsFixed(0)}',
+              isFilled: true,
+              centered: hideAlerts,
+              helpTitle: 'Non-budget Overspend',
+              helpMessage: 'All non-budget spending is over limit.\n\n'
+                  'Budget overspending consumed your entire weekly limit.',
+            ),
+        ] else ...[
+          // Sub-case: Still has effective limit but non-budget overspent
+          // Non-budget spend: (no color) - total non-budget spent
+          _LegendItem(
+            color: blueBright,
+            label: 'Non-budget spend',
+            value: '\$${discretionarySpent.toStringAsFixed(0)}',
+            isFilled: true,
+            showIndicator: false,
+            centered: hideAlerts,
+            helpTitle: 'Non-budget Spent',
+            helpMessage: 'Total spending in non-budget categories.',
+          ),
+          const SizedBox(height: 4),
+          // (Blue) Weekly limit - the reduced effective limit
+          _LegendItem(
+            color: blueBright,
+            label: 'Weekly limit',
+            value: '\$${effectiveLimit.clamp(0.0, double.infinity).toStringAsFixed(0)}',
+            isFilled: true,
+            centered: hideAlerts,
+            helpTitle: 'Reduced Weekly Limit',
+            helpMessage: 'Weekly limit reduced by budget overspend.',
+          ),
+          const SizedBox(height: 4),
+          // (Red) Non-budget overspend - amount over the limit
+          _LegendItem(
+            color: redOverspent,
+            label: 'Non-budget overspend',
+            value: '\$${discretionaryOverspend.toStringAsFixed(0)}',
+            isFilled: true,
+            centered: hideAlerts,
+            helpTitle: 'Non-budget Overspend',
+            helpMessage: 'Amount spent beyond your weekly limit.\n\n'
+                'Calculation: Non-budget Spent − Weekly Limit',
+          ),
+        ],
+      ] else if (isScenario4) ...[
+        // Scenario 4: Budget OK, Non-budget overspent
+        // non-budget spent: (no color)
+        _LegendItem(
+          color: blueBright,
+          label: 'non-budget spent',
+          value: '\$${discretionarySpent.toStringAsFixed(0)}',
+          isFilled: true,
+          showIndicator: false,
+          centered: hideAlerts,
+          helpTitle: 'Non-budget Spent',
+          helpMessage: 'Total spending in non-budget categories.',
+        ),
+        const SizedBox(height: 4),
+        // (Blue) weekly limit
+        _LegendItem(
+          color: blueBright,
+          label: 'weekly limit',
+          value: '\$${leftToSpend.toStringAsFixed(0)}',
+          isFilled: true,
+          centered: hideAlerts,
+          helpTitle: 'Weekly Limit',
+          helpMessage: 'Your discretionary budget (Income − Budgeted).',
+        ),
+        const SizedBox(height: 4),
+        // (Red) non-budget overspend
+        _LegendItem(
+          color: redOverspent,
+          label: 'non-budget overspend',
+          value: '\$${discretionaryOverspend.toStringAsFixed(0)}',
+          isFilled: true,
+          centered: hideAlerts,
+          helpTitle: 'Non-budget Overspend',
+          helpMessage: 'Amount spent beyond your weekly limit.\n\n'
+              'Calculation: Non-budget Spent − Weekly Limit',
+        ),
+      ],
+      const SizedBox(height: 8),
+      // Income: (no color)
+      _LegendItem(
+        color: Colors.grey,
+        label: 'Income',
+        value: '\$${income.toStringAsFixed(0)}',
+        isFilled: true,
+        showIndicator: false,
+        centered: hideAlerts,
+        helpTitle: 'Weekly Income',
+        helpMessage: 'Your expected income for this week.\n\n'
+            'For regular income: Uses last week\'s actual income.\n'
+            'For irregular income: Uses 4-week average.',
+      ),
+      // Streak display (only show when > 1)
+      if (streakWeeks > 1) ...[
+        const SizedBox(height: 12),
+        Align(
+          alignment: hideAlerts ? Alignment.center : Alignment.centerLeft,
+          child: Padding(
+            padding: hideAlerts ? EdgeInsets.zero : const EdgeInsets.only(left: 24),
+            child: Text(
+              '$streakWeeks🔥',
+              style: const TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+      ],
+    ];
+
+    // When hideAlerts is true, return centered legend only
+    if (hideAlerts) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: legendItems,
+      );
+    }
+
+    // Original layout with alerts section
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -157,212 +466,7 @@ class SemiCircleChart extends StatelessWidget {
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // === BUDGET SECTION ===
-              if (isScenario1 || isScenario4) ...[
-                // Scenario 1 & 4: Budget OK
-                // (Orange) Budget spent
-                _LegendItem(
-                  color: orangeBright,
-                  label: 'Budget Spent',
-                  value: '\$${spentOnBudgets.toStringAsFixed(0)}',
-                  isFilled: true,
-                ),
-                const SizedBox(height: 4),
-                // (Light Orange) budget left
-                _LegendItem(
-                  color: orangeBright,
-                  outlineColor: orangeLight,
-                  label: 'budget left',
-                  value: '\$${leftOnBudgets.toStringAsFixed(0)}',
-                  isFilled: false,
-                ),
-                const SizedBox(height: 4),
-                // Budget: (no color)
-                _LegendItem(
-                  color: orangeBright,
-                  label: 'Budget',
-                  value: '\$${totalBudgeted.toStringAsFixed(0)}',
-                  isFilled: true,
-                  showIndicator: false,
-                ),
-              ] else ...[
-                // Scenario 2 & 3: Budget overspent
-                // Budget spent: (no color)
-                _LegendItem(
-                  color: orangeBright,
-                  label: 'Budget Spent',
-                  value: '\$${spentOnBudgets.toStringAsFixed(0)}',
-                  isFilled: true,
-                  showIndicator: false,
-                ),
-                const SizedBox(height: 4),
-                // (Orange) Budgeted
-                _LegendItem(
-                  color: orangeBright,
-                  label: 'Budgeted',
-                  value: '\$${totalBudgeted.toStringAsFixed(0)}',
-                  isFilled: true,
-                ),
-                const SizedBox(height: 4),
-                // (Red) Budget overspend
-                _LegendItem(
-                  color: redOverspent,
-                  label: 'Budget overspend',
-                  value: '\$${budgetOverspend.toStringAsFixed(0)}',
-                  isFilled: true,
-                ),
-              ],
-              const SizedBox(height: 8),
-              
-              // === DISCRETIONARY SECTION ===
-              if (isScenario1) ...[
-                // Scenario 1: Budget OK, Non-budget OK
-                // (Blue) non-budget spent
-                _LegendItem(
-                  color: blueBright,
-                  label: 'non-budget spent',
-                  value: '\$${discretionarySpent.toStringAsFixed(0)}',
-                  isFilled: true,
-                ),
-                const SizedBox(height: 4),
-                // (Light blue) left to spend
-                _LegendItem(
-                  color: blueBright,
-                  outlineColor: blueLight,
-                  label: 'left to spend',
-                  value: '\$${actualLeftToSpend.clamp(0.0, double.infinity).toStringAsFixed(0)}',
-                  isFilled: false,
-                ),
-                const SizedBox(height: 4),
-                // Weekly limit: (no color)
-                _LegendItem(
-                  color: blueBright,
-                  label: 'Weekly limit',
-                  value: '\$${leftToSpend.toStringAsFixed(0)}',
-                  isFilled: true,
-                  showIndicator: false,
-                ),
-              ] else if (isScenario2) ...[
-                // Scenario 2: Budget overspent, still left to spend from weekly limit
-                // (light blue) Left to spend
-                _LegendItem(
-                  color: blueBright,
-                  outlineColor: blueLight,
-                  label: 'Left to spend',
-                  value: '\$${actualLeftToSpend.clamp(0.0, double.infinity).toStringAsFixed(0)}',
-                  isFilled: false,
-                ),
-                const SizedBox(height: 4),
-                // (Blue) Non-budget spent
-                _LegendItem(
-                  color: blueBright,
-                  label: 'Non-budget spent',
-                  value: '\$${discretionarySpent.toStringAsFixed(0)}',
-                  isFilled: true,
-                ),
-                const SizedBox(height: 4),
-                // Weekly limit: (no color) - reduced by budget overspend
-                _LegendItem(
-                  color: blueBright,
-                  label: 'Weekly limit',
-                  value: '\$${effectiveLimit.clamp(0.0, double.infinity).toStringAsFixed(0)}',
-                  isFilled: true,
-                  showIndicator: false,
-                ),
-              ] else if (isScenario3) ...[
-                // Scenario 3: Budget overspent AND (no effective left OR non-budget overspent)
-                if (noWeeklyLimitLeft) ...[
-                  // Sub-case: Budget overspend consumed ALL weekly limit
-                  // All non-budget spending is red (no weekly limit left)
-                  if (discretionarySpent > 0)
-                    _LegendItem(
-                      color: redOverspent,
-                      label: 'Non-budget spent',
-                      value: '\$${discretionarySpent.toStringAsFixed(0)}',
-                      isFilled: true,
-                    ),
-                ] else ...[
-                  // Sub-case: Still has effective limit but non-budget overspent
-                  // Non-budget spend: (no color) - total non-budget spent
-                  _LegendItem(
-                    color: blueBright,
-                    label: 'Non-budget spend',
-                    value: '\$${discretionarySpent.toStringAsFixed(0)}',
-                    isFilled: true,
-                    showIndicator: false,
-                  ),
-                  const SizedBox(height: 4),
-                  // (Blue) Weekly limit - the reduced effective limit
-                  _LegendItem(
-                    color: blueBright,
-                    label: 'Weekly limit',
-                    value: '\$${effectiveLimit.clamp(0.0, double.infinity).toStringAsFixed(0)}',
-                    isFilled: true,
-                  ),
-                  const SizedBox(height: 4),
-                  // (Red) Non-budget overspend - amount over the limit
-                  _LegendItem(
-                    color: redOverspent,
-                    label: 'Non-budget overspend',
-                    value: '\$${discretionaryOverspend.toStringAsFixed(0)}',
-                    isFilled: true,
-                  ),
-                ],
-              ] else if (isScenario4) ...[
-                // Scenario 4: Budget OK, Non-budget overspent
-                // non-budget spent: (no color)
-                _LegendItem(
-                  color: blueBright,
-                  label: 'non-budget spent',
-                  value: '\$${discretionarySpent.toStringAsFixed(0)}',
-                  isFilled: true,
-                  showIndicator: false,
-                ),
-                const SizedBox(height: 4),
-                // (Blue) weekly limit
-                _LegendItem(
-                  color: blueBright,
-                  label: 'weekly limit',
-                  value: '\$${leftToSpend.toStringAsFixed(0)}',
-                  isFilled: true,
-                ),
-                const SizedBox(height: 4),
-                // (Red) non-budget overspend
-                _LegendItem(
-                  color: redOverspent,
-                  label: 'non-budget overspend',
-                  value: '\$${discretionaryOverspend.toStringAsFixed(0)}',
-                  isFilled: true,
-                ),
-              ],
-              const SizedBox(height: 8),
-              // Income: (no color)
-              _LegendItem(
-                color: Colors.grey,
-                label: 'Income',
-                value: '\$${income.toStringAsFixed(0)}',
-                isFilled: true,
-                showIndicator: false,
-              ),
-              // Streak display (only show when > 1)
-              if (streakWeeks > 1) ...[
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 24),
-                    child: Text(
-                      '$streakWeeks🔥',
-                      style: const TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ],
+            children: legendItems,
           ),
         ),
         const SizedBox(width: 8),
@@ -507,6 +611,9 @@ class _LegendItem extends StatelessWidget {
   final String value;
   final bool isFilled;
   final bool showIndicator;
+  final bool centered;
+  final String? helpTitle;
+  final String? helpMessage;
 
   const _LegendItem({
     required this.color,
@@ -515,11 +622,14 @@ class _LegendItem extends StatelessWidget {
     required this.value,
     required this.isFilled,
     this.showIndicator = true,
+    this.centered = false,
+    this.helpTitle,
+    this.helpMessage,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    final content = Row(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -541,6 +651,7 @@ class _LegendItem extends StatelessWidget {
         const SizedBox(width: 8),
         Flexible(
           child: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(
                 '$label: ',
@@ -557,11 +668,24 @@ class _LegendItem extends StatelessWidget {
                   color: showIndicator ? (isFilled ? color : Colors.black87) : Colors.black87,
                 ),
               ),
+              if (helpMessage != null) ...[
+                const SizedBox(width: 2),
+                HelpIconTooltip(
+                  title: helpTitle ?? label,
+                  message: helpMessage!,
+                  size: 11,
+                ),
+              ],
             ],
           ),
         ),
       ],
     );
+
+    if (centered) {
+      return Center(child: content);
+    }
+    return content;
   }
 }
 

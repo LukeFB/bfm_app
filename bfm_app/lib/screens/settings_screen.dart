@@ -17,10 +17,10 @@
 import 'package:bfm_app/screens/onboarding_screen.dart';
 import 'package:bfm_app/services/api_key_store.dart';
 import 'package:bfm_app/services/bank_service.dart';
+import 'package:bfm_app/services/income_settings_store.dart';
 import 'package:bfm_app/services/weekly_overview_service.dart';
 import 'package:bfm_app/widgets/weekly_overview_sheet.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 /// Settings surface for keys, disconnect, and debug entry points.
 class SettingsScreen extends StatefulWidget {
@@ -35,12 +35,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _apiKeyCtrl = TextEditingController();
   String _apiKeyStatus = '';
   bool _openingWeeklyOverview = false;
+  IncomeType _incomeType = IncomeType.regular;
+  bool _incomeTypeLoaded = false;
 
   /// Boots the API key load as soon as the screen mounts.
   @override
   void initState() {
     super.initState();
     _loadApiKey();
+    _loadIncomeType();
+  }
+
+  Future<void> _loadIncomeType() async {
+    final type = await IncomeSettingsStore.getIncomeType();
+    if (mounted) {
+      setState(() {
+        _incomeType = type;
+        _incomeTypeLoaded = true;
+      });
+    }
+  }
+
+  Future<void> _setIncomeType(IncomeType type) async {
+    await IncomeSettingsStore.setIncomeType(type);
+    // Mark as no longer auto-detected since user manually changed it
+    await IncomeSettingsStore.markAutoDetected(false);
+    if (mounted) {
+      setState(() => _incomeType = type);
+    }
   }
 
   Future<void> _openWeeklyOverviewFromSettings() async {
@@ -209,6 +231,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
 
+          // --- Income Type section ---
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Card(
+              elevation: 1,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Income Type',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Choose how your weekly income is calculated for budgeting.',
+                      style: TextStyle(fontSize: 14, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 12),
+                    if (!_incomeTypeLoaded)
+                      const Center(
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    else
+                      Column(
+                        children: [
+                          RadioListTile<IncomeType>(
+                            title: const Text('Regular income'),
+                            subtitle: const Text(
+                              'Steady paycheck (weekly/fortnightly). Uses last week\'s income.',
+                            ),
+                            value: IncomeType.regular,
+                            groupValue: _incomeType,
+                            onChanged: (v) => _setIncomeType(v!),
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                          ),
+                          RadioListTile<IncomeType>(
+                            title: const Text('Non-regular income'),
+                            subtitle: const Text(
+                              'Variable earnings (gig work, freelance). Uses 4-week average.',
+                            ),
+                            value: IncomeType.nonRegular,
+                            groupValue: _incomeType,
+                            onChanged: (v) => _setIncomeType(v!),
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+
           ListTile(
             leading: const Icon(Icons.auto_stories_outlined),
             title: const Text('Replay onboarding tour'),
@@ -243,7 +327,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 builder: (ctx) => AlertDialog(
                   title: const Text('Disconnect Bank'),
                   content: const Text(
-                      'This will delete all imported transactions. Are you sure?'),
+                      'This will delete all your data including transactions, budgets, and goals. You will need to start over. Are you sure?'),
                   actions: [
                     TextButton(
                         child: const Text('Cancel'),
@@ -257,16 +341,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               if (confirm != true) return;
 
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setBool('bank_connected', false);
-
-              // Clear all transaction and recurring transaction data from the database
+              // Clear all user data and reset to fresh state
               await BankService.disconnect();
 
-              // Navigate back to BankConnectScreen (reset navigation stack)
+              // Navigate back to onboarding (reset navigation stack)
               if (!context.mounted) return;
               Navigator.pushNamedAndRemoveUntil(
-                  context, '/bankconnect', (route) => false);
+                  context, '/onboarding', (route) => false);
             },
           ),
           const SizedBox(height: 16),

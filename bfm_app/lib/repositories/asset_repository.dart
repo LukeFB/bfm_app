@@ -85,4 +85,10 @@ class AssetRepository {
     if (rows.isEmpty) return null;
     return AssetModel.fromMap(rows.first);
   }
+
+  /// Clears all assets. Used when disconnecting bank to reset user data.
+  static Future<void> clearAll() async {
+    final db = await AppDatabase.instance.database;
+    await db.delete('assets');
+  }
 }

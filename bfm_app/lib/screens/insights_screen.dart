@@ -36,7 +36,11 @@ class InsightsScreen extends StatefulWidget {
 class _InsightsPayload {
   final WeeklyInsightsReport currentReport;
   final List<WeeklyReportEntry> history;
-  const _InsightsPayload({required this.currentReport, required this.history});
+  
+  const _InsightsPayload({
+    required this.currentReport,
+    required this.history,
+  });
   
   /// All reports: current week first, then history (most recent first)
   List<WeeklyInsightsReport> get allReports {
@@ -65,9 +69,19 @@ class _InsightsScreenState extends State<InsightsScreen> {
 
   /// Generates the latest report and pulls stored history entries.
   Future<_InsightsPayload> _load() async {
-    final report = await InsightsService.generateWeeklyReport();
-    final history = await InsightsService.getSavedReports();
-    return _InsightsPayload(currentReport: report, history: history);
+    // Fetch report and history in parallel
+    final results = await Future.wait([
+      InsightsService.generateWeeklyReport(),
+      InsightsService.getSavedReports(),
+    ]);
+
+    final report = results[0] as WeeklyInsightsReport;
+    final history = results[1] as List<WeeklyReportEntry>;
+
+    return _InsightsPayload(
+      currentReport: report,
+      history: history,
+    );
   }
 
   /// Rebuilds the Future and waits for it so pull-to-refresh can complete.
@@ -172,7 +186,11 @@ class _InsightsScreenState extends State<InsightsScreen> {
                   ],
                 ),
                 const SizedBox(height: 16),
-                BudgetRingCard(report: report),
+                // Combined chart card with toggle for all weeks
+                CombinedChartCard(
+                  report: report,
+                  showStats: true,
+                ),
                 const SizedBox(height: 16),
                 BudgetComparisonCard(
                   key: ValueKey(report.weekStart),

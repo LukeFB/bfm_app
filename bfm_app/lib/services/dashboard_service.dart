@@ -33,6 +33,7 @@ import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/repositories/alert_repository.dart';
 import 'package:bfm_app/repositories/tip_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
+import 'package:bfm_app/services/income_settings_store.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
 
 /// Aggregates all database work needed to populate the dashboard.
@@ -127,11 +128,14 @@ class DashboardService {
   static String _fmtDay(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 
-  /// Weekly income estimated from recurring deposits when available.
-  /// Falls back to actual last-week income if no recurring income detected.
+  /// Weekly income based on user's income type setting:
+  /// - Regular income: uses last week's actual income
+  /// - Non-regular income: uses average weekly income over last 4 weeks
   static Future<double> weeklyIncomeLastWeek() async {
-    final recurringWeekly = await _recurringIncomeWeeklyAmount();
-    if (recurringWeekly > 0) return recurringWeekly;
+    final incomeType = await IncomeSettingsStore.getIncomeType();
+    if (incomeType == IncomeType.nonRegular) {
+      return _averageWeeklyIncomeLastMonth();
+    }
     return _actualIncomeLastWeek();
   }
 
@@ -158,6 +162,7 @@ class DashboardService {
     return (res.first['v'] as num?)?.toDouble() ?? 0.0;
   }
 
+  /// Last week's actual income (Monday to Sunday).
   static Future<double> _actualIncomeLastWeek() async {
     final db = await AppDatabase.instance.database;
     final now = DateTime.now();
@@ -178,23 +183,84 @@ class DashboardService {
     return (res.first['v'] as num?)?.toDouble() ?? 0.0;
   }
 
-  static Future<double> _recurringIncomeWeeklyAmount() async {
-    final recurring = await RecurringRepository.getAll();
-    if (recurring.isEmpty) return 0.0;
+  /// Average weekly income over the last 4 complete weeks.
+  /// Used for non-regular income to smooth out variability.
+  static Future<double> _averageWeeklyIncomeLastMonth() async {
+    final db = await AppDatabase.instance.database;
+    final now = DateTime.now();
+    final mondayThisWeek = now.subtract(Duration(days: now.weekday - 1));
 
-    double total = 0.0;
-    for (final r in recurring) {
-      if (r.transactionType.toLowerCase() != 'income') continue;
-      total += _weeklyAmountFromRecurring(r);
-    }
-    return total;
+    // Go back 4 weeks from current Monday
+    final start = _fmtDay(mondayThisWeek.subtract(const Duration(days: 28)));
+    final end = _fmtDay(mondayThisWeek.subtract(const Duration(days: 1)));
+
+    final res = await db.rawQuery(
+      '''
+      SELECT IFNULL(SUM(amount),0) AS v
+      FROM transactions
+      WHERE type='income'
+        AND excluded = 0
+        AND date BETWEEN ? AND ?;
+    ''',
+      [start, end],
+    );
+
+    final totalIncome = (res.first['v'] as num?)?.toDouble() ?? 0.0;
+    // Divide by 4 weeks to get average
+    return totalIncome / 4.0;
   }
 
-  static double _weeklyAmountFromRecurring(RecurringTransactionModel r) {
-    final freq = r.frequency.toLowerCase();
-    if (freq == 'weekly') return r.amount;
-    if (freq == 'monthly') return r.amount / 4.33;
-    return 0.0;
+  /// Calculates weekly income based on user's income type setting.
+  /// For use by other services (like InsightsService) that need consistent
+  /// income calculation.
+  ///
+  /// - Regular income: returns the actual income for [referenceWeekStart]
+  /// - Non-regular income: returns 4-week average ending before [referenceWeekStart]
+  ///
+  /// [referenceWeekStart] should be a Monday. If null, uses current week's Monday.
+  static Future<double> getWeeklyIncomeForPeriod({DateTime? referenceWeekStart}) async {
+    final incomeType = await IncomeSettingsStore.getIncomeType();
+    final db = await AppDatabase.instance.database;
+
+    final now = DateTime.now();
+    final mondayThisWeek = now.subtract(Duration(days: now.weekday - 1));
+    final monday = referenceWeekStart ?? mondayThisWeek;
+
+    if (incomeType == IncomeType.nonRegular) {
+      // Average of 4 weeks ending before the reference week
+      final start = _fmtDay(monday.subtract(const Duration(days: 28)));
+      final end = _fmtDay(monday.subtract(const Duration(days: 1)));
+
+      final res = await db.rawQuery(
+        '''
+        SELECT IFNULL(SUM(amount),0) AS v
+        FROM transactions
+        WHERE type='income'
+          AND excluded = 0
+          AND date BETWEEN ? AND ?;
+      ''',
+        [start, end],
+      );
+
+      final totalIncome = (res.first['v'] as num?)?.toDouble() ?? 0.0;
+      return totalIncome / 4.0;
+    } else {
+      // Regular: actual income for the week before reference week
+      final start = _fmtDay(monday.subtract(const Duration(days: 7)));
+      final end = _fmtDay(monday.subtract(const Duration(days: 1)));
+
+      final res = await db.rawQuery(
+        '''
+        SELECT IFNULL(SUM(amount),0) AS v
+        FROM transactions
+        WHERE type='income'
+          AND excluded = 0
+          AND date BETWEEN ? AND ?;
+      ''',
+        [start, end],
+      );
+      return (res.first['v'] as num?)?.toDouble() ?? 0.0;
+    }
   }
 
   static String _recurringDisplayName(

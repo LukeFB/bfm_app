@@ -126,4 +126,10 @@ class AlertRepository {
     final db = await AppDatabase.instance.database;
     return await db.delete('alerts', where: 'id = ?', whereArgs: [id]);
   }
+
+  /// Clears all alerts. Used when disconnecting bank to reset user data.
+  static Future<void> clearAll() async {
+    final db = await AppDatabase.instance.database;
+    await db.delete('alerts');
+  }
 }

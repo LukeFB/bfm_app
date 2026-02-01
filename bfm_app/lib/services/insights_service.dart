@@ -29,6 +29,7 @@ import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/repositories/weekly_report_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
+import 'package:bfm_app/services/dashboard_service.dart';
 
 /// Builds and retrieves weekly insight reports.
 class InsightsService {
@@ -62,8 +63,6 @@ class InsightsService {
       weekEnd ?? normalizedStart.add(const Duration(days: 6)),
     );
     final period = _WeekPeriod(start: normalizedStart, end: normalizedEnd);
-    final comparisonPeriod =
-        usePreviousWeekIncome ? _previousWeekPeriod(period.start) : period;
 
     final budgets = await BudgetRepository.getAll();
     final totalBudget =
@@ -105,10 +104,14 @@ class InsightsService {
       period.start,
       period.end,
     );
-    final displayIncome = await TransactionRepository.sumIncomeBetween(
-      comparisonPeriod.start,
-      comparisonPeriod.end,
-    );
+    // Use consistent income calculation based on user's income type setting
+    // When usePreviousWeekIncome is true, use the income setting (regular/non-regular)
+    // When false (weekly overview), use actual income for that specific week
+    final displayIncome = usePreviousWeekIncome
+        ? await DashboardService.getWeeklyIncomeForPeriod(
+            referenceWeekStart: period.start,
+          )
+        : actualWeekIncome;
 
     final budgetCategoryIds = budgets
         .where((b) => b.categoryId != null)
@@ -265,7 +268,10 @@ class InsightsService {
           spent: data.spent,
         ),
       );
-      budgetSpend += data.spent;
+      // Only count as budget spend if the category has a budget
+      if (data.budgetTotal > 0) {
+        budgetSpend += data.spent;
+      }
 
       if (data.isGoal) {
         goalBudgetTotal += data.budgetTotal;
@@ -287,7 +293,7 @@ class InsightsService {
             spent: entry.value,
           ),
         );
-        budgetSpend += entry.value;
+        // Don't add to budgetSpend - these are unbudgeted categories
         unbudgetedUncategorizedTotal += entry.value;
       }
       remainingUncategorized =
@@ -301,7 +307,7 @@ class InsightsService {
             spent: remainingUncategorized,
           ),
         );
-        budgetSpend += remainingUncategorized;
+        // Don't add to budgetSpend - this is unbudgeted spending
         remainingUncategorized = 0.0;
       }
     }

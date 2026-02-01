@@ -6,17 +6,14 @@
 ///   - `/budgets` route from bottom navigation.
 ///
 /// Purpose:
-///   - Displays the weekly budget overview with semi-circle chart showing
-///     income breakdown, budget tracking, and alerts.
-///   - Shows expandable dropdowns for subscriptions, budgets, and uncategorized
-///     transactions matching the budget build screen style.
+///   - Displays budget recommendations with expandable dropdowns for 
+///     subscriptions, budgets, and uncategorized transactions.
 ///   - Detects changes in subscription amounts or budget averages and shows
 ///     orange warning indicators when values change by more than 10%.
 /// ---------------------------------------------------------------------------
 
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:bfm_app/models/alert_model.dart';
 import 'package:bfm_app/models/budget_model.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
@@ -25,7 +22,6 @@ import 'package:bfm_app/services/budget_analysis_service.dart';
 import 'package:bfm_app/services/budget_seen_store.dart';
 import 'package:bfm_app/services/dashboard_service.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
-import 'package:bfm_app/widgets/semi_circle_chart.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
 import 'package:bfm_app/widgets/help_icon_tooltip.dart';
 import 'package:bfm_app/widgets/budget_tracking_card.dart';
@@ -135,7 +131,6 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       DashboardService.getSpentOnBudgets(),
       DashboardService.getDiscretionaryWeeklyBudget(),
       DashboardService.getTotalExpensesThisWeek(),
-      DashboardService.getAlerts(),
       _fetchSubscriptions(),
       _fetchCategoryBudgets(),
       _fetchUncategorizedBudgets(),
@@ -148,12 +143,11 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     final spentOnBudgets = results[2] as double;
     final leftToSpend = results[3] as double;
     final totalExpenses = results[4] as double;
-    final alerts = results[5] as List<AlertModel>;
-    final subscriptions = results[6] as List<_SubscriptionItem>;
-    final categoryBudgets = results[7] as List<_CategoryBudgetItem>;
-    final uncategorizedBudgets = results[8] as List<_UncategorizedItem>;
-    final emojiHelper = results[9] as CategoryEmojiHelper;
-    final trackingItems = results[10] as List<BudgetTrackingItem>;
+    final subscriptions = results[5] as List<_SubscriptionItem>;
+    final categoryBudgets = results[6] as List<_CategoryBudgetItem>;
+    final uncategorizedBudgets = results[7] as List<_UncategorizedItem>;
+    final emojiHelper = results[8] as CategoryEmojiHelper;
+    final trackingItems = results[9] as List<BudgetTrackingItem>;
 
     final nonBudgetedSpend = (totalExpenses - spentOnBudgets).clamp(0.0, double.infinity);
 
@@ -298,7 +292,6 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
         spentOnBudgets: spentOnBudgets,
         leftToSpend: leftToSpend,
         discretionarySpent: nonBudgetedSpend,
-        alerts: alerts,
         subscriptions: subscriptions,
         categoryBudgets: categoryBudgets,
         uncategorizedBudgets: uncategorizedBudgets,
@@ -917,8 +910,35 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     return result;
   }
 
+  /// Calculate total budgeted for subscriptions
+  double _getSubscriptionsBudgeted() {
+    double total = 0.0;
+    for (final rid in _selectedRecurringIds) {
+      total += _recurringCurrentAmounts[rid] ?? 0.0;
+    }
+    return total;
+  }
+  
+  /// Calculate total budgeted for category budgets + uncategorized
+  double _getCategoryBudgetsBudgeted() {
+    double total = 0.0;
+    for (final entry in _selectedCategories.entries) {
+      if (entry.value == true && entry.key != null) {
+        total += _categoryCurrentAmounts[entry.key] ?? 0.0;
+      }
+    }
+    for (final key in _selectedUncatKeys) {
+      total += _uncatCurrentAmounts[key] ?? 0.0;
+    }
+    return total;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final subscriptionsBudgeted = _getSubscriptionsBudgeted();
+    final categoryBudgetsBudgeted = _getCategoryBudgetsBudgeted();
+    final totalBudgeted = subscriptionsBudgeted + categoryBudgetsBudgeted;
+    
     return Scaffold(
       appBar: AppBar(
         title: const Text('Budget'),
@@ -940,36 +960,9 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Stack(
-                      children: [
-                        SemiCircleChart(
-                          income: _data!.weeklyIncome,
-                          totalBudgeted: _data!.totalBudgeted,
-                          spentOnBudgets: _data!.spentOnBudgets,
-                          leftToSpend: _data!.leftToSpend,
-                          discretionarySpent: _data!.discretionarySpent,
-                          alerts: _data!.alerts,
-                          onAlertsPressed: () => Navigator.pushNamed(context, '/alerts/manage'),
-                          streakWeeks: 0,
-                        ),
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: HelpIconTooltip(
-                            title: 'Budget Overview Chart',
-                            message: 'This chart shows how your weekly income is divided:\n\n'
-                                '🟠 Orange section: Your budgeted expenses (subscriptions, bills, categories)\n'
-                                '🔵 Blue section: Your weekly spending limit (what\'s left after budgets)\n'
-                                '🔴 Red: Overspending beyond your limits\n\n'
-                                'The filled portion shows what you\'ve spent, '
-                                'the outlined portion shows what\'s remaining.\n\n'
-                                'Tip: Keep the blue section from turning red to stay on budget!',
-                            size: 18,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
+                    // Total budgeted box at the top center
+                    _buildTotalBudgetedBox(totalBudgeted),
+                    const SizedBox(height: 16),
                     _buildDropdownCard(
                       title: 'Subscriptions',
                       icon: Icons.autorenew,
@@ -977,6 +970,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                       onToggle: () => setState(() => _subscriptionsExpanded = !_subscriptionsExpanded),
                       hasChanges: _data!.subscriptions.any((s) => 
                           _recurringShowAlert[s.recurringId] == true),
+                      budgetedAmount: subscriptionsBudgeted,
                       helpTitle: 'Subscriptions',
                       helpMessage: 'These are recurring expenses Moni detected from your transactions '
                           '(like Netflix, Spotify, gym memberships, etc.)\n\n'
@@ -1001,6 +995,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                           _categoryShowAlert[c.categoryId] == true) ||
                           _data!.uncategorizedBudgets.any((u) => 
                           _uncatShowAlert[u.key] == true),
+                      budgetedAmount: categoryBudgetsBudgeted,
                       helpTitle: 'Category Budgets',
                       helpMessage: 'These are spending categories detected from your transactions '
                           '(like groceries, transport, eating out, etc.)\n\n'
@@ -1029,6 +1024,47 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
             ),
     );
   }
+  
+  Widget _buildTotalBudgetedBox(double total) {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 32),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          color: Colors.white,
+          border: Border.all(
+            color: bfmBlue.withOpacity(0.2),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '\$${total.toStringAsFixed(2)}',
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: bfmBlue,
+                  ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'total weekly budgeted',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.black54,
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildDropdownCard({
     required String title,
@@ -1037,6 +1073,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     required VoidCallback onToggle,
     required List<Widget> children,
     bool hasChanges = false,
+    double? budgetedAmount,
     String? helpTitle,
     String? helpMessage,
   }) {
@@ -1054,15 +1091,31 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                   Icon(icon, color: bfmBlue),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
-                        if (helpMessage != null) ...[
-                          const SizedBox(width: 4),
-                          HelpIconTooltip(
-                            title: helpTitle ?? title,
-                            message: helpMessage,
-                            size: 16,
+                        Row(
+                          children: [
+                            Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                            if (helpMessage != null) ...[
+                              const SizedBox(width: 4),
+                              HelpIconTooltip(
+                                title: helpTitle ?? title,
+                                message: helpMessage,
+                                size: 16,
+                              ),
+                            ],
+                          ],
+                        ),
+                        if (budgetedAmount != null && budgetedAmount > 0) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            '\$${budgetedAmount.toStringAsFixed(2)}/wk budgeted',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: bfmBlue.withOpacity(0.8),
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ],
                       ],
@@ -1386,7 +1439,6 @@ class _BudgetsData {
   final double spentOnBudgets;
   final double leftToSpend;
   final double discretionarySpent;
-  final List<AlertModel> alerts;
   final List<_SubscriptionItem> subscriptions;
   final List<_CategoryBudgetItem> categoryBudgets;
   final List<_UncategorizedItem> uncategorizedBudgets;
@@ -1398,7 +1450,6 @@ class _BudgetsData {
     required this.spentOnBudgets,
     required this.leftToSpend,
     required this.discretionarySpent,
-    required this.alerts,
     required this.subscriptions,
     required this.categoryBudgets,
     required this.uncategorizedBudgets,

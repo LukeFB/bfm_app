@@ -63,5 +63,11 @@ class WeeklyReportRepository {
     if (rows.isEmpty) return null;
     return WeeklyInsightsReport.fromEncodedJson(rows.first['data'] as String);
   }
+
+  /// Clears all weekly reports. Used when disconnecting bank to reset user data.
+  static Future<void> clearAll() async {
+    final db = await AppDatabase.instance.database;
+    await db.delete('weekly_reports');
+  }
 }
 

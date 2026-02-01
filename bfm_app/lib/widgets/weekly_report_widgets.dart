@@ -6,6 +6,7 @@ import 'package:bfm_app/models/weekly_report.dart';
 import 'package:bfm_app/services/budget_comparison_service.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
 import 'package:bfm_app/widgets/help_icon_tooltip.dart';
+import 'package:bfm_app/widgets/semi_circle_chart.dart';
 
 /// Card summarising goal outcomes and linking to the goals screen.
 class GoalReportCard extends StatelessWidget {
@@ -460,6 +461,567 @@ class BudgetRingCard extends StatelessWidget {
   }
 }
 
+/// Combined chart card with tabs to switch between Budget Overview and Spending Breakdown.
+class CombinedChartCard extends StatefulWidget {
+  /// Report data - used for both views to ensure consistent data
+  final WeeklyInsightsReport report;
+  /// Whether to show stats in the spending breakdown view
+  final bool showStats;
+
+  const CombinedChartCard({
+    super.key,
+    required this.report,
+    this.showStats = true,
+  });
+
+  @override
+  State<CombinedChartCard> createState() => _CombinedChartCardState();
+}
+
+class _CombinedChartCardState extends State<CombinedChartCard> {
+  int _selectedIndex = 0; // 0 = Budget Overview, 1 = Spending Breakdown
+
+  /// Derives budget overview data from the report for consistency
+  ({double income, double totalBudgeted, double spentOnBudgets, double leftToSpend, double discretionarySpent}) get _budgetData {
+    final report = widget.report;
+    
+    // Income and total budgeted come directly from report
+    final income = report.totalIncome;
+    final totalBudgeted = report.totalBudget;
+    
+    // Calculate spent on budgets: sum of spent for categories with budget > 0
+    double spentOnBudgets = 0;
+    for (final cat in report.categories) {
+      if (cat.budget > 0) {
+        spentOnBudgets += cat.spent;
+      }
+    }
+    
+    // Discretionary spent: total spent minus budget spent
+    final discretionarySpent = math.max(report.totalSpent - spentOnBudgets, 0.0);
+    
+    // Left to spend (discretionary budget): income minus total budgeted
+    // Use the report's overviewSummary if available for consistency
+    final leftToSpend = report.overviewSummary?.leftToSpend != null
+        ? income - totalBudgeted  // discretionary budget
+        : income - totalBudgeted;
+    
+    return (
+      income: income,
+      totalBudgeted: totalBudgeted,
+      spentOnBudgets: spentOnBudgets,
+      leftToSpend: leftToSpend,
+      discretionarySpent: discretionarySpent,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Column(
+        children: [
+          // Tab selector at top
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _buildTab(
+                      index: 0,
+                      label: 'Budget',
+                      icon: Icons.account_balance_wallet_outlined,
+                    ),
+                  ),
+                  Expanded(
+                    child: _buildTab(
+                      index: 1,
+                      label: 'Spending',
+                      icon: Icons.pie_chart_outline,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Chart content
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: _selectedIndex == 0
+                ? _buildBudgetOverview()
+                : _buildSpendingBreakdown(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTab({
+    required int index,
+    required String label,
+    required IconData icon,
+  }) {
+    final isSelected = _selectedIndex == index;
+    return GestureDetector(
+      onTap: () => setState(() => _selectedIndex = index),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 2,
+                    offset: const Offset(0, 1),
+                  ),
+                ]
+              : null,
+        ),
+        margin: const EdgeInsets.all(4),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: isSelected ? Colors.blue.shade700 : Colors.grey.shade600,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                color: isSelected ? Colors.blue.shade700 : Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBudgetOverview() {
+    final data = _budgetData;
+    return Padding(
+      key: const ValueKey('budget'),
+      padding: const EdgeInsets.all(16),
+      child: SemiCircleChart(
+        income: data.income,
+        totalBudgeted: data.totalBudgeted,
+        spentOnBudgets: data.spentOnBudgets,
+        leftToSpend: data.leftToSpend,
+        discretionarySpent: data.discretionarySpent,
+        hideAlerts: true,
+      ),
+    );
+  }
+
+  Widget _buildSpendingBreakdown() {
+    // Reuse BudgetRingCard's internal structure but without the Card wrapper
+    final segments = _buildSegments(widget.report);
+    final statsSection = widget.showStats ? _buildStats(widget.report) : null;
+    
+    // Calculate spent from segments (exclude Leftover)
+    final spentFromSegments = segments
+        .where((s) => s.label != 'Leftover' && s.label != 'No spend yet')
+        .fold<double>(0, (sum, s) => sum + s.value);
+
+    return Padding(
+      key: const ValueKey('spending'),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Stack(
+            children: [
+              SizedBox(
+                width: 220,
+                height: 220,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    CustomPaint(
+                      size: const Size.square(200),
+                      painter: _BudgetRingPainter(
+                        segments: segments,
+                        strokeWidth: 18,
+                      ),
+                    ),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              "Income",
+                              style: TextStyle(fontSize: 12, color: Colors.black54),
+                            ),
+                            const SizedBox(width: 2),
+                            HelpIconTooltip(
+                              title: 'Weekly Income',
+                              message: 'Your expected income for this week.\n\n'
+                                  'For regular income: Uses last week\'s actual income.\n'
+                                  'For irregular income: Uses 4-week average.',
+                              size: 12,
+                            ),
+                          ],
+                        ),
+                        Text(
+                          "\$${widget.report.totalIncome.toStringAsFixed(0)}",
+                          style: const TextStyle(
+                              fontSize: 20, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              "Spent: \$${spentFromSegments.toStringAsFixed(0)}",
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.black54,
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            HelpIconTooltip(
+                              title: 'Total Spent',
+                              message: 'Total amount spent this week across all categories.\n\n'
+                                  'This includes both budgeted and non-budgeted spending.',
+                              size: 12,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const Positioned(
+                top: 0,
+                right: 0,
+                child: HelpIconTooltip(
+                  title: 'Spending Breakdown',
+                  message: 'This chart shows where your money went this week:\n\n'
+                      '• Each colored segment represents a spending category\n'
+                      '• The size of each segment shows how much you spent there\n'
+                      '• Categories you\'ve budgeted for appear in the "budgeted for" section\n'
+                      '• Unbudgeted spending appears separately\n\n'
+                      'The grey "Leftover" shows money you didn\'t spend.\n\n'
+                      'Tip: Try to keep most spending in budgeted categories!',
+                  size: 16,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildLegend(segments),
+          if (statsSection != null) ...[
+            const SizedBox(height: 16),
+            statsSection,
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String text) {
+    return Row(
+      children: [
+        Expanded(child: Divider(color: Colors.grey.shade400)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey.shade600,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ),
+        Expanded(child: Divider(color: Colors.grey.shade400)),
+      ],
+    );
+  }
+
+  Widget _buildLegend(List<_RingSegment> segments) {
+    final budgeted = segments
+        .where((s) => s.isBudgeted && s.label != 'Leftover' && s.label != 'No spend yet')
+        .toList();
+    final notBudgeted = segments
+        .where((s) => !s.isBudgeted && s.label != 'Leftover')
+        .toList();
+    final leftover = segments.where((s) => s.label == 'Leftover').toList();
+
+    Widget buildSegmentRow(_RingSegment seg) {
+      return ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 160),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: seg.color,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                seg.label,
+                style: const TextStyle(fontSize: 12),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Text(
+              " \$${seg.value.toStringAsFixed(0)}",
+              style: const TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        if (budgeted.isNotEmpty) ...[
+          _buildSectionHeader('budgeted for'),
+          const SizedBox(height: 8),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 12,
+            runSpacing: 8,
+            children: budgeted.map(buildSegmentRow).toList(),
+          ),
+        ],
+        if (notBudgeted.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _buildSectionHeader('not budgeted for'),
+          const SizedBox(height: 8),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 12,
+            runSpacing: 8,
+            children: notBudgeted.map(buildSegmentRow).toList(),
+          ),
+        ],
+        if (leftover.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 12,
+            runSpacing: 8,
+            children: leftover.map(buildSegmentRow).toList(),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildStats(WeeklyInsightsReport report) {
+    final budgetTotal = report.totalBudget;
+    final totalSpent = report.totalSpent;
+    final budgetSpend = report.categories
+        .where((entry) => entry.budget > 0)
+        .fold<double>(0, (sum, entry) => sum + entry.spent);
+
+    final leftToSpend = report.overviewSummary?.leftToSpend ??
+        (report.totalIncome - totalSpent);
+    final leftoverPositive = leftToSpend >= 0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text("This week",
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+        const SizedBox(height: 6),
+        _StatRow(
+          label: "Budgeted",
+          value: "\$${budgetTotal.toStringAsFixed(2)}",
+          helpTitle: "Total Budgeted",
+          helpMessage: "Sum of all your weekly budget limits.\n\n"
+              "This is the total amount you've allocated to budget categories like bills, groceries, etc.",
+        ),
+        _StatRow(
+          label: "Spent on budgets",
+          value: "\$${budgetSpend.toStringAsFixed(2)}",
+          valueColor: budgetSpend > budgetTotal ? Colors.deepOrangeAccent : null,
+          helpTitle: "Budget Spending",
+          helpMessage: "Amount spent in categories that have a budget.\n\n"
+              "Orange if you've exceeded your total budget allocation.",
+        ),
+        _StatRow(
+          label: "Total spent",
+          value: "\$${totalSpent.toStringAsFixed(2)}",
+          valueColor: Colors.deepOrangeAccent,
+          helpTitle: "Total Spent",
+          helpMessage: "All spending this week.\n\n"
+              "Includes both budgeted categories and non-budgeted spending.",
+        ),
+        const SizedBox(height: 8),
+        _StatRow(
+          label: "Left to spend",
+          value: "\$${leftToSpend.abs().toStringAsFixed(2)}",
+          valueColor: leftoverPositive ? Colors.green : Colors.redAccent,
+          prefix: leftoverPositive ? null : "over",
+          helpTitle: "Left to Spend",
+          helpMessage: "How much you have left after all spending.\n\n"
+              "Calculation: Income − Budgeted − Budget Overspend − Non-budget Spending\n\n"
+              "Green = money remaining\n"
+              "Red = overspent",
+        ),
+      ],
+    );
+  }
+
+  Color? _getSpecialColor(String label) {
+    final lower = label.toLowerCase();
+    if (lower.contains('goal contribution') || lower.contains('savings')) {
+      return Colors.green.shade500;
+    }
+    if (lower.contains('recovery payment') || lower.contains('recovery')) {
+      return Colors.orange.shade500;
+    }
+    return null;
+  }
+
+  bool _isContribution(String label) {
+    final lower = label.toLowerCase();
+    return lower.contains('goal contribution') ||
+        lower.contains('recovery payment') ||
+        lower.contains('savings') ||
+        lower.contains('recovery');
+  }
+
+  List<_RingSegment> _buildSegments(WeeklyInsightsReport report) {
+    final segments = <_RingSegment>[];
+    double budgetSpent = 0;
+    var colorIndex = 0;
+    final usedLabels = <String>{};
+
+    final budgetedLabels = <String>{};
+    for (final cat in report.categories) {
+      if (cat.budget > 0) {
+        budgetedLabels.add(cat.label.toLowerCase());
+      }
+    }
+
+    final combinedCategories = <String, ({double spent, double budget})>{};
+    for (final cat in report.categories) {
+      final label = cat.label;
+      final existing = combinedCategories[label];
+      if (existing != null) {
+        combinedCategories[label] = (
+          spent: existing.spent + cat.spent,
+          budget: existing.budget + cat.budget,
+        );
+      } else {
+        combinedCategories[label] = (spent: cat.spent, budget: cat.budget);
+      }
+    }
+
+    for (final entry in combinedCategories.entries) {
+      final label = entry.key;
+      final value = entry.value.spent.abs();
+      if (value <= 0) continue;
+      usedLabels.add(label.toLowerCase());
+      final hasBudget = entry.value.budget > 0;
+      final specialColor = _getSpecialColor(label);
+      segments.add(
+        _RingSegment(
+          value: value,
+          label: label,
+          color: specialColor ?? _ringPalette[colorIndex % _ringPalette.length],
+          isBudgeted: hasBudget || _isContribution(label),
+        ),
+      );
+      budgetSpent += value;
+      if (specialColor == null) colorIndex++;
+    }
+
+    final otherSpend = math.max(report.totalSpent - budgetSpent, 0.0);
+    if (otherSpend > 0) {
+      final combinedTop = <String, double>{};
+      for (final top in report.topCategories) {
+        if (top.spent <= 0) continue;
+        if (usedLabels.contains(top.label.toLowerCase())) continue;
+        combinedTop[top.label] = (combinedTop[top.label] ?? 0) + top.spent.abs();
+      }
+
+      double otherAccountedFor = 0;
+      for (final entry in combinedTop.entries) {
+        final label = entry.key;
+        final value = entry.value;
+        usedLabels.add(label.toLowerCase());
+        final hasBudget = budgetedLabels.contains(label.toLowerCase());
+        final specialColor = _getSpecialColor(label);
+        final isContrib = _isContribution(label);
+        segments.add(
+          _RingSegment(
+            value: value,
+            label: label,
+            color: specialColor ??
+                (hasBudget
+                    ? _ringPalette[colorIndex % _ringPalette.length]
+                    : Colors.blueGrey.shade400),
+            isBudgeted: hasBudget || isContrib,
+          ),
+        );
+        if (hasBudget && specialColor == null) colorIndex++;
+        otherAccountedFor += value;
+      }
+
+      final remaining = otherSpend - otherAccountedFor;
+      if (remaining > 0.01) {
+        segments.add(
+          _RingSegment(
+            value: remaining,
+            label: 'Other',
+            color: Colors.blueGrey.shade300,
+            isBudgeted: false,
+          ),
+        );
+      }
+    }
+
+    final leftover = math.max(report.totalIncome - report.totalSpent, 0.0);
+    if (leftover > 0) {
+      segments.add(
+        _RingSegment(
+          value: leftover,
+          label: 'Leftover',
+          color: Colors.grey.shade300,
+          isBudgeted: true,
+        ),
+      );
+    }
+
+    if (segments.isEmpty) {
+      segments.add(
+        _RingSegment(
+          value: report.totalIncome > 0 ? report.totalIncome : 1,
+          label: 'No spend yet',
+          color: Colors.grey.shade300,
+          isBudgeted: true,
+        ),
+      );
+    }
+
+    return segments;
+  }
+}
+
 /// Shows the top spending categories as progress bars.
 class TopCategoryChart extends StatelessWidget {
   final WeeklyInsightsReport report;
@@ -591,12 +1153,16 @@ class _StatRow extends StatelessWidget {
   final String value;
   final Color? valueColor;
   final String? prefix;
+  final String? helpTitle;
+  final String? helpMessage;
 
   const _StatRow({
     required this.label,
     required this.value,
     this.valueColor,
     this.prefix,
+    this.helpTitle,
+    this.helpMessage,
   });
 
   @override
@@ -606,7 +1172,20 @@ class _StatRow extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.black54)),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(label, style: const TextStyle(color: Colors.black54)),
+              if (helpMessage != null) ...[
+                const SizedBox(width: 4),
+                HelpIconTooltip(
+                  title: helpTitle ?? label,
+                  message: helpMessage!,
+                  size: 12,
+                ),
+              ],
+            ],
+          ),
           Text(
             prefix == null ? value : "$value ($prefix)",
             style: TextStyle(

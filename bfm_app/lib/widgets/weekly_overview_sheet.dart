@@ -7,6 +7,7 @@ import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/repositories/weekly_report_repository.dart';
 import 'package:bfm_app/services/insights_service.dart';
 import 'package:bfm_app/services/weekly_overview_service.dart';
+import 'package:bfm_app/widgets/help_icon_tooltip.dart';
 import 'package:bfm_app/widgets/weekly_report_widgets.dart';
 
 /// Full-screen modal that surfaces the previous week's insights plus goal actions.
@@ -29,8 +30,27 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
   final Map<int, TextEditingController> _amountControllers = {};
   final Set<int> _selectedGoalIds = {};
   bool _submitting = false;
-  /// Simple left to spend: income minus total spent for the week.
-  double get _baseLeftToSpend => _payload.report.totalIncome - _payload.report.totalSpent;
+  
+  /// Left to spend using dashboard formula: income - budgeted - budgetOverspend - nonBudgetSpend
+  /// This accounts for budget allocations, not just raw income minus spending.
+  double get _baseLeftToSpend {
+    final report = _payload.report;
+    // Use the overviewSummary's leftToSpend which uses the dashboard formula
+    if (report.overviewSummary != null) {
+      return report.overviewSummary!.leftToSpend;
+    }
+    // Fallback: calculate using dashboard formula if no summary
+    // Calculate budget spent from categories with budgets
+    double budgetSpent = 0;
+    for (final cat in report.categories) {
+      if (cat.budget > 0) {
+        budgetSpent += cat.spent;
+      }
+    }
+    final budgetOverspend = (budgetSpent - report.totalBudget).clamp(0.0, double.infinity);
+    final nonBudgetSpend = (report.totalSpent - budgetSpent).clamp(0.0, double.infinity);
+    return report.totalIncome - report.totalBudget - budgetOverspend - nonBudgetSpend;
+  }
   
   /// Recovery goals that the user can contribute to.
   List<GoalModel> _recoveryGoals = [];
@@ -317,7 +337,7 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
                       leftToSpend: _visibleLeftToSpend,
                     ),
                     const SizedBox(height: 16),
-                    BudgetRingCard(
+                    CombinedChartCard(
                       report: _payload.report,
                       showStats: false,
                     ),
@@ -1011,6 +1031,10 @@ class _OverviewStats extends StatelessWidget {
             value: _currency(weeklyBudget),
             accent: Colors.blueGrey.shade50,
             valueColor: Colors.black87,
+            helpTitle: "Weekly Budget",
+            helpMessage: "Your discretionary budget for non-budgeted spending.\n\n"
+                "Calculation: Income − Total Budgeted\n\n"
+                "This is how much you have available for spending outside your budget categories.",
           ),
         ),
         const SizedBox(width: 12),
@@ -1020,6 +1044,14 @@ class _OverviewStats extends StatelessWidget {
             value: _currency(leftToSpend),
             accent: leftPositive ? Colors.teal.shade50 : Colors.red.shade50,
             valueColor: leftPositive ? Colors.teal : Colors.redAccent,
+            helpTitle: "Left to Spend",
+            helpMessage: "Your remaining discretionary budget after spending.\n\n"
+                "Calculation: Weekly Budget − Budget Overspend − Non-budget Spending\n\n"
+                "Where:\n"
+                "• Weekly Budget = Income − Total Budgeted\n"
+                "• Budget Overspend = max(0, budget spent − budget limits)\n"
+                "• Non-budget Spending = spending outside budget categories\n\n"
+                "This shows money available for non-budget spending.",
           ),
         ),
       ],
@@ -1035,12 +1067,16 @@ class _SummaryCard extends StatelessWidget {
   final String value;
   final Color accent;
   final Color? valueColor;
+  final String? helpTitle;
+  final String? helpMessage;
 
   const _SummaryCard({
     required this.label,
     required this.value,
     required this.accent,
     this.valueColor,
+    this.helpTitle,
+    this.helpMessage,
   });
 
   @override
@@ -1054,7 +1090,19 @@ class _SummaryCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+          Row(
+            children: [
+              Expanded(
+                child: Text(label, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+              ),
+              if (helpMessage != null)
+                HelpIconTooltip(
+                  title: helpTitle ?? label,
+                  message: helpMessage!,
+                  size: 14,
+                ),
+            ],
+          ),
           const SizedBox(height: 4),
           Text(
             value,
