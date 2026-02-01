@@ -3,8 +3,9 @@
 /// Author: Luke Fraser-Brown
 ///
 /// Purpose:
-///   Determines when the Monday weekly overview should appear and prepares the
+///   Determines when the weekly overview should appear and prepares the
 ///   payload (insights report + goal list) for the UI to render.
+///   Triggers as soon as new week transactions arrive, regardless of day.
 ///
 /// Called by:
 ///   `dashboard_screen.dart` once the dashboard data finishes loading.
@@ -36,7 +37,7 @@ class WeeklyOverviewPayload {
   DateTime get weekEnd => summary.weekEnd;
 }
 
-/// Entry point for determining if/when to show the Monday weekly overview.
+/// Entry point for determining if/when to show the weekly overview.
 class WeeklyOverviewService {
   static const _prefsLastWeekKey = 'weekly_overview_last_week';
 
@@ -78,13 +79,13 @@ class WeeklyOverviewService {
     if (!bankConnected) return false;
 
     final today = DateTime.now();
-    if (today.weekday != DateTime.monday) return false;
 
     // Check for any transactions in the current week (Mon-Sun).
-    // Bank transactions often have dates from when the purchase was made,
-    // not when they post/sync, so checking for "transactions dated Monday"
-    // would miss purchases made over the weekend that sync on Monday.
-    final mondayThisWeek = DateTime(today.year, today.month, today.day);
+    // This signals a new week has started and we should show last week's overview.
+    // Triggers as soon as new week transactions arrive, regardless of day.
+    final normalized = DateTime(today.year, today.month, today.day);
+    final mondayThisWeek =
+        normalized.subtract(Duration(days: normalized.weekday - DateTime.monday));
     final sundayThisWeek = mondayThisWeek.add(const Duration(days: 6));
     final hasCurrentWeekTxn =
         await TransactionRepository.hasTransactionsBetween(mondayThisWeek, sundayThisWeek);

@@ -39,6 +39,7 @@ import 'package:bfm_app/services/chat_action_extractor.dart';
 import 'package:bfm_app/services/alert_notification_service.dart';
 import 'package:bfm_app/services/chat_constants.dart';
 import 'package:bfm_app/services/chat_storage.dart';
+import 'package:bfm_app/services/manual_budget_store.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:bfm_app/widgets/manual_alert_sheet.dart';
 
@@ -46,11 +47,12 @@ import 'package:bfm_app/widgets/manual_alert_sheet.dart';
 const List<String> _exampleQuestions = [
   '"What\'s my left to spend?"',
   '"Help me save for a holiday"',
-  '"Set a budget for groceries"',
-  '"Remind me about my rent"',
+  '"Set a new budget"',
+  '"create a reminder"',
   '"How am I tracking this week?"',
   '"Can I afford takeaways tonight?"',
-  '"Create a savings goal for \$500"',
+  '"Create a savings goal"',
+  '"Can you help me tighten up my budgets?"',
 ];
 
 /// Top-level chat screen that wraps the Moni messenger UI.
@@ -287,14 +289,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     // Strip markdown bold markers and lowercase for matching
     final cleaned = assistantReply.replaceAll('**', '').toLowerCase();
     
-    // AI outputs structured details when suggesting actions
+    // AI outputs structured details when suggesting actions:
+    // Goals: Name + Target + Weekly
+    // Budgets: Name + Limit
+    // Alerts: Name/Title + Due/Amount
     return cleaned.contains('name:') ||
         cleaned.contains('target:') ||
         cleaned.contains('weekly:') ||
         cleaned.contains('limit:') ||
         cleaned.contains('amount:') ||
-        cleaned.contains('due:') ||
-        cleaned.contains('category:');
+        cleaned.contains('due:');
   }
   
   /// Detects actionable items from the conversation.
@@ -322,7 +326,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         assistantReply: lastAssistantMessage,
       );
       
-      // Step 2: Single-pass enhancement (removed duplicate calls)
+      // Step 2: Fallback extraction if AI extractor returned nothing but assistant suggested an action
+      if (actions.isEmpty && lastAssistantMessage != null) {
+        final fallbackActions = _extractActionsFromAssistantText(lastAssistantMessage);
+        if (fallbackActions.isNotEmpty) {
+          debugPrint('Action extractor returned empty, using fallback extraction');
+          actions = fallbackActions;
+        }
+      }
+      
+      // Step 3: Single-pass enhancement (removed duplicate calls)
       actions = _enhanceActions(
         actions,
         userText: lastUserMessage,
@@ -330,7 +343,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         actionContext: actionContext,
       );
       
-      // Step 3: Normalize and prefill - prioritize assistant text for extraction
+      // Step 4: Normalize and prefill - prioritize assistant text for extraction
       actions = _normalizeActionTitles(actions, lastUserMessage);
       actions = _prefillMissingActionData(
         actions,
@@ -368,24 +381,51 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     
     var result = List<ChatSuggestedAction>.from(actions);
     
-    // Only enhancement: if there's a goal with a timeline but no alert, add one
+    // Enhancement: if there's a goal but no alert, check if we should add one
     final hasGoal = result.any((a) => a.type == ChatActionType.goal);
     final hasAlert = result.any((a) => a.type == ChatActionType.alert);
     
-    if (hasGoal && !hasAlert && userText != null) {
-      final extractedDueInDays = _extractDueInDaysFromText(userText);
-      final extractedDueDate = _extractDueDateFromText(userText);
+    if (hasGoal && !hasAlert) {
+      // Check for explicit timeline in user text
+      final extractedDueInDays = userText != null ? _extractDueInDaysFromText(userText) : null;
+      final extractedDueDate = userText != null ? _extractDueDateFromText(userText) : null;
       final hasTimeline = extractedDueInDays != null || extractedDueDate != null;
       
-      if (hasTimeline) {
+      // Also check assistant text for timeline or alert mentions
+      final assistantDueInDays = assistantText != null ? _extractDueInDaysFromText(assistantText) : null;
+      final assistantDueDate = assistantText != null ? _extractDueDateFromText(assistantText) : null;
+      final assistantHasTimeline = assistantDueInDays != null || assistantDueDate != null;
+      
+      // Check if user or assistant mentioned alert/reminder
+      final mentionsAlert = (userText?.toLowerCase().contains('alert') ?? false) ||
+          (userText?.toLowerCase().contains('reminder') ?? false) ||
+          (assistantText?.toLowerCase().contains('alert') ?? false) ||
+          (assistantText?.toLowerCase().contains('reminder') ?? false);
+      
+      if (hasTimeline || assistantHasTimeline || mentionsAlert) {
         final goal = result.firstWhere((a) => a.type == ChatActionType.goal);
+        final dueDate = extractedDueDate ?? assistantDueDate;
+        var dueInDays = extractedDueInDays ?? assistantDueInDays;
+        
+        // Calculate from goal if no explicit timeline
+        if (dueDate == null && dueInDays == null) {
+          final target = goal.amount;
+          final weekly = goal.weeklyAmount;
+          if (target != null && weekly != null && weekly > 0) {
+            final weeks = (target / weekly).ceil();
+            dueInDays = weeks * 7;
+          } else {
+            dueInDays = 28; // Default 4 weeks
+          }
+        }
+        
         result.add(ChatSuggestedAction(
           type: ChatActionType.alert,
           title: goal.title ?? 'Reminder',
-          description: userText,
+          description: userText ?? '',
           amount: goal.amount,
-          dueDate: extractedDueDate,
-          dueInDays: extractedDueInDays,
+          dueDate: dueDate,
+          dueInDays: dueInDays,
         ));
       }
     }
@@ -424,7 +464,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     if (actions.isEmpty) return actions;
     
     // Extract from assistant text first (higher priority - cleaner values)
-    final assistantAmount = assistantText != null ? _extractAmountFromText(assistantText) : null;
+    final assistantAmount = assistantText != null 
+        ? (_extractTargetFromAssistant(assistantText) ?? _extractAmountFromText(assistantText))
+        : null;
     final assistantWeekly = assistantText != null ? _extractWeeklyFromAssistant(assistantText) : null;
     final assistantName = assistantText != null ? _extractNameFromAssistant(assistantText) : null;
     final assistantDueInDays = assistantText != null ? _extractDueInDaysFromText(assistantText) : null;
@@ -495,6 +537,62 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }).toList();
   }
   
+  /// Extracts weekly limit from assistant's response for budgets.
+  /// Handles markdown: **Limit**: **$50/week**
+  double? _extractLimitFromAssistant(String text) {
+    final cleaned = text.replaceAll('**', '');
+    
+    final patterns = [
+      // "Limit: $50/week" or "Limit: $50 per week" or "Limit: $50"
+      RegExp(r'limit[:\s]+\$?([0-9,]+(?:\.[0-9]{1,2})?)(?:\s*/?\s*week)?', caseSensitive: false),
+      // "cap at $50"
+      RegExp(r'cap\s+(?:at|of)[:\s]+\$?([0-9,]+(?:\.[0-9]{1,2})?)', caseSensitive: false),
+      // "$50/week limit"
+      RegExp(r'\$([0-9,]+(?:\.[0-9]{1,2})?)\s*(?:/|per\s+)?week\s+limit', caseSensitive: false),
+    ];
+    
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(cleaned);
+      if (match != null) {
+        final value = double.tryParse(match.group(1)!.replaceAll(',', ''));
+        if (value != null && value > 0 && !(value >= 2000 && value <= 2099)) {
+          return value;
+        }
+      }
+    }
+    return null;
+  }
+  
+  /// Extracts target/goal amount from assistant's response.
+  /// Handles markdown: **Target**: **$2,000** or Target: $2000
+  double? _extractTargetFromAssistant(String text) {
+    // Strip markdown bold markers
+    final cleaned = text.replaceAll('**', '');
+    
+    final patterns = [
+      // "Target: $2,000" or "Target: 2000"
+      RegExp(r'target[:\s]+\$?([0-9,]+(?:\.[0-9]{1,2})?)', caseSensitive: false),
+      // "Amount: $2,000"
+      RegExp(r'amount[:\s]+\$?([0-9,]+(?:\.[0-9]{1,2})?)', caseSensitive: false),
+      // "Goal: $2,000"
+      RegExp(r'goal[:\s]+\$?([0-9,]+(?:\.[0-9]{1,2})?)', caseSensitive: false),
+      // "save $2,000" or "saving $2,000"
+      RegExp(r'sav(?:e|ing)[:\s]+\$?([0-9,]+(?:\.[0-9]{1,2})?)', caseSensitive: false),
+    ];
+    
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(cleaned);
+      if (match != null) {
+        final value = double.tryParse(match.group(1)!.replaceAll(',', ''));
+        // Skip years (2000-2099)
+        if (value != null && value > 0 && !(value >= 2000 && value <= 2099 && value == value.truncate())) {
+          return value;
+        }
+      }
+    }
+    return null;
+  }
+  
   /// Extracts weekly contribution from assistant's response.
   /// Handles markdown: **Weekly**: **$50** or Weekly: $50
   double? _extractWeeklyFromAssistant(String text) {
@@ -554,6 +652,99 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
     return null;
   }
+  
+  /// Fallback extraction: Creates actions directly from assistant text patterns.
+  /// Used when the AI action extractor fails to return anything.
+  List<ChatSuggestedAction> _extractActionsFromAssistantText(String text) {
+    final actions = <ChatSuggestedAction>[];
+    final cleaned = text.replaceAll('**', '').toLowerCase();
+    
+    // Check if this looks like a goal suggestion
+    final hasGoalPattern = cleaned.contains('name:') && 
+        (cleaned.contains('target:') || cleaned.contains('weekly:'));
+    
+    if (hasGoalPattern) {
+      final name = _extractNameFromAssistant(text);
+      final amount = _extractTargetFromAssistant(text) ?? _extractAmountFromText(text);
+      final weekly = _extractWeeklyFromAssistant(text);
+      final dueDate = _extractDueDateFromText(text);
+      final dueInDays = _extractDueInDaysFromText(text);
+      
+      // Only create action if we have at least name or amount
+      if (name != null || amount != null) {
+        actions.add(ChatSuggestedAction(
+          type: ChatActionType.goal,
+          title: name,
+          amount: amount,
+          weeklyAmount: weekly,
+        ));
+        
+        // Also create alert if there's a timeline or alert mention
+        final mentionsAlert = cleaned.contains('alert') || cleaned.contains('reminder');
+        if (dueDate != null || dueInDays != null || mentionsAlert) {
+          // Calculate due days from goal if not specified
+          var alertDueInDays = dueInDays;
+          if (dueDate == null && alertDueInDays == null) {
+            if (amount != null && weekly != null && weekly > 0) {
+              final weeks = (amount / weekly).ceil();
+              alertDueInDays = weeks * 7;
+            } else {
+              alertDueInDays = 28; // Default 4 weeks
+            }
+          }
+          
+          actions.add(ChatSuggestedAction(
+            type: ChatActionType.alert,
+            title: name ?? 'Reminder',
+            amount: amount,
+            dueDate: dueDate,
+            dueInDays: alertDueInDays,
+          ));
+        }
+      }
+    }
+    
+    // Check if this looks like a budget suggestion (has Limit: but no Target:)
+    final hasBudgetPattern = cleaned.contains('limit:') && !cleaned.contains('target:');
+    
+    if (hasBudgetPattern && actions.isEmpty) {
+      final name = _extractNameFromAssistant(text);
+      final limit = _extractLimitFromAssistant(text) ?? _extractAmountFromText(text);
+      
+      if (name != null || limit != null) {
+        actions.add(ChatSuggestedAction(
+          type: ChatActionType.budget,
+          title: name,
+          categoryName: name,
+          weeklyAmount: limit,
+        ));
+      }
+    }
+    
+    // Check if this looks like an alert suggestion
+    final hasAlertPattern = (cleaned.contains('alert') || cleaned.contains('reminder')) &&
+        cleaned.contains('due');
+    
+    if (hasAlertPattern && actions.isEmpty) {
+      final name = _extractNameFromAssistant(text);
+      final amount = _extractAmountFromText(text);
+      final dueDate = _extractDueDateFromText(text);
+      final dueInDays = _extractDueInDaysFromText(text);
+      
+      if (name != null || dueDate != null || dueInDays != null) {
+        actions.add(ChatSuggestedAction(
+          type: ChatActionType.alert,
+          title: name,
+          amount: amount,
+          dueDate: dueDate,
+          dueInDays: dueInDays,
+        ));
+      }
+    }
+    
+    return actions;
+  }
+
   /// Clears history after a confirmation dialog and reseeds the greeting.
   Future<void> _clearChat() async {
     final confirm = await showDialog<bool>(
@@ -1189,7 +1380,15 @@ class _GoalSheetState extends State<_GoalSheet> {
       return DateTime.now()
           .add(Duration(days: suggestion.dueInDays!.clamp(0, 365)));
     }
-    return null;
+    // Calculate from goal amount and weekly contribution if available
+    final target = widget.action.amount;
+    final weekly = widget.action.weeklyAmount;
+    if (target != null && weekly != null && weekly > 0) {
+      final weeks = (target / weekly).ceil();
+      return DateTime.now().add(Duration(days: weeks * 7));
+    }
+    // Default to 4 weeks if no calculation possible
+    return DateTime.now().add(const Duration(days: 28));
   }
 
   Future<void> _pickAlertDate() async {
@@ -1294,9 +1493,16 @@ class _BudgetSheetState extends State<_BudgetSheet> {
     });
     widget.onSavingChanged(true);
     try {
-      final categoryId = await CategoryRepository.ensureByName(category);
+      // Save to ManualBudgetStore (used by budget screen's manual section)
+      await ManualBudgetStore.add(ManualBudget(
+        name: category,
+        weeklyLimit: limit,
+        isSelected: true,
+      ));
+      
+      // Also save to database for budget tracking
       final budget = BudgetModel(
-        categoryId: categoryId,
+        categoryId: null, // Manual budgets don't have a category ID
         label: category,
         weeklyLimit: limit,
         periodStart: _currentMondayIso(),
@@ -1855,12 +2061,30 @@ double? _extractAmountFromText(String text) {
     if (value == null || value <= 0) continue;
     final suffix = match.group(3);
     final hasCurrency = match.group(1) != null;
+    
+    // Skip years (4-digit numbers 2000-2099 without $ prefix)
+    if (!hasCurrency && value >= 2000 && value <= 2099 && value == value.truncate()) {
+      continue;
+    }
+    
     final tail = cleaned.substring(match.end).toLowerCase();
     final hasTimeUnit = RegExp(r'^\s*(day|days|week|weeks|month|months|year|years)\b')
         .hasMatch(tail);
     if (hasTimeUnit && !hasCurrency) {
       continue;
     }
+    
+    // Skip if this looks like part of a date (followed by - or / and more digits)
+    if (RegExp(r'^\s*[-/]\s*\d').hasMatch(tail)) {
+      continue;
+    }
+    
+    // Skip if preceded by date-like patterns (month names, day numbers with /)
+    final beforeMatch = match.start > 0 ? cleaned.substring(0, match.start).toLowerCase() : '';
+    if (RegExp(r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2}[-/])\s*$').hasMatch(beforeMatch)) {
+      continue;
+    }
+    
     final amount = suffix == null ? value : value * 1000;
     return amount;
   }

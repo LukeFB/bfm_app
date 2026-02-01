@@ -27,6 +27,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/app.dart';
 import 'package:bfm_app/services/alert_notification_service.dart';
+import 'package:bfm_app/services/referral_seeder.dart'; // TODO: Remove - use backend sync
 
 import 'package:flutter/foundation.dart';
 
@@ -45,6 +46,13 @@ void main() async {
 
   // Initialize the database
   await AppDatabase.instance.database;
+
+  // TODO: Remove this seed - pull referrals from backend instead
+  try {
+    await ReferralSeeder.seedIfEmpty();
+  } catch (err) {
+    debugPrint('Referral seeding failed: $err');
+  }
 
   try {
     await AlertNotificationService.instance.resyncScheduledAlerts();

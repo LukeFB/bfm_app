@@ -221,7 +221,9 @@ class BudgetComparisonService {
   /// Builds a context string for the AI chatbot describing spend comparisons.
   static Future<String> buildChatbotContext({DateTime? forWeekStart}) async {
     final comparisons = await getComparisons(forWeekStart: forWeekStart);
-    if (comparisons.isEmpty) return '';
+    // Filter to only categorized budgets - uncategorized items aren't actionable
+    final categorizedComparisons = comparisons.where((c) => c.isCategorized).toList();
+    if (categorizedComparisons.isEmpty) return '';
     
     final buffer = StringBuffer();
     buffer.writeln('Weekly budget vs last month\'s weekly average:');
@@ -234,7 +236,7 @@ class BudgetComparisonService {
     buffer.writeln('- "Under budget" = avg is >15% below budget (user has room to spare)');
     buffer.writeln('');
     
-    for (final c in comparisons.take(10)) {
+    for (final c in categorizedComparisons.take(10)) {
       final status = c.isAvgOverBudget 
           ? 'over budget (avg ${c.avgVsBudgetPercent.toStringAsFixed(0)}% above)'
           : c.weeklyAvgSpend > c.budgetLimit

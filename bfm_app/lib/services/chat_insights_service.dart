@@ -58,15 +58,17 @@ class ChatInsightsService {
     try {
       final weeklyIncome = await DashboardService.weeklyIncomeLastWeek();
       final totalBudgeted = await DashboardService.getTotalBudgeted();
+      final goalBudgetTotal = await DashboardService.getGoalBudgetTotal();
       final spentOnBudgets = await DashboardService.getSpentOnBudgets();
       final totalExpenses = await DashboardService.getTotalExpensesThisWeek();
       
       // Calculate left to spend using EXACT same formula as dashboard_screen.dart:
-      // leftToSpend = income - budgeted - budgetOverspend - nonBudgetSpend
+      // leftToSpend = income - budgeted - goalContributions - budgetOverspend - nonBudgetSpend
+      // Goals are subtracted separately so they don't affect budget overspend calculation
       final budgetOverspend = (spentOnBudgets - totalBudgeted).clamp(0.0, double.infinity);
       final nonBudgetSpend = (totalExpenses - spentOnBudgets).clamp(0.0, double.infinity);
-      final leftToSpend = weeklyIncome - totalBudgeted - budgetOverspend - nonBudgetSpend;
-      final discretionaryBudget = weeklyIncome - totalBudgeted;
+      final leftToSpend = weeklyIncome - totalBudgeted - goalBudgetTotal - budgetOverspend - nonBudgetSpend;
+      final discretionaryBudget = weeklyIncome - totalBudgeted - goalBudgetTotal;
       
       buffer.writeln('Weekly Income: \$${weeklyIncome.toStringAsFixed(0)}');
       buffer.writeln('  → This is their estimated weekly income (from last week or recurring income)');
@@ -203,19 +205,21 @@ class ChatInsightsService {
     try {
       final weeklyIncome = await DashboardService.weeklyIncomeLastWeek();
       final totalBudgeted = await DashboardService.getTotalBudgeted();
+      final goalBudgetTotal = await DashboardService.getGoalBudgetTotal();
+      final totalBudgetedWithGoals = totalBudgeted + goalBudgetTotal;
       final budgets = await BudgetRepository.getAll();
       
       final budgetPercent = weeklyIncome > 0 
-          ? (totalBudgeted / weeklyIncome * 100) 
+          ? (totalBudgetedWithGoals / weeklyIncome * 100) 
           : 0.0;
       
       buffer.writeln('Budget Coverage: ${budgetPercent.toStringAsFixed(0)}% of income is budgeted');
       
       if (budgetPercent > 100) {
-        buffer.writeln('⚠️ PROBLEM: Budgets exceed income by \$${(totalBudgeted - weeklyIncome).toStringAsFixed(0)}/week!');
+        buffer.writeln('⚠️ PROBLEM: Budgets exceed income by \$${(totalBudgetedWithGoals - weeklyIncome).toStringAsFixed(0)}/week!');
         buffer.writeln('→ User needs to reduce budgets or increase income');
       } else if (budgetPercent > 90) {
-        buffer.writeln('⚠️ WARNING: Very tight budget, only \$${(weeklyIncome - totalBudgeted).toStringAsFixed(0)} discretionary');
+        buffer.writeln('⚠️ WARNING: Very tight budget, only \$${(weeklyIncome - totalBudgetedWithGoals).toStringAsFixed(0)} discretionary');
       } else if (budgetPercent < 50 && budgets.isNotEmpty) {
         buffer.writeln('💡 Opportunity: Only ${budgetPercent.toStringAsFixed(0)}% budgeted - consider tracking more categories');
       }
@@ -412,16 +416,18 @@ class ChatInsightsService {
       // Check if over budget
       final weeklyIncome = await DashboardService.weeklyIncomeLastWeek();
       final totalBudgeted = await DashboardService.getTotalBudgeted();
+      final goalBudgetTotal = await DashboardService.getGoalBudgetTotal();
+      final totalBudgetedWithGoals = totalBudgeted + goalBudgetTotal;
       final discretionarySpend = await DashboardService.discretionarySpendThisWeek();
-      final discretionaryBudget = weeklyIncome - totalBudgeted;
+      final discretionaryBudget = weeklyIncome - totalBudgetedWithGoals;
       final leftToSpend = discretionaryBudget - discretionarySpend;
       
       if (leftToSpend < 0) {
         problems.add('Overspent this week by \$${leftToSpend.abs().toStringAsFixed(0)}');
       }
       
-      if (totalBudgeted > weeklyIncome && weeklyIncome > 0) {
-        problems.add('Budgets exceed income by \$${(totalBudgeted - weeklyIncome).toStringAsFixed(0)}');
+      if (totalBudgetedWithGoals > weeklyIncome && weeklyIncome > 0) {
+        problems.add('Budgets exceed income by \$${(totalBudgetedWithGoals - weeklyIncome).toStringAsFixed(0)}');
       }
       
       // Check categories over budget

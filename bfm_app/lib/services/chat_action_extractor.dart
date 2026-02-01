@@ -18,31 +18,40 @@ class ChatActionExtractor {
 You are an assistant that extracts structured action data from a chat between a financial coach and a student.
 
 Valid action types:
-- goal: a savings goal with a target amount and weekly contribution.
-- budget: a weekly spending cap for a category.
+- goal: SAVING money towards a target (e.g., "save for a bike", "save \$500"). Has target amount + weekly contribution.
+- budget: LIMITING weekly spending (e.g., "limit takeaways to \$50/week", "budget \$100 for groceries"). Has name + weekly limit.
 - alert: a one-off reminder for an upcoming bill or payment.
 
-CRITICAL RULES FOR EXTRACTING DATA:
-1. ALWAYS prioritize values from the ASSISTANT's latest reply over the user's raw text.
-   - If the assistant said "Name: Bike, Target: \$2,000, Weekly: \$50", use THOSE exact values.
-   - Do NOT use the user's wording (e.g., "a 2k bike") if the assistant provided cleaner values.
+HOW TO DISTINGUISH GOAL vs BUDGET:
+- "Save \$X" / "save for X" / "put aside" → GOAL (saving towards something)
+- "Limit X to \$Y" / "budget for X" / "spend less on X" / "cap X at \$Y" → BUDGET (limiting spending)
+- If assistant says "Target:" and "Weekly:" → GOAL
+- If assistant says "Name:" and "Limit:" (no Target) → BUDGET
 
-2. For titles/names:
-   - Use the name the ASSISTANT specified (e.g., "Bike" not "a 2k bike").
-   - If no name was specified by either, use "goal", "alert", or "budget".
+CRITICAL RULES:
 
-3. For amounts:
-   - Use the EXACT numbers from the assistant's response when available.
-   - The "amount" field is the TARGET amount (total to save).
-   - The "weekly_amount" field is the WEEKLY CONTRIBUTION (how much per week).
-   - These are DIFFERENT numbers - do not confuse them!
+1. HANDLE MODIFICATIONS:
+   - Look for: "make it X instead", "change to", "actually", "how about X", etc.
+   - Extract the MODIFIED version from the assistant's reply.
 
-4. For timelines:
-   - If a goal has a timeline, compute weekly_amount = amount / max(weeks, 1).
-   - Weeks = days / 7. Use 30 days per month, 365 days per year.
+2. ALWAYS prioritize values from the ASSISTANT's LATEST reply.
 
-5. When user mentions a bill/payment:
-   - Emit BOTH a goal (for saving) and an alert (for reminder).
+3. For GOALS:
+   - "amount" = TARGET amount (total to save)
+   - "weekly_amount" = weekly contribution
+   - "title" = what they're saving for
+
+4. For BUDGETS:
+   - "title" = the budget name (e.g., "Takeaways", "Groceries")
+   - "weekly_amount" = the weekly spending LIMIT
+   - "amount" = null (budgets don't have a target)
+
+5. For ALERTS:
+   - "title" = what the reminder is for
+   - "amount" = bill amount if known
+   - "due_date" or "due_in_days" = when to remind
+
+6. ALWAYS EMIT AN ACTION when the assistant confirms creating something.
 
 Return ONLY valid JSON:
 [

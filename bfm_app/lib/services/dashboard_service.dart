@@ -440,12 +440,14 @@ class DashboardService {
   }
 
   /// Discretionary weekly budget shown in the header:
-  /// lastWeekIncome − sum(weekly budgets).
+  /// lastWeekIncome − sum(weekly budgets) − goal contributions.
   static Future<double> getDiscretionaryWeeklyBudget() async {
     final lastWeekIncome = await weeklyIncomeLastWeek();
     final budgetsSum = await BudgetRepository.getTotalWeeklyBudget();
+    final goalsSum = await BudgetRepository.getGoalWeeklyBudgetTotal();
     final safeBudgets = budgetsSum.isNaN ? 0.0 : budgetsSum;
-    return lastWeekIncome - safeBudgets;
+    final safeGoals = goalsSum.isNaN ? 0.0 : goalsSum;
+    return lastWeekIncome - safeBudgets - safeGoals;
   }
 
   /// Weekly income used for the dashboard chart.
@@ -453,14 +455,22 @@ class DashboardService {
     return weeklyIncomeLastWeek();
   }
 
-  /// Total budgeted amount (sum of all budgets).
+  /// Total budgeted amount (sum of non-goal budgets only).
+  /// Goal budgets are handled separately via [getGoalBudgetTotal].
   static Future<double> getTotalBudgeted() async {
     return BudgetRepository.getTotalWeeklyBudget();
   }
 
-  /// Amount spent on budgeted categories this week.
-  /// Replicates the exact calculation from insights:
-  /// Sum of spent amounts for all budget entries where weeklyLimit > 0.
+  /// Total goal budget amount (sum of all goal weekly contributions).
+  /// This is subtracted separately from left-to-spend so it doesn't affect
+  /// the budget overspend calculation.
+  static Future<double> getGoalBudgetTotal() async {
+    return BudgetRepository.getGoalWeeklyBudgetTotal();
+  }
+
+  /// Amount spent on budgeted categories this week (excludes goal contributions).
+  /// Goal contributions are handled separately since they reduce left-to-spend
+  /// directly via the budgeted amount, not via actual spending.
   static Future<double> getSpentOnBudgets() async {
     final now = DateTime.now();
     final monday = now.subtract(Duration(days: now.weekday - 1));
@@ -481,9 +491,6 @@ class DashboardService {
       monday,
       weekEnd,
     );
-
-    // Get goal contributions
-    final goalSpendMap = await GoalRepository.weeklyContributionTotals(monday);
 
     // Get recurring transaction descriptions for matching
     final recurringIds = budgets
@@ -513,6 +520,10 @@ class DashboardService {
       // Skip budgets with zero limit
       if (budget.weeklyLimit <= 0) continue;
 
+      // Skip goal budgets - they reduce left-to-spend via budgeted amount,
+      // not via actual spending/contributions
+      if (budget.goalId != null) continue;
+
       String? groupKey;
       double spent = 0.0;
 
@@ -534,9 +545,6 @@ class DashboardService {
           groupKey = 'cat:${budget.categoryId}';
           spent = spendByCategory[budget.categoryId]?.abs() ?? 0.0;
         }
-      } else if (budget.goalId != null) {
-        groupKey = 'goal:${budget.goalId}';
-        spent = goalSpendMap[budget.goalId!] ?? 0.0;
       } else if (budget.recurringTransactionId != null) {
         final recurringKey = recurringById[budget.recurringTransactionId!];
         if (recurringKey != null && recurringKey.isNotEmpty) {

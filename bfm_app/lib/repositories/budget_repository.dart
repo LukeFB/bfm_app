@@ -79,12 +79,12 @@ class BudgetRepository {
     );
   }
 
-  /// Clears all non-recurring (category) budgets, preserving subscription budgets.
+  /// Clears all non-recurring (category) budgets, preserving subscription and goal budgets.
   static Future<void> clearNonRecurring() async {
     final db = await AppDatabase.instance.database;
     await db.delete(
       'budgets',
-      where: 'recurring_transaction_id IS NULL',
+      where: 'recurring_transaction_id IS NULL AND goal_id IS NULL',
     );
   }
 
@@ -97,14 +97,19 @@ class BudgetRepository {
     );
   }
 
-  /// Sums the weekly limits from the most recent budget period. Used for
-  /// dashboard left-to-spend calculations.
+  /// Sums the weekly limits from the most recent budget period for NON-GOAL
+  /// budgets only. Used for dashboard left-to-spend calculations.
+  ///
+  /// Goal budgets are handled separately via [getGoalWeeklyBudgetTotal] to
+  /// ensure goal contributions reduce left-to-spend independently of the
+  /// budget overspend calculation.
   static Future<double> getTotalWeeklyBudget() async {
     final db = await AppDatabase.instance.database;
     // Always use the most recent budget set (by period_start) so
-    // historical rows don’t keep inflating the “weekly budget” on home.
+    // historical rows don't keep inflating the "weekly budget" on home.
+    // Only include non-goal budgets here.
     final latestPeriod = await db.rawQuery(
-      'SELECT MAX(period_start) AS latest FROM budgets',
+      'SELECT MAX(period_start) AS latest FROM budgets WHERE goal_id IS NULL',
     );
     final period = latestPeriod.first['latest'] as String?;
     if (period == null || period.isEmpty) {
@@ -112,8 +117,19 @@ class BudgetRepository {
     }
 
     final result = await db.rawQuery(
-      'SELECT SUM(weekly_limit) AS total FROM budgets WHERE period_start = ?',
+      'SELECT SUM(weekly_limit) AS total FROM budgets WHERE period_start = ? AND goal_id IS NULL',
       [period],
+    );
+    return (result.first['total'] as num?)?.toDouble() ?? 0.0;
+  }
+
+  /// Sums the weekly limits for all goal budgets (regardless of period_start).
+  /// Goal contributions should reduce left-to-spend directly without affecting
+  /// the budget overspend calculation.
+  static Future<double> getGoalWeeklyBudgetTotal() async {
+    final db = await AppDatabase.instance.database;
+    final result = await db.rawQuery(
+      'SELECT SUM(weekly_limit) AS total FROM budgets WHERE goal_id IS NOT NULL',
     );
     return (result.first['total'] as num?)?.toDouble() ?? 0.0;
   }

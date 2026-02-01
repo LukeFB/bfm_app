@@ -205,10 +205,10 @@ class PromptModel {
       final int? catId =
           (catRaw is int) ? catRaw : int.tryParse(catRaw?.toString() ?? '');
       final spent = (row['spent'] as num?)?.toDouble() ?? 0.0;
-      final label = catId == null
-          ? 'Uncategorized'
-          : (categoryNames[catId] ?? 'Category');
-      final budget = catId != null ? budgetByCategory[catId] : null;
+      // Skip uncategorized transactions - users can't track or action these
+      if (catId == null) continue;
+      final label = categoryNames[catId] ?? 'Category';
+      final budget = budgetByCategory[catId];
       entries.add({
         'label': label,
         'spent': spent,

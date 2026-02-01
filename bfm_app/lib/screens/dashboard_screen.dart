@@ -111,8 +111,8 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     }
     final results = await Future.wait([
       DashboardService.getWeeklyIncome(), // Weekly income
-      DashboardService.getTotalBudgeted(), // Sum of all budgets
-      DashboardService.getSpentOnBudgets(), // Spent on budgeted categories
+      DashboardService.getTotalBudgeted(), // Sum of non-goal budgets
+      DashboardService.getSpentOnBudgets(), // Spent on budgeted categories (excludes goals)
       DashboardService.getTotalExpensesThisWeek(), // Total expenses this week
       GoalRepository.getSavingsGoals(), // Only savings goals for dashboard (excludes recovery)
       DashboardService.getAlerts(),
@@ -120,6 +120,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       DashboardService.getFeaturedTip(),
       DashboardService.getUpcomingEvents(limit: 3),
       BudgetStreakService.calculateStreak(),
+      DashboardService.getGoalBudgetTotal(), // Goal weekly contributions (separate from budgets)
     ]);
 
     final weeklyIncome = results[0] as double;
@@ -132,16 +133,17 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     final tip = results[7] as TipModel?;
     final events = results[8] as List<EventModel>;
     final budgetStreak = results[9] as BudgetStreakData;
+    final goalBudgetTotal = results[10] as double;
 
-    // Calculate left to spend: income - budgeted - budget overspend - non budget spend
-    // This matches the formula used in the budget edit/review screen
+    // Calculate left to spend: income - budgeted - goalContributions - budget overspend - non budget spend
+    // Goals are subtracted separately so they don't affect budget overspend calculation
     final budgetOverspend = (spentOnBudgets - totalBudgeted).clamp(0.0, double.infinity);
     final nonBudgetSpend = (totalExpenses - spentOnBudgets).clamp(0.0, double.infinity);
-    final leftToSpend = weeklyIncome - totalBudgeted - budgetOverspend - nonBudgetSpend;
+    final leftToSpend = weeklyIncome - totalBudgeted - goalBudgetTotal - budgetOverspend - nonBudgetSpend;
 
     final data = DashData(
       leftToSpendThisWeek: leftToSpend,
-      totalWeeklyBudget: weeklyIncome - totalBudgeted, // Discretionary budget (income - budgets)
+      totalWeeklyBudget: weeklyIncome - totalBudgeted - goalBudgetTotal, // Discretionary budget (income - budgets - goals)
       primaryGoal: allGoals.isNotEmpty ? allGoals.first : null,
       allGoals: allGoals,
       alerts: alerts,
@@ -150,7 +152,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       events: events,
       budgetStreak: budgetStreak,
       weeklyIncome: weeklyIncome,
-      totalBudgeted: totalBudgeted,
+      totalBudgeted: totalBudgeted + goalBudgetTotal, // Include goals in total budgeted for display
       spentOnBudgets: spentOnBudgets,
       discretionarySpent: nonBudgetSpend,
     );

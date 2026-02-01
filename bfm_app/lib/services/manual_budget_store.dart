@@ -77,4 +77,13 @@ class ManualBudgetStore {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyManualBudgets);
   }
+
+  /// Adds a single manual budget to the store.
+  /// Inserts at the beginning of the list and marks as selected.
+  static Future<void> add(ManualBudget budget) async {
+    final existing = await getAll();
+    // Insert at beginning
+    final updated = [budget, ...existing];
+    await saveAll(updated);
+  }
 }

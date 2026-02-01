@@ -108,22 +108,24 @@ class MainShellState extends State<MainShell> {
         DashboardService.getTotalBudgeted(),
         DashboardService.getSpentOnBudgets(),
         DashboardService.getTotalExpensesThisWeek(),
+        DashboardService.getGoalBudgetTotal(),
       ]);
 
       final weeklyIncome = results[0];
       final totalBudgeted = results[1];
       final spentOnBudgets = results[2];
       final totalExpenses = results[3];
+      final goalBudgetTotal = results[4];
 
-      // Calculate left to spend
+      // Calculate left to spend (goals subtracted separately from budget overspend)
       final budgetOverspend = (spentOnBudgets - totalBudgeted).clamp(0.0, double.infinity);
       final nonBudgetSpend = (totalExpenses - spentOnBudgets).clamp(0.0, double.infinity);
-      final leftToSpend = weeklyIncome - totalBudgeted - budgetOverspend - nonBudgetSpend;
+      final leftToSpend = weeklyIncome - totalBudgeted - goalBudgetTotal - budgetOverspend - nonBudgetSpend;
 
       if (mounted) {
         setState(() {
           _leftToSpend = leftToSpend;
-          _totalWeeklyBudget = weeklyIncome - totalBudgeted;
+          _totalWeeklyBudget = weeklyIncome - totalBudgeted - goalBudgetTotal;
           _dataLoaded = true;
         });
       }
