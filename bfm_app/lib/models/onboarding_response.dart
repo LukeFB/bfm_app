@@ -3,56 +3,133 @@
 /// Author: Luke Fraser-Brown
 ///
 /// Purpose:
-///   - Lightweight value object that captures the optional onboarding answers
-///     we ask new Moni users for (age, gender, etc).
-///   - Keeps serialization logic in one place so storage layers stay simple.
+///   - Value object capturing all onboarding data collected during the
+///     registration flow, structured for submission to the backend API.
 ///
-/// Notes:
-///   - Every field is optional to prevent onboarding friction.
+/// Backend payload shape (JSON):
+/// ```json
+/// {
+///   "registration": {
+///     "first_name": "Jane",
+///     "last_name": "Doe",
+///     "email": "jane@example.com",
+///     "phone": "+6421123456",
+///     "date_of_birth": "1995-03-15"
+///   },
+///   "referrer_token": "WL-ABC123",
+///   "account_setup": {
+///     "income_frequency": "fortnightly",
+///     "primary_goal": "save_more",
+///     "currency": "NZD"
+///   },
+///   "akahu_connected": true,
+///   "completed_at": "2026-02-25T10:30:00Z"
+/// }
+/// ```
 /// ---------------------------------------------------------------------------
 
-class OnboardingResponse {
-  final String? age;
-  final String? gender;
-  final String? location;
-  final String? referrer;
-  final String? mainReason;
-  final String? situation;
+class OnboardingRegistration {
+  final String? firstName;
+  final String? lastName;
+  final String? email;
+  final String? phone;
+  final String? dateOfBirth;
 
-  const OnboardingResponse({
-    this.age,
-    this.gender,
-    this.location,
-    this.referrer,
-    this.mainReason,
-    this.situation,
+  const OnboardingRegistration({
+    this.firstName,
+    this.lastName,
+    this.email,
+    this.phone,
+    this.dateOfBirth,
   });
 
-  /// Serialises the object into a JSON-friendly map for persistence.
   Map<String, dynamic> toJson() => {
-    'age': age,
-    'gender': gender,
-    'location': location,
-    'referrer': referrer,
-    'mainReason': mainReason,
-    'situation': situation,
-  };
+        'first_name': firstName,
+        'last_name': lastName,
+        'email': email,
+        'phone': phone,
+        'date_of_birth': dateOfBirth,
+      };
 
-  /// Rehydrates an instance from stored JSON.
-  factory OnboardingResponse.fromJson(Map<String, dynamic> json) =>
-      OnboardingResponse(
-        age: json['age'] as String?,
-        gender: json['gender'] as String?,
-        location: json['location'] as String?,
-        referrer: json['referrer'] as String?,
-        mainReason: json['mainReason'] as String?,
-        situation: json['situation'] as String?,
+  factory OnboardingRegistration.fromJson(Map<String, dynamic> json) =>
+      OnboardingRegistration(
+        firstName: json['first_name'] as String?,
+        lastName: json['last_name'] as String?,
+        email: json['email'] as String?,
+        phone: json['phone'] as String?,
+        dateOfBirth: json['date_of_birth'] as String?,
       );
 
-  /// Returns true when at least one optional answer is present.
+  bool get isValid =>
+      (firstName?.trim().isNotEmpty ?? false) &&
+      (lastName?.trim().isNotEmpty ?? false) &&
+      (email?.trim().isNotEmpty ?? false);
+}
+
+class OnboardingAccountSetup {
+  final String? incomeFrequency;
+  final String? primaryGoal;
+
+  const OnboardingAccountSetup({
+    this.incomeFrequency,
+    this.primaryGoal,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'income_frequency': incomeFrequency,
+        'primary_goal': primaryGoal,
+      };
+
+  factory OnboardingAccountSetup.fromJson(Map<String, dynamic> json) =>
+      OnboardingAccountSetup(
+        incomeFrequency: json['income_frequency'] as String?,
+        primaryGoal: json['primary_goal'] as String?,
+      );
+}
+
+class OnboardingResponse {
+  final OnboardingRegistration registration;
+  final String? referrerToken;
+  final OnboardingAccountSetup accountSetup;
+  final bool akahuConnected;
+  final String? completedAt;
+
+  const OnboardingResponse({
+    this.registration = const OnboardingRegistration(),
+    this.referrerToken,
+    this.accountSetup = const OnboardingAccountSetup(),
+    this.akahuConnected = false,
+    this.completedAt,
+  });
+
+  /// Full backend-ready payload.
+  Map<String, dynamic> toJson() => {
+        'registration': registration.toJson(),
+        'referrer_token': referrerToken,
+        'account_setup': accountSetup.toJson(),
+        'akahu_connected': akahuConnected,
+        'completed_at': completedAt,
+      };
+
+  factory OnboardingResponse.fromJson(Map<String, dynamic> json) {
+    final regJson = json['registration'];
+    final setupJson = json['account_setup'];
+
+    return OnboardingResponse(
+      registration: regJson is Map<String, dynamic>
+          ? OnboardingRegistration.fromJson(regJson)
+          : const OnboardingRegistration(),
+      referrerToken: json['referrer_token'] as String?,
+      accountSetup: setupJson is Map<String, dynamic>
+          ? OnboardingAccountSetup.fromJson(setupJson)
+          : const OnboardingAccountSetup(),
+      akahuConnected: json['akahu_connected'] as bool? ?? false,
+      completedAt: json['completed_at'] as String?,
+    );
+  }
+
   bool get hasAnswers => toDisplayMap().isNotEmpty;
 
-  /// Friendly labels for UI/prompts with only the non-empty values included.
   Map<String, String> toDisplayMap() {
     final map = <String, String>{};
 
@@ -63,12 +140,15 @@ class OnboardingResponse {
       }
     }
 
-    add('Age', age);
-    add('Gender', gender);
-    add('Location', location);
-    add('Referrer', referrer);
-    add('Main reason', mainReason);
-    add('Situation', situation);
+    add('Name', [registration.firstName, registration.lastName]
+        .where((s) => s != null && s.trim().isNotEmpty)
+        .join(' '));
+    add('Email', registration.email);
+    add('Phone', registration.phone);
+    add('Date of birth', registration.dateOfBirth);
+    add('Referrer token', referrerToken);
+    add('Income frequency', accountSetup.incomeFrequency);
+    add('Primary goal', accountSetup.primaryGoal);
     return map;
   }
 }

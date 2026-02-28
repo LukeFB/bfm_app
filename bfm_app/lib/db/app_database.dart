@@ -50,7 +50,7 @@ class AppDatabase {
     // Open the database with version and an onUpgrade callback
     return await openDatabase(
       path,
-      version: 24,
+      version: 25,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },
@@ -111,6 +111,14 @@ class AppDatabase {
     }
     if (!await hasCol('alerts', 'due_date')) {
       await db.execute('ALTER TABLE alerts ADD COLUMN due_date TEXT;');
+    }
+    if (!await hasCol('alerts', 'type')) {
+      await db.execute(
+        "ALTER TABLE alerts ADD COLUMN type TEXT NOT NULL DEFAULT 'recurring';",
+      );
+    }
+    if (!await hasCol('alerts', 'completed_at')) {
+      await db.execute('ALTER TABLE alerts ADD COLUMN completed_at TEXT;');
     }
     if (!await hasTable('events')) {
       await _createEvents(db);
@@ -549,6 +557,8 @@ class AppDatabase {
         due_date TEXT,
         lead_time_days INTEGER NOT NULL DEFAULT 3,
         is_active INTEGER NOT NULL DEFAULT 1,
+        type TEXT NOT NULL DEFAULT 'recurring',
+        completed_at TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(recurring_transaction_id) REFERENCES recurring_transactions(id) ON DELETE CASCADE
       );

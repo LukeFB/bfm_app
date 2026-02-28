@@ -41,6 +41,7 @@ import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 
 import 'package:bfm_app/models/alert_model.dart';
+import 'package:bfm_app/repositories/alert_repository.dart';
 import 'package:bfm_app/models/event_model.dart';
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/tip_model.dart';
@@ -324,6 +325,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                             child: _AlertsCard(
                               alerts: data.alerts,
                               onAlertsPressed: () => _openRoute('/alerts/manage'),
+                              onDataChanged: _refresh,
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -501,22 +503,44 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
 }
 
 /// Scrollable alerts card for the dashboard.
-class _AlertsCard extends StatelessWidget {
+/// Cancel-subscription alerts show an inline checkbox to mark as done.
+class _AlertsCard extends StatefulWidget {
   final List<AlertModel> alerts;
   final VoidCallback? onAlertsPressed;
-
-  static const Color redOverspent = Color(0xFFE53935);
+  final VoidCallback? onDataChanged;
 
   const _AlertsCard({
     required this.alerts,
     this.onAlertsPressed,
+    this.onDataChanged,
   });
+
+  @override
+  State<_AlertsCard> createState() => _AlertsCardState();
+}
+
+class _AlertsCardState extends State<_AlertsCard> {
+  static const Color redOverspent = Color(0xFFE53935);
+  final Set<int> _completingIds = {};
+
+  Future<void> _markDone(AlertModel alert) async {
+    if (alert.id == null) return;
+    setState(() => _completingIds.add(alert.id!));
+    await AlertRepository.markCompleted(alert.id!);
+    if (!mounted) return;
+    setState(() => _completingIds.remove(alert.id!));
+    widget.onDataChanged?.call();
+  }
 
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
-    final sortedAlerts = List<AlertModel>.from(alerts)
+    final sortedAlerts = List<AlertModel>.from(widget.alerts)
       ..sort((a, b) {
+        // Cancel-subscription alerts first, then by due date
+        if (a.isCancelSubscription != b.isCancelSubscription) {
+          return a.isCancelSubscription ? -1 : 1;
+        }
         if (a.dueDate == null && b.dueDate == null) return 0;
         if (a.dueDate == null) return 1;
         if (b.dueDate == null) return -1;
@@ -550,7 +574,7 @@ class _AlertsCard extends StatelessWidget {
               ),
               const Spacer(),
               GestureDetector(
-                onTap: onAlertsPressed,
+                onTap: widget.onAlertsPressed,
                 child: const Icon(
                   Icons.chevron_right,
                   size: 24,
@@ -582,6 +606,7 @@ class _AlertsCard extends StatelessWidget {
                           : null;
                       final icon = alert.icon ?? '🔔';
                       final hasAmount = alert.amount != null && alert.amount! > 0;
+                      final isCompleting = _completingIds.contains(alert.id);
 
                       String daysText = '';
                       if (daysLeft != null) {
@@ -592,8 +617,59 @@ class _AlertsCard extends StatelessWidget {
                                 : '${daysLeft}d';
                       }
 
+                      if (alert.isCancelSubscription) {
+                        return GestureDetector(
+                          onTap: widget.onAlertsPressed,
+                          child: Row(
+                            children: [
+                              Text(icon, style: const TextStyle(fontSize: 14)),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  alert.title,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Color(0xFFE53935),
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (hasAmount) ...[
+                                Text(
+                                  '\$${alert.amount!.toStringAsFixed(0)}',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                              ],
+                              SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: isCompleting
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : IconButton(
+                                        padding: EdgeInsets.zero,
+                                        iconSize: 20,
+                                        icon: const Icon(
+                                          Icons.check_circle_outline,
+                                          color: Color(0xFF4CAF50),
+                                        ),
+                                        onPressed: () => _markDone(alert),
+                                      ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+
                       return GestureDetector(
-                        onTap: onAlertsPressed,
+                        onTap: widget.onAlertsPressed,
                         child: Row(
                           children: [
                             Text(icon, style: const TextStyle(fontSize: 14)),

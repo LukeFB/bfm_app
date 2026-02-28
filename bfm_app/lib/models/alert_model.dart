@@ -16,6 +16,12 @@
 //   - Dart objects plus `Map<String, dynamic>` payloads for inserts/updates.
 // ---------------------------------------------------------------------------
 
+/// Alert types used by the `type` column.
+class AlertType {
+  static const String recurring = 'recurring';
+  static const String cancelSubscription = 'cancel_subscription';
+}
+
 /// Represents a short alert message that can include an optional icon.
 class AlertModel {
   final int? id;
@@ -27,6 +33,8 @@ class AlertModel {
   final DateTime? dueDate;
   final int leadTimeDays;
   final bool isActive;
+  final String type;
+  final String? completedAt;
   final String? createdAt;
 
   const AlertModel({
@@ -39,8 +47,13 @@ class AlertModel {
     this.dueDate,
     this.leadTimeDays = 3,
     this.isActive = true,
+    this.type = AlertType.recurring,
+    this.completedAt,
     this.createdAt,
   });
+
+  bool get isCancelSubscription => type == AlertType.cancelSubscription;
+  bool get isCompleted => completedAt != null;
 
   AlertModel copyWith({
     int? id,
@@ -52,6 +65,8 @@ class AlertModel {
     DateTime? dueDate,
     int? leadTimeDays,
     bool? isActive,
+    String? type,
+    String? completedAt,
     String? createdAt,
   }) {
     return AlertModel(
@@ -65,6 +80,8 @@ class AlertModel {
       dueDate: dueDate ?? this.dueDate,
       leadTimeDays: leadTimeDays ?? this.leadTimeDays,
       isActive: isActive ?? this.isActive,
+      type: type ?? this.type,
+      completedAt: completedAt ?? this.completedAt,
       createdAt: createdAt ?? this.createdAt,
     );
   }
@@ -83,6 +100,8 @@ class AlertModel {
           : null,
       leadTimeDays: (m['lead_time_days'] as num?)?.toInt() ?? 3,
       isActive: (m['is_active'] as num?)?.toInt() != 0,
+      type: (m['type'] as String?) ?? AlertType.recurring,
+      completedAt: m['completed_at'] as String?,
       createdAt: m['created_at'] as String?,
     );
   }
@@ -99,6 +118,8 @@ class AlertModel {
       'due_date': dueDate?.toIso8601String(),
       'lead_time_days': leadTimeDays,
       'is_active': isActive ? 1 : 0,
+      'type': type,
+      'completed_at': completedAt,
     };
     if (includeId && id != null) m['id'] = id;
     if (createdAt != null) m['created_at'] = createdAt;

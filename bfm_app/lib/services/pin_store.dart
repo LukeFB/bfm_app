@@ -29,6 +29,9 @@ class PinStore {
 
   static const String _pinKey = 'lockgate.pin.hash';
   static const String _saltKey = 'lockgate.pin.salt';
+  static const String _lastAuthKey = 'lockgate.last_auth_ms';
+
+  static const Duration gracePeriod = Duration(minutes: 5);
 
   final FlutterSecureStorage _storage;
 
@@ -65,12 +68,27 @@ class PinStore {
     return _constantTimeEquals(hash, storedHash);
   }
 
+  /// Stamps the current time so the grace period window starts now.
+  Future<void> recordAuthSuccess() async {
+    final now = DateTime.now().millisecondsSinceEpoch.toString();
+    await _storage.write(key: _lastAuthKey, value: now);
+  }
+
+  /// Returns `true` when the last successful auth is within [gracePeriod].
+  Future<bool> isWithinGracePeriod() async {
+    final raw = await _storage.read(key: _lastAuthKey);
+    if (raw == null) return false;
+    final lastAuth = DateTime.fromMillisecondsSinceEpoch(int.parse(raw));
+    return DateTime.now().difference(lastAuth) < gracePeriod;
+  }
+
   /// Completely removes the stored hash and salt so the app behaves like
   /// no PIN was ever set.
   Future<void> clearPin() async {
     await Future.wait([
       _storage.delete(key: _pinKey),
       _storage.delete(key: _saltKey),
+      _storage.delete(key: _lastAuthKey),
     ]);
   }
 

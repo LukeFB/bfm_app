@@ -3,8 +3,12 @@
 /// Author: Luke Fraser-Brown
 ///
 /// Purpose:
-///   - Polished onboarding flow that welcomes new users, explains Moni's value,
-///     collects optional context, and connects their bank account.
+///   - Multi-step onboarding flow that collects registration details, referrer
+///     token, configures the account, explains core app features, and prompts
+///     for an initial Akahu bank connection.
+///
+/// Backend data structure (assembled in _completeOnboarding):
+///   See OnboardingResponse.toJson() in models/onboarding_response.dart
 /// ---------------------------------------------------------------------------
 
 import 'package:flutter/material.dart';
@@ -28,12 +32,24 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   final PageController _pageController = PageController();
   final OnboardingStore _store = OnboardingStore();
 
-  // Form controllers
-  final _ageCtrl = TextEditingController();
-  final _genderCtrl = TextEditingController();
-  final _locationCtrl = TextEditingController();
-  final _referrerCtrl = TextEditingController();
-  final _reasonCtrl = TextEditingController();
+  // Registration form
+  final _formKey = GlobalKey<FormState>();
+  final _firstNameCtrl = TextEditingController();
+  final _lastNameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _dobCtrl = TextEditingController();
+
+  DateTime? _selectedDob;
+
+  // Referrer token
+  final _referrerTokenCtrl = TextEditingController();
+
+  // Account setup
+  String? _incomeFrequency;
+  String? _primaryGoal;
+
+  // Akahu
   final _bankAppTokenCtrl = TextEditingController();
   final _bankUserTokenCtrl = TextEditingController();
 
@@ -46,16 +62,30 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
 
-  // Page indices
-  static const int _welcomeIndex = 0;
-  static const int _feature1Index = 1;
-  static const int _feature2Index = 2;
-  static const int _feature3Index = 3;
-  static const int _aboutYouIndex = 4;
-  static const int _yourWhyIndex = 5;
-  static const int _privacyIndex = 6;
-  static const int _bankConnectIndex = 7;
+  static const int _registrationIndex = 0;
+  static const int _referrerTokenIndex = 1;
+  static const int _accountSetupIndex = 2;
+  static const int _appExplainIndex = 3;
+  static const int _akahuConnectIndex = 4;
+  static const int _recurringExplainIndex = 5;
+  static const int _categorisationExplainIndex = 6;
+  static const int _budgetExplainIndex = 7;
   static const int _totalPages = 8;
+
+  static const _incomeOptions = [
+    ('weekly', 'Weekly'),
+    ('fortnightly', 'Fortnightly'),
+    ('monthly', 'Monthly'),
+    ('irregular', 'Irregular / Varies'),
+  ];
+
+  static const _goalOptions = [
+    ('save_more', 'Save more money'),
+    ('pay_debt', 'Pay off debt'),
+    ('budget_better', 'Get better at budgeting'),
+    ('track_spending', 'Track my spending'),
+    ('grow_wealth', 'Grow my wealth'),
+  ];
 
   @override
   void initState() {
@@ -83,11 +113,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   void dispose() {
     _pageController.dispose();
     _fadeController.dispose();
-    _ageCtrl.dispose();
-    _genderCtrl.dispose();
-    _locationCtrl.dispose();
-    _referrerCtrl.dispose();
-    _reasonCtrl.dispose();
+    _firstNameCtrl.dispose();
+    _lastNameCtrl.dispose();
+    _emailCtrl.dispose();
+    _phoneCtrl.dispose();
+    _dobCtrl.dispose();
+    _referrerTokenCtrl.dispose();
     _bankAppTokenCtrl.dispose();
     _bankUserTokenCtrl.dispose();
     super.dispose();
@@ -102,12 +133,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       body: SafeArea(
         child: Column(
           children: [
-            // Progress indicator
             _OnboardingProgress(
               currentPage: _currentPage,
               totalPages: _totalPages,
             ),
-            // Page content
             Expanded(
               child: PageView(
                 controller: _pageController,
@@ -118,23 +147,17 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   _fadeController.forward();
                 },
                 children: [
-                  _buildWelcomePage(),
-                  _buildTrackSpendingPage(),
-                  _buildBudgetsPage(),
-                  _buildFeaturePage(
-                    icon: Icons.lightbulb_outline,
-                    title: 'Get personalised guidance',
-                    description:
-                        'Your AI coach helps you stay on track and reach your goals.',
-                  ),
-                  _buildAboutYouPage(),
-                  _buildYourWhyPage(),
-                  _buildPrivacyPage(),
-                  _buildBankConnectPage(),
+                  _buildRegistrationPage(),
+                  _buildReferrerTokenPage(),
+                  _buildAccountSetupPage(),
+                  _buildAppExplainPage(),
+                  _buildAkahuConnectPage(),
+                  _buildRecurringExplainPage(),
+                  _buildCategorisationExplainPage(),
+                  _buildBudgetExplainPage(),
                 ],
               ),
             ),
-            // Navigation buttons
             _buildNavigation(showBackButton, isProcessing),
             if (isProcessing) const LinearProgressIndicator(minHeight: 2),
           ],
@@ -143,28 +166,35 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Navigation
+  // ---------------------------------------------------------------------------
+
   Widget _buildNavigation(bool showBackButton, bool isProcessing) {
-    final isWelcome = _currentPage == _welcomeIndex;
-    final isBankConnect = _currentPage == _bankConnectIndex;
-    final isSkippablePage =
-        _currentPage == _aboutYouIndex || _currentPage == _yourWhyIndex;
+    final isRegistration = _currentPage == _registrationIndex;
+    final isAkahuConnect = _currentPage == _akahuConnectIndex;
+    final isFinalPage = _currentPage == _budgetExplainIndex;
+    final isReferrerPage = _currentPage == _referrerTokenIndex;
 
     String nextLabel;
     IconData nextIcon;
 
-    if (isWelcome) {
-      nextLabel = 'Get started';
+    if (isRegistration) {
+      nextLabel = 'Continue';
       nextIcon = Icons.arrow_forward;
-    } else if (isBankConnect) {
+    } else if (isAkahuConnect) {
       nextLabel = _bankConnected ? 'Continue' : 'Connect bank';
       nextIcon = _bankConnected ? Icons.arrow_forward : Icons.link;
+    } else if (isFinalPage) {
+      nextLabel = 'Get started';
+      nextIcon = Icons.check;
     } else {
       nextLabel = 'Continue';
       nextIcon = Icons.arrow_forward;
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
       child: Row(
         children: [
           if (showBackButton)
@@ -179,7 +209,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           else
             const SizedBox(width: 80),
           const Spacer(),
-          if (isSkippablePage)
+          if (isReferrerPage)
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: TextButton(
@@ -187,21 +217,141 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 child: const Text('Skip'),
               ),
             ),
-          FilledButton.icon(
-            icon: Icon(nextIcon, size: 18),
-            label: Text(nextLabel),
-            onPressed: isProcessing ? null : _handleNext,
+          if (isAkahuConnect && !_bankConnected)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: TextButton(
+                onPressed: isProcessing ? null : _goToNextPage,
+                child: const Text('Skip'),
+              ),
+            ),
+          Flexible(
+            child: FilledButton.icon(
+              icon: Icon(nextIcon, size: 18),
+              label: Text(nextLabel, overflow: TextOverflow.ellipsis),
+              onPressed: isProcessing ? null : _handleNext,
+            ),
           ),
         ],
       ),
     );
   }
 
+  void _handleNext() {
+    if (_currentPage == _registrationIndex) {
+      if (!_formKey.currentState!.validate()) return;
+    }
+    if (_currentPage == _akahuConnectIndex) {
+      if (_bankConnected) {
+        _goToNextPage();
+      } else {
+        _handleBankConnect();
+      }
+      return;
+    }
+    if (_currentPage == _budgetExplainIndex) {
+      _completeOnboarding();
+      return;
+    }
+    _goToNextPage();
+  }
+
+  void _goToNextPage() {
+    _pageController.nextPage(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
+  }
+
   // ---------------------------------------------------------------------------
-  // Page Builders
+  // Page 0 – Registration
   // ---------------------------------------------------------------------------
 
-  Widget _buildWelcomePage() {
+  Widget _buildRegistrationPage() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        scrollable: true,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Create your account',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'We need a few details to set up your profile.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Colors.black54,
+                    ),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: _StyledFormField(
+                      controller: _firstNameCtrl,
+                      label: 'First name',
+                      validator: _requiredValidator('First name is required'),
+                      textInputAction: TextInputAction.next,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _StyledFormField(
+                      controller: _lastNameCtrl,
+                      label: 'Last name',
+                      validator: _requiredValidator('Last name is required'),
+                      textInputAction: TextInputAction.next,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _StyledFormField(
+                controller: _emailCtrl,
+                label: 'Email address',
+                keyboardType: TextInputType.emailAddress,
+                validator: _emailValidator,
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 16),
+              _StyledFormField(
+                controller: _phoneCtrl,
+                label: 'Phone number',
+                hint: 'Optional',
+                keyboardType: TextInputType.phone,
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 16),
+              GestureDetector(
+                onTap: _pickDateOfBirth,
+                child: AbsorbPointer(
+                  child: _StyledFormField(
+                    controller: _dobCtrl,
+                    label: 'Date of birth',
+                    hint: 'Tap to select',
+                    suffixIcon: const Icon(Icons.calendar_today, size: 20),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Page 1 – White-Label Referrer Token
+  // ---------------------------------------------------------------------------
+
+  Widget _buildReferrerTokenPage() {
     return FadeTransition(
       opacity: _fadeAnimation,
       child: _PageShell(
@@ -210,280 +360,172 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 100,
-              height: 100,
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.card_giftcard_outlined,
+                size: 32,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Have a referrer code?',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'If your organisation or advisor gave you a code, enter it below to link your account.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.black54,
+                    height: 1.5,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            _StyledTextField(
+              controller: _referrerTokenCtrl,
+              label: 'Referrer token',
+              hint: 'e.g. WL-ABC123',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Page 2 – Account Setup Wizard
+  // ---------------------------------------------------------------------------
+
+  Widget _buildAccountSetupPage() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        scrollable: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Set up your account',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'A few quick preferences so Moni works best for you.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.black54,
+                  ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'How often do you get paid?',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            ..._incomeOptions.map((opt) => _SelectionTile(
+                  label: opt.$2,
+                  selected: _incomeFrequency == opt.$1,
+                  onTap: () => setState(() => _incomeFrequency = opt.$1),
+                )),
+            const SizedBox(height: 16),
+            Text(
+              'What is your main financial goal?',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            ..._goalOptions.map((opt) => _SelectionTile(
+                  label: opt.$2,
+                  selected: _primaryGoal == opt.$1,
+                  onTap: () => setState(() => _primaryGoal = opt.$1),
+                )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Page 3 – App Explanation
+  // ---------------------------------------------------------------------------
+
+  Widget _buildAppExplainPage() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 Icons.savings_outlined,
-                size: 48,
+                size: 36,
                 color: Theme.of(context).colorScheme.primary,
               ),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: 24),
             Text(
               'Welcome to Moni',
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Your personal money coach',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Colors.black54,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 48),
-            Text(
-              "Let's set up your account in just a few steps.",
-              style: Theme.of(context).textTheme.bodyLarge,
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFeaturePage({
-    required IconData icon,
-    required String title,
-    required String description,
-  }) {
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: _PageShell(
-        alignment: Alignment.center,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 100,
-              height: 100,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                icon,
-                size: 48,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-            ),
-            const SizedBox(height: 32),
-            Text(
-              title,
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 6),
             Text(
-              description,
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: Colors.black87,
-                    height: 1.5,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTrackSpendingPage() {
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: _PageShell(
-        alignment: Alignment.center,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              'Track your spending',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'See exactly where your money goes with automatic categorisation.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              'Your financial personal trainer',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
                     color: Colors.black54,
                   ),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 24),
-            // Demo insights chart
-            const _DemoInsightsChart(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBudgetsPage() {
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: _PageShell(
-        alignment: Alignment.center,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              'Build smart budgets',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Create weekly budgets based on your detected average spending.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.black54,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            // Demo budget items
-            const _DemoBudgetList(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAboutYouPage() {
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: _PageShell(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'A bit about you',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'This helps us tailor advice to your situation.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.black54,
-                  ),
-            ),
-            const SizedBox(height: 24),
-            _StyledTextField(
-              controller: _ageCtrl,
-              label: 'Age',
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 16),
-            _StyledTextField(
-              controller: _genderCtrl,
-              label: 'Gender',
-            ),
-            const SizedBox(height: 16),
-            _StyledTextField(
-              controller: _locationCtrl,
-              label: 'Location',
-              hint: 'City or region',
-            ),
-            const SizedBox(height: 16),
-            _StyledTextField(
-              controller: _referrerCtrl,
-              label: 'Who referred you to Moni?',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildYourWhyPage() {
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: _PageShell(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Your goals',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'What would you like help with?',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.black54,
-                  ),
-            ),
-            const SizedBox(height: 24),
-            _StyledTextField(
-              controller: _reasonCtrl,
-              label: 'Share your situation',
-              hint:
-                  'e.g., I want to save for a holiday, pay off debt, or just get better at budgeting...',
-              maxLines: 5,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPrivacyPage() {
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: _PageShell(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Your data is safe',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'We take your privacy seriously.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.black54,
-                  ),
-            ),
-            const SizedBox(height: 24),
-            _PrivacyCard(
-              icon: Icons.phone_android_outlined,
-              title: 'Stored on your device',
+            const SizedBox(height: 20),
+            _ExplainerCard(
+              icon: Icons.trending_down,
+              title: 'Track, budget & reduce',
               description:
-                  'Your financial data stays on your phone. Nothing is uploaded to external servers.',
+                  'Creates budgets based on your average spending and works with you to reduce them.',
             ),
-            const SizedBox(height: 12),
-            _PrivacyCard(
-              icon: Icons.lock_outline,
-              title: 'Bank-grade security',
+            const SizedBox(height: 8),
+            _ExplainerCard(
+              icon: Icons.sync_alt,
+              title: 'Automatic bank syncing',
               description:
-                  'We use Akahu, a trusted NZ service, to securely connect to your bank.',
+                  'Connects securely to your bank via Akahu and pulls in transactions automatically.',
             ),
-            const SizedBox(height: 12),
-            _PrivacyCard(
-              icon: Icons.visibility_off_outlined,
-              title: 'We never see your login',
+            const SizedBox(height: 8),
+            _ExplainerCard(
+              icon: Icons.pie_chart_outline,
+              title: 'Spending insights',
               description:
-                  'Your bank credentials are handled directly by Akahu, not by us.',
+                  'See where your money goes with intelligent categorisation and weekly breakdowns.',
+            ),
+            const SizedBox(height: 8),
+            _ExplainerCard(
+              icon: Icons.lightbulb_outline,
+              title: 'AI-powered guidance',
+              description:
+                  'Chat with your personal money coach to get tailored advice and stay on track.',
             ),
           ],
         ),
@@ -491,10 +533,15 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     );
   }
 
-  Widget _buildBankConnectPage() {
+  // ---------------------------------------------------------------------------
+  // Page 4 – Akahu Connection
+  // ---------------------------------------------------------------------------
+
+  Widget _buildAkahuConnectPage() {
     return FadeTransition(
       opacity: _fadeAnimation,
       child: _PageShell(
+        scrollable: true,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -506,24 +553,31 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             ),
             const SizedBox(height: 8),
             Text(
-              'Enter the Akahu tokens we provided to securely link your account.',
+              'Moni uses Akahu to securely read your transactions. Enter the tokens provided to you.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: Colors.black54,
+                    height: 1.5,
                   ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
             if (_bankConnected) ...[
               _SuccessBanner(
                 icon: Icons.check_circle_outline,
                 message: 'Your bank is connected! Tap Continue to proceed.',
               ),
             ] else ...[
+              _ExplainerCard(
+                icon: Icons.lock_outline,
+                title: 'Bank-grade security',
+                description:
+                    'Akahu is a trusted NZ open-finance provider. Your login credentials are never shared with Moni.',
+              ),
+              const SizedBox(height: 20),
               _StyledTextField(
                 controller: _bankAppTokenCtrl,
                 label: 'App Token',
                 hint: 'X-Akahu-Id',
                 enabled: !_bankConnecting,
-                obscure: false,
               ),
               const SizedBox(height: 16),
               _StyledTextField(
@@ -552,27 +606,184 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   // ---------------------------------------------------------------------------
-  // Navigation Logic
+  // Page 5 – Recurring Transactions Explanation
   // ---------------------------------------------------------------------------
 
-  void _handleNext() {
-    if (_currentPage == _bankConnectIndex) {
-      if (_bankConnected) {
-        _completeOnboarding();
-      } else {
-        _handleBankConnect();
-      }
-      return;
-    }
-    _goToNextPage();
-  }
-
-  void _goToNextPage() {
-    _pageController.nextPage(
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
+  Widget _buildRecurringExplainPage() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: const Color(0xFFFF6934).withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.replay,
+                size: 36,
+                color: Color(0xFFFF6934),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Recurring transactions',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Moni automatically detects your regular payments like rent, subscriptions, and bills.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.black87,
+                    height: 1.5,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            _ExplainerCard(
+              icon: Icons.auto_awesome,
+              title: 'Smart detection',
+              description:
+                  'Analyses your transaction history to find repeating payments and their frequency.',
+            ),
+            const SizedBox(height: 8),
+            _ExplainerCard(
+              icon: Icons.notifications_active_outlined,
+              title: 'Stay ahead of bills',
+              description:
+                  'Get notified before upcoming payments so you always have enough in your account.',
+            ),
+            const SizedBox(height: 8),
+            _ExplainerCard(
+              icon: Icons.cancel_outlined,
+              title: 'Cut what you don\'t need',
+              description:
+                  'Identify your essential recurring payments and cancel the rest.',
+            ),
+          ],
+        ),
+      ),
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Page 6 – Categorisation Explanation
+  // ---------------------------------------------------------------------------
+
+  Widget _buildCategorisationExplainPage() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: const Color(0xFF4CAF50).withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.category_outlined,
+                size: 36,
+                color: Color(0xFF4CAF50),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Transaction categorisation',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Every transaction is automatically sorted into a spending category so you know exactly where your money is going.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.black87,
+                    height: 1.5,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            const _DemoInsightsChart(),
+            const SizedBox(height: 12),
+            _ExplainerCard(
+              icon: Icons.tune,
+              title: 'NZ-specific categories',
+              description:
+                  'Based on the NZ Financial Capability Census to match real Kiwi spending patterns.',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Page 7 – Budgets Explanation
+  // ---------------------------------------------------------------------------
+
+  Widget _buildBudgetExplainPage() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: _PageShell(
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.account_balance_wallet_outlined,
+                size: 36,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Build smart budgets',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Moni suggests budgets based on your average spending to start with a realistic plan and will work with you to reduce these budgets.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.black87,
+                    height: 1.5,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            const _DemoBudgetList(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bank Connection Logic
+  // ---------------------------------------------------------------------------
 
   Future<void> _handleBankConnect() async {
     if (_bankConnecting) return;
@@ -601,9 +812,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         _bankConnecting = false;
         _bankConnected = true;
       });
-      // Auto-proceed after successful connection
       await Future.delayed(const Duration(milliseconds: 300));
-      if (mounted) _completeOnboarding();
+      if (mounted) _goToNextPage();
     } catch (err) {
       if (!mounted) return;
       setState(() {
@@ -615,17 +825,34 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Completion
+  // ---------------------------------------------------------------------------
+
   Future<void> _completeOnboarding() async {
     if (_saving) return;
     setState(() => _saving = true);
 
     final response = OnboardingResponse(
-      age: _trimOrNull(_ageCtrl.text),
-      gender: _trimOrNull(_genderCtrl.text),
-      location: _trimOrNull(_locationCtrl.text),
-      referrer: _trimOrNull(_referrerCtrl.text),
-      mainReason: _trimOrNull(_reasonCtrl.text),
+      registration: OnboardingRegistration(
+        firstName: _trimOrNull(_firstNameCtrl.text),
+        lastName: _trimOrNull(_lastNameCtrl.text),
+        email: _trimOrNull(_emailCtrl.text),
+        phone: _trimOrNull(_phoneCtrl.text),
+        dateOfBirth: _trimOrNull(_dobCtrl.text),
+      ),
+      referrerToken: _trimOrNull(_referrerTokenCtrl.text),
+      accountSetup: OnboardingAccountSetup(
+        incomeFrequency: _incomeFrequency,
+        primaryGoal: _primaryGoal,
+      ),
+      akahuConnected: _bankConnected,
+      completedAt: DateTime.now().toUtc().toIso8601String(),
     );
+
+    // TODO: POST response.toJson() to backend registration endpoint
+    debugPrint('--- Onboarding payload (backend-ready) ---');
+    debugPrint(response.toJson().toString());
 
     await _store.saveResponse(response);
 
@@ -634,15 +861,51 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     Navigator.pushReplacementNamed(context, widget.onCompleteRoute);
   }
 
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+
+  Future<void> _pickDateOfBirth() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDob ?? DateTime(now.year - 25),
+      firstDate: DateTime(1920),
+      lastDate: now,
+      helpText: 'Select your date of birth',
+    );
+    if (picked != null && mounted) {
+      setState(() {
+        _selectedDob = picked;
+        _dobCtrl.text =
+            '${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}';
+      });
+    }
+  }
+
   String? _trimOrNull(String text) {
     final trimmed = text.trim();
     return trimmed.isEmpty ? null : trimmed;
   }
+
+  String? Function(String?) _requiredValidator(String message) {
+    return (value) {
+      if (value == null || value.trim().isEmpty) return message;
+      return null;
+    };
+  }
+
+  String? _emailValidator(String? value) {
+    if (value == null || value.trim().isEmpty) return 'Email is required';
+    final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+    if (!emailRegex.hasMatch(value.trim())) return 'Enter a valid email';
+    return null;
+  }
 }
 
-// -----------------------------------------------------------------------------
+// =============================================================================
 // Shared Widgets
-// -----------------------------------------------------------------------------
+// =============================================================================
 
 class _OnboardingProgress extends StatelessWidget {
   final int currentPage;
@@ -656,11 +919,10 @@ class _OnboardingProgress extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
       child: Row(
         children: List.generate(totalPages, (index) {
           final isActive = index <= currentPage;
-          final isCurrent = index == currentPage;
           return Expanded(
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 250),
@@ -683,24 +945,35 @@ class _OnboardingProgress extends StatelessWidget {
 class _PageShell extends StatelessWidget {
   final Widget child;
   final Alignment alignment;
+  final bool scrollable;
 
   const _PageShell({
     required this.child,
     this.alignment = Alignment.topLeft,
+    this.scrollable = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 440),
-          child: alignment == Alignment.center
-              ? child
-              : Align(alignment: alignment, child: child),
-        ),
+    final inner = Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 440),
+        child: alignment == Alignment.center
+            ? child
+            : Align(alignment: alignment, child: child),
       ),
+    );
+
+    if (scrollable) {
+      return SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+        child: inner,
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+      child: inner,
     );
   }
 }
@@ -745,12 +1018,107 @@ class _StyledTextField extends StatelessWidget {
   }
 }
 
-class _PrivacyCard extends StatelessWidget {
+class _StyledFormField extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+  final String? hint;
+  final TextInputType? keyboardType;
+  final String? Function(String?)? validator;
+  final TextInputAction? textInputAction;
+  final Widget? suffixIcon;
+
+  const _StyledFormField({
+    required this.controller,
+    required this.label,
+    this.hint,
+    this.keyboardType,
+    this.validator,
+    this.textInputAction,
+    this.suffixIcon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TextFormField(
+      controller: controller,
+      keyboardType: keyboardType,
+      validator: validator,
+      textInputAction: textInputAction,
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        suffixIcon: suffixIcon,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        filled: true,
+        fillColor: Colors.grey.shade50,
+      ),
+    );
+  }
+}
+
+class _SelectionTile extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _SelectionTile({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Material(
+        color: selected ? primary.withOpacity(0.08) : Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: selected ? primary : Colors.black.withOpacity(0.08),
+                width: selected ? 2 : 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                      color: selected ? primary : Colors.black87,
+                    ),
+                  ),
+                ),
+                if (selected)
+                  Icon(Icons.check_circle, color: primary, size: 22)
+                else
+                  Icon(Icons.circle_outlined, color: Colors.black26, size: 22),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ExplainerCard extends StatelessWidget {
   final IconData icon;
   final String title;
   final String description;
 
-  const _PrivacyCard({
+  const _ExplainerCard({
     required this.icon,
     required this.title,
     required this.description,
@@ -759,7 +1127,7 @@ class _PrivacyCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
         color: Colors.grey.shade50,
@@ -769,34 +1137,37 @@ class _PrivacyCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 40,
-            height: 40,
+            width: 34,
+            height: 34,
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
               icon,
-              size: 20,
+              size: 18,
               color: Theme.of(context).colorScheme.primary,
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   title,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 Text(
                   description,
                   style: TextStyle(
-                    fontSize: 13,
+                    fontSize: 12,
                     color: Colors.black.withOpacity(0.6),
-                    height: 1.4,
+                    height: 1.3,
                   ),
                 ),
               ],
@@ -869,41 +1240,43 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
+// =============================================================================
+// Demo Widgets (reused from previous onboarding for visual context)
+// =============================================================================
+
 class _DemoInsightsChart extends StatelessWidget {
   const _DemoInsightsChart();
 
   @override
   Widget build(BuildContext context) {
-    // Using actual NZFCC category names
     final demoData = [
       _DemoChartItem(
-          '🍽️', 'Supermarkets and grocery stores', 0.35, const Color(0xFF4CAF50)),
+          '🍽️', 'Supermarkets & grocery', 0.35, const Color(0xFF4CAF50)),
       _DemoChartItem(
-          '🏡', 'Rent for permanent accommodation', 0.28, const Color(0xFF2196F3)),
-      _DemoChartItem('🚌', 'Fuel stations', 0.15, const Color(0xFFFF9800)),
-      _DemoChartItem('⚡️', 'Electricity services', 0.12, const Color(0xFF9C27B0)),
-      _DemoChartItem('🎉', 'Cafes and restaurants', 0.10, const Color(0xFFE91E63)),
+          '🏡', 'Rent', 0.28, const Color(0xFF2196F3)),
+      _DemoChartItem('🚌', 'Fuel', 0.15, const Color(0xFFFF9800)),
+      _DemoChartItem('⚡️', 'Electricity', 0.12, const Color(0xFF9C27B0)),
+      _DemoChartItem('🎉', 'Cafes & restaurants', 0.10, const Color(0xFFE91E63)),
     ];
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         color: Colors.white,
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.08),
-            blurRadius: 20,
-            offset: const Offset(0, 4),
+            blurRadius: 16,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
       child: Column(
         children: [
-          // Horizontal bar chart
           for (final item in demoData) ...[
             _DemoChartBar(item: item),
-            if (item != demoData.last) const SizedBox(height: 12),
+            if (item != demoData.last) const SizedBox(height: 8),
           ],
         ],
       ),
@@ -984,12 +1357,11 @@ class _DemoBudgetList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Using actual NZFCC category names
     final demoBudgets = [
-      _DemoBudgetItem('🍽️', 'Supermarkets and grocery stores', 150.0),
-      _DemoBudgetItem('🎉', 'Cafes and restaurants', 50.0),
-      _DemoBudgetItem('🚌', 'Fuel stations', 80.0),
-      _DemoBudgetItem('⚕️', 'Gyms, fitness, aquatic facilities, yoga, pilates', 40.0),
+      _DemoBudgetItem('🍽️', 'Supermarkets & grocery', 150.0),
+      _DemoBudgetItem('🎉', 'Cafes & restaurants', 50.0),
+      _DemoBudgetItem('🚌', 'Fuel', 80.0),
+      _DemoBudgetItem('⚕️', 'Gym & fitness', 40.0),
     ];
 
     return Card(
@@ -1038,10 +1410,10 @@ class _DemoBudgetTile extends StatelessWidget {
         ),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(
           children: [
-            Text(item.emoji, style: const TextStyle(fontSize: 28)),
+            Text(item.emoji, style: const TextStyle(fontSize: 22)),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -1051,49 +1423,41 @@ class _DemoBudgetTile extends StatelessWidget {
                     item.label,
                     style: const TextStyle(
                       fontWeight: FontWeight.w600,
+                      fontSize: 13,
                       color: Colors.black,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(4),
-                          color: Theme.of(context)
-                              .colorScheme
-                              .primary
-                              .withOpacity(0.1),
-                        ),
-                        child: Text(
-                          '\$${item.budget.toStringAsFixed(0)}/week',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
-                        ),
+                  const SizedBox(height: 2),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(4),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withOpacity(0.1),
+                    ),
+                    child: Text(
+                      '\$${item.budget.toStringAsFixed(0)}/week',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: Theme.of(context).colorScheme.primary,
                       ),
-                    ],
+                    ),
                   ),
                 ],
               ),
             ),
-            // Selection indicator
             Container(
               width: 24,
               height: 24,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: Theme.of(context).colorScheme.primary,
-                border: Border.all(
-                  width: 2,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
               ),
               child: const Icon(Icons.check, size: 16, color: Colors.white),
             ),

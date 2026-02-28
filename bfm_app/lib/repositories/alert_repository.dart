@@ -61,7 +61,8 @@ class AlertRepository {
     final db = await AppDatabase.instance.database;
     final rows = await db.query(
       'alerts',
-      where: 'is_active = 1 AND recurring_transaction_id IS NOT NULL',
+      where: "is_active = 1 AND recurring_transaction_id IS NOT NULL AND type = ?",
+      whereArgs: [AlertType.recurring],
     );
     return rows.map(AlertModel.fromMap).toList();
   }
@@ -77,8 +78,8 @@ class AlertRepository {
     final nowIso = DateTime.now().toIso8601String();
     await db.delete(
       'alerts',
-      where: 'recurring_transaction_id = ?',
-      whereArgs: [recurringId],
+      where: "recurring_transaction_id = ? AND type = ?",
+      whereArgs: [recurringId, AlertType.recurring],
     );
     await db.insert(
       'alerts',
@@ -91,40 +92,117 @@ class AlertRepository {
         'due_date': null,
         'lead_time_days': leadTimeDays,
         'is_active': 1,
+        'type': AlertType.recurring,
         'created_at': nowIso,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 
+  /// Deletes only recurring-type alerts for a given recurring transaction.
+  /// Cancel-subscription alerts are preserved.
   static Future<void> deleteByRecurringId(int recurringId) async {
     final db = await AppDatabase.instance.database;
     await db.delete(
       'alerts',
-      where: 'recurring_transaction_id = ?',
+      where: "recurring_transaction_id = ? AND type = ?",
+      whereArgs: [recurringId, AlertType.recurring],
+    );
+  }
+
+  /// Deletes ALL alerts (recurring + cancel) for a given recurring transaction.
+  /// Used by the subscriptions screen to ensure a clean slate before
+  /// re-creating the correct alert type based on the user's selection.
+  static Future<void> deleteAllAlertsByRecurringId(int recurringId) async {
+    final db = await AppDatabase.instance.database;
+    await db.delete(
+      'alerts',
+      where: "recurring_transaction_id = ?",
       whereArgs: [recurringId],
     );
   }
 
   static Future<void> deleteAllNotIn(Set<int> recurringIds) async {
+    final db = await AppDatabase.instance.database;
     if (recurringIds.isEmpty) {
-      final db = await AppDatabase.instance.database;
-      await db.delete('alerts', where: 'recurring_transaction_id IS NOT NULL');
+      await db.delete(
+        'alerts',
+        where: "recurring_transaction_id IS NOT NULL AND type = ?",
+        whereArgs: [AlertType.recurring],
+      );
       return;
     }
     final placeholders = List.filled(recurringIds.length, '?').join(', ');
-    final db = await AppDatabase.instance.database;
     await db.delete(
       'alerts',
       where:
-          'recurring_transaction_id IS NOT NULL AND recurring_transaction_id NOT IN ($placeholders)',
-      whereArgs: recurringIds.toList(),
+          "recurring_transaction_id IS NOT NULL AND type = ? AND recurring_transaction_id NOT IN ($placeholders)",
+      whereArgs: [AlertType.recurring, ...recurringIds.toList()],
     );
   }
 
   static Future<int> delete(int id) async {
     final db = await AppDatabase.instance.database;
     return await db.delete('alerts', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Creates a "cancel this subscription" alert tied to a recurring transaction.
+  /// Skips creation if one already exists for the same recurring ID.
+  static Future<int> insertCancelSubscription({
+    required int recurringId,
+    required String title,
+    String? icon,
+    double? amount,
+  }) async {
+    final db = await AppDatabase.instance.database;
+    // Avoid duplicates
+    final existing = await db.query(
+      'alerts',
+      where: "recurring_transaction_id = ? AND type = ?",
+      whereArgs: [recurringId, AlertType.cancelSubscription],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) return existing.first['id'] as int;
+
+    return await db.insert(
+      'alerts',
+      {
+        'title': title,
+        'message': 'Consider cancelling this subscription to save money.',
+        'icon': icon,
+        'recurring_transaction_id': recurringId,
+        'amount': amount,
+        'type': AlertType.cancelSubscription,
+        'is_active': 1,
+        'created_at': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Marks a cancel-subscription alert as completed (done / cancelled by user).
+  static Future<void> markCompleted(int alertId) async {
+    final db = await AppDatabase.instance.database;
+    await db.update(
+      'alerts',
+      {
+        'completed_at': DateTime.now().toIso8601String(),
+        'is_active': 0,
+      },
+      where: 'id = ?',
+      whereArgs: [alertId],
+    );
+  }
+
+  /// Returns active cancel-subscription alerts that haven't been completed.
+  static Future<List<AlertModel>> getActiveCancelAlerts() async {
+    final db = await AppDatabase.instance.database;
+    final rows = await db.query(
+      'alerts',
+      where: "type = ? AND is_active = 1 AND completed_at IS NULL",
+      whereArgs: [AlertType.cancelSubscription],
+    );
+    return rows.map(AlertModel.fromMap).toList();
   }
 
   /// Clears all alerts. Used when disconnecting bank to reset user data.

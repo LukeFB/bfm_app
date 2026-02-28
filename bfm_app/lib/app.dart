@@ -119,8 +119,9 @@ class _LockGateState extends State<LockGate> {
     //   await _handleDeviceAuth(autoTriggered: true);
     // }
 
-    // TODO: Remove this bypass - skipping PIN for testing
-    await _routeAfterAuth();
+    if (pinExists && await _pinStore.isWithinGracePeriod()) {
+      await _routeAfterAuth();
+    }
   }
 
   /*
@@ -232,6 +233,7 @@ class _LockGateState extends State<LockGate> {
     );
 
     if (result == true) {
+      await _pinStore.recordAuthSuccess();
       await _routeAfterAuth();
     }
   }
@@ -248,6 +250,7 @@ class _LockGateState extends State<LockGate> {
 
     if (result == true) {
       setState(() => _pinAvailable = true);
+      await _pinStore.recordAuthSuccess();
       await _routeAfterAuth();
     }
   }

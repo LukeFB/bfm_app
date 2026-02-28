@@ -80,4 +80,3 @@ class SecureCredentialStore {
     await _storage.delete(key: _openAiKeyKey);
   }
 }
-

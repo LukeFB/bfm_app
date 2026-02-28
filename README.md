@@ -15,6 +15,10 @@ flutter clean,
 flutter pub get,
 flutter run -d emulator-5554.
 
+# Mac for iphone 16e
+open -a simulator 
+flutter run -d "iphone 16e"
+
 # Backend (BFM Staff API)
 1. `cd backend`
 2. Copy `env.example` to `.env` and set:

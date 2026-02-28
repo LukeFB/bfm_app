@@ -11,6 +11,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:bfm_app/models/budget_model.dart';
+import 'package:bfm_app/repositories/alert_repository.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
@@ -181,10 +182,17 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
       await BudgetRepository.clearRecurring();
     }
 
-    // Save subscription budgets
+    // Save subscription budgets and create alerts based on selection.
+    // We wipe all existing alerts for each item first to handle onboarding
+    // replays where the user may have changed their mind.
     for (final item in _subscriptions) {
       final rid = item.recurringId;
       if (rid == null) continue;
+
+      final emoji = _getEmoji(item);
+
+      // Remove any old alerts (recurring + cancel) so we start clean
+      await AlertRepository.deleteAllAlertsByRecurringId(rid);
 
       if (_selectedIds.contains(rid)) {
         final weeklyLimit = _parseAmount(_amountCtrls[rid]?.text ?? '');
@@ -197,9 +205,23 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
           periodStart: periodStart,
         );
         await BudgetRepository.insertOrUpdateRecurring(budget);
+
+        await AlertRepository.upsertRecurringAlert(
+          recurringId: rid,
+          title: item.label,
+          message: 'Due soon for \$${item.amount.toStringAsFixed(2)}',
+          icon: emoji,
+          leadTimeDays: 3,
+        );
       } else {
-        // Remove any existing budget for unselected items
         await BudgetRepository.deleteByRecurringId(rid);
+
+        await AlertRepository.insertCancelSubscription(
+          recurringId: rid,
+          title: 'Cancel ${item.label}',
+          icon: emoji,
+          amount: item.amount,
+        );
       }
     }
 
