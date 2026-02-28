@@ -16,45 +16,38 @@
 /// ---------------------------------------------------------------------------
 import 'dart:developer';
 
+import 'package:bfm_app/api/akahu_api.dart';
+import 'package:bfm_app/api/api_client.dart';
+import 'package:bfm_app/auth/token_store.dart';
 import 'package:bfm_app/repositories/account_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/services/akahu_service.dart';
+import 'package:bfm_app/services/income_settings_store.dart';
 import 'package:bfm_app/services/secure_credential_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Stateless-ish service with a dependency-injected credential store for tests.
+/// Syncs Akahu data into the local database.
+///
+/// Tries the backend-proxied path first (JWT in TokenStore). Falls back to
+/// direct Akahu API calls using raw tokens for dev/manual-token connections.
 class TransactionSyncService {
   static const _lastSyncKey = 'last_sync_at';
   static const _lastRefreshKey = 'last_refresh_triggered_at';
   static const _backfillCompleteKey = 'tx_backfill_complete';
-  static const Duration _rollingWindow = Duration(days: 120); // ~4 months
+  static const Duration _rollingWindow = Duration(days: 120);
   static const Duration _initialBackfillWindow = Duration(days: 365);
-
-  /// Reduced from 24h to 1h for fresher data. Akahu's personal app refresh
-  /// cooldown is 1h, so this aligns with the minimum useful interval.
   static const Duration _defaultStaleThreshold = Duration(hours: 1);
-
-  /// Akahu personal apps have a 1-hour cooldown between manual refreshes.
-  /// Full apps have 15-min cooldown (configurable).
   static const Duration _refreshCooldown = Duration(hours: 1);
 
-  /// Accepts a custom credential store for tests; defaults to the real one.
   TransactionSyncService({SecureCredentialStore? credentialStore})
       : _credentialStore = credentialStore ?? SecureCredentialStore();
 
   final SecureCredentialStore _credentialStore;
 
-  /// Pulls transactions immediately:
-  /// - Verifies we have active tokens + are marked connected.
-  /// - Triggers a manual refresh if cooldown has elapsed (gets freshest data).
-  /// - Fetches BOTH pending AND settled transactions from Akahu.
-  /// - Upserts them via the repository and records the last-sync timestamp.
+  /// Pulls accounts + transactions and writes them to the local DB.
+  ///
+  /// Uses the backend when a JWT exists, otherwise falls back to direct tokens.
   Future<void> syncNow({bool forceRefresh = false}) async {
-    final tokens = await _credentialStore.readAkahuTokens();
-    if (tokens == null) {
-      throw Exception('No Akahu tokens stored. Please reconnect your bank.');
-    }
-
     final prefs = await SharedPreferences.getInstance();
     final connected = prefs.getBool('bank_connected') ?? false;
     if (!connected) {
@@ -62,8 +55,68 @@ class TransactionSyncService {
       return;
     }
 
-    // Trigger a manual refresh to get the latest data from the bank
-    // (respects cooldown to avoid rate limiting)
+    // Try backend-proxied path first
+    final backendToken = await TokenStore().getToken();
+    if (backendToken != null && backendToken.isNotEmpty) {
+      try {
+        await _syncViaBackend();
+        return;
+      } catch (e) {
+        log('Backend sync failed, trying direct: $e');
+      }
+    }
+
+    // Fall back to direct Akahu tokens
+    await _syncViaDirect(prefs, forceRefresh);
+  }
+
+  // ── Backend-proxied sync ──────────────────────────────────────────────────
+
+  Future<void> _syncViaBackend() async {
+    final tokenStore = TokenStore();
+    final client = ApiClient(tokenStore: tokenStore);
+    final api = AkahuApi(client);
+
+    final results = await Future.wait([
+      api.accounts(),
+      api.transactions(),
+    ]);
+
+    final accountPayloads = results[0];
+    final txnPayloads = results[1];
+
+    log('Backend sync: ${accountPayloads.length} accounts, '
+        '${txnPayloads.length} transactions');
+
+    // Log a sample transaction so we can verify the JSON shape matches fromAkahu
+    if (txnPayloads.isNotEmpty) {
+      log('Sample txn keys: ${txnPayloads.first.keys.toList()}');
+    }
+    if (accountPayloads.isNotEmpty) {
+      log('Sample account keys: ${accountPayloads.first.keys.toList()}');
+    }
+
+    if (accountPayloads.isNotEmpty) {
+      await AccountRepository.upsertFromAkahu(accountPayloads);
+    }
+    if (txnPayloads.isNotEmpty) {
+      await TransactionRepository.upsertFromAkahu(txnPayloads);
+    }
+
+    // Same post-processing as the direct path
+    await IncomeSettingsStore.detectAndSetIncomeType();
+    await _markSynced(markBackfillComplete: true);
+  }
+
+  // ── Direct Akahu sync (dev/manual tokens) ─────────────────────────────────
+
+  Future<void> _syncViaDirect(SharedPreferences prefs, bool forceRefresh) async {
+    final tokens = await _credentialStore.readAkahuTokens();
+    if (tokens == null) {
+      log('Skipping sync: no Akahu tokens and no backend JWT.');
+      return;
+    }
+
     await _maybeRefresh(tokens.appToken, tokens.userToken, prefs, forceRefresh);
 
     final nowUtc = DateTime.now().toUtc();
@@ -73,7 +126,6 @@ class TransactionSyncService {
       hasBackfilled ? _rollingWindow : _initialBackfillWindow,
     );
 
-    // Fetch transactions, pending transactions, AND accounts in parallel
     final results = await Future.wait([
       AkahuService.fetchTransactions(
         tokens.appToken,
@@ -95,16 +147,16 @@ class TransactionSyncService {
     final pendingPayloads = results[1];
     final accountPayloads = results[2];
 
-    // Mark pending transactions so we can identify them in the UI if needed
     for (final payload in pendingPayloads) {
       payload['_pending'] = true;
     }
 
     final allPayloads = [...settledPayloads, ...pendingPayloads];
 
-    log('Synced ${settledPayloads.length} settled + ${pendingPayloads.length} pending transactions, ${accountPayloads.length} accounts');
+    log('Direct sync: ${settledPayloads.length} settled + '
+        '${pendingPayloads.length} pending txns, '
+        '${accountPayloads.length} accounts');
 
-    // Sync accounts (even if no transactions)
     if (accountPayloads.isNotEmpty) {
       await AccountRepository.upsertFromAkahu(accountPayloads);
     }
@@ -145,21 +197,18 @@ class TransactionSyncService {
 
   /// Checks when we last synced and only calls `syncNow` if the delta exceeds
   /// `maxAge`. Returns true when a sync was kicked off.
-  ///
-  /// Default maxAge reduced to 1 hour for fresher transaction data.
   Future<bool> syncIfStale({Duration? maxAge}) async {
     maxAge ??= _defaultStaleThreshold;
 
     final prefs = await SharedPreferences.getInstance();
     final connected = prefs.getBool('bank_connected') ?? false;
-    if (!connected) {
-      return false;
-    }
+    if (!connected) return false;
 
-    final tokens = await _credentialStore.readAkahuTokens();
-    if (tokens == null) {
-      return false;
-    }
+    // Need either a backend JWT or direct Akahu tokens
+    final backendToken = await TokenStore().getToken();
+    final hasBackend = backendToken != null && backendToken.isNotEmpty;
+    final hasDirectTokens = (await _credentialStore.readAkahuTokens()) != null;
+    if (!hasBackend && !hasDirectTokens) return false;
 
     final lastSyncIso = prefs.getString(_lastSyncKey);
     if (lastSyncIso == null) {

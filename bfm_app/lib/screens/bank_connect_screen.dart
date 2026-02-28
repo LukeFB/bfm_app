@@ -21,7 +21,11 @@
 import 'package:bfm_app/services/bank_service.dart';
 import 'package:flutter/material.dart';
 
-/// Simple form that handles bank credential onboarding.
+/// Simple form that handles bank credential onboarding via manual token entry.
+///
+/// TODO: For production, replace this with the backend Akahu OAuth flow
+/// (AkahuController.startConnect -> browser -> verify). Keep this screen
+/// accessible from settings/debug for dev testing with raw Akahu tokens.
 class BankConnectScreen extends StatefulWidget {
   const BankConnectScreen({Key? key}) : super(key: key);
 

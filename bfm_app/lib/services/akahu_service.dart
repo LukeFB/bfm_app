@@ -18,7 +18,12 @@ import 'dart:convert';
 import 'dart:developer';
 import 'package:http/http.dart' as http;
 
-/// Wraps Akahu HTTP calls behind static helpers.
+/// Wraps direct Akahu HTTP calls behind static helpers.
+///
+/// TODO: This service calls api.akahu.io directly using raw tokens. For
+/// production, prefer the backend-proxied AkahuApi (lib/api/akahu_api.dart)
+/// which goes through the Moni backend. Keep this for dev/test with manual
+/// token entry.
 class AkahuService {
   static Map<String, String> _headers(String appToken, String userToken) => {
         "X-Akahu-Id": appToken,

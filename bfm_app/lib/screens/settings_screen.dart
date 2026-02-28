@@ -150,7 +150,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Replay onboarding?'),
         content: const Text(
-          'You can walk through the intro questions and tour again without reconnecting your bank.',
+          'This will re-sync your transactions and walk you through '
+          'recurring payments, categories, and budgets.',
         ),
         actions: [
           TextButton(
@@ -159,7 +160,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Start tour'),
+            child: const Text('Start'),
           ),
         ],
       ),
@@ -169,7 +170,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => const OnboardingScreen(),
+        builder: (_) => const OnboardingScreen(replayMode: true),
       ),
     );
   }
@@ -351,18 +352,66 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
           const SizedBox(height: 16),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blueGrey,
-            ),
-            icon: const Icon(Icons.bug_report),
-            label: const Text("View Debug Data"),
-            onPressed: () {
-              Navigator.pushNamed(context, '/debug');
+          // --- Revoke Akahu (backend) ---
+          // TODO: wire this to the production Akahu flow once backend auth is live
+          ListTile(
+            leading: const Icon(Icons.cloud_off, color: Colors.orange),
+            title: const Text('Revoke Akahu Connection (backend)'),
+            subtitle: const Text('Revoke Akahu session via the Moni backend'),
+            onTap: () async {
+              final confirm = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Revoke Akahu?'),
+                  content: const Text(
+                    'This will revoke your Akahu session on the backend. '
+                    'You will need to reconnect via the Akahu OAuth flow.',
+                  ),
+                  actions: [
+                    TextButton(
+                      child: const Text('Cancel'),
+                      onPressed: () => Navigator.pop(ctx, false),
+                    ),
+                    ElevatedButton(
+                      child: const Text('Revoke'),
+                      onPressed: () => Navigator.pop(ctx, true),
+                    ),
+                  ],
+                ),
+              );
+              if (confirm != true || !context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Akahu revoke requires backend auth. Use Debug API screen.')),
+              );
             },
           ),
 
-          // ... add more settings options here ...
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueGrey,
+                ),
+                icon: const Icon(Icons.bug_report),
+                label: const Text("Debug Data"),
+                onPressed: () {
+                  Navigator.pushNamed(context, '/debug');
+                },
+              ),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.deepPurple,
+                ),
+                icon: const Icon(Icons.api),
+                label: const Text("Debug API"),
+                onPressed: () {
+                  Navigator.pushNamed(context, '/debug-api');
+                },
+              ),
+            ],
+          ),
         ],
       ),
     );

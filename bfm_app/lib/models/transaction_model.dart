@@ -111,13 +111,12 @@ class TransactionModel {
     return m;
   }
 
-  /// Converts raw Akahu JSON into our local format.
-  /// - Normalises dates to YYYY-MM-DD.
-  /// - Derives local type based on Akahu type field and amount sign.
-  /// - Pulls category + merchant metadata when available.
-  /// - Generates a deterministic hash when Akahu doesn't send one.
+  /// Converts raw Akahu JSON (or backend-proxied equivalent) into our local
+  /// format. Handles both direct Akahu shapes (`_id`, `_account`,
+  /// `category: {name: ...}`) and backend-transformed shapes (`id`,
+  /// `account_id`, `category_name`).
   factory TransactionModel.fromAkahu(Map<String, dynamic> a) {
-    // Keep the bank-provided date but normalise to 'YYYY-MM-DD' if possible.
+    // ── Date ──────────────────────────────────────────────────────────────
     String dt = (a['date'] ?? a['created_at'] ?? '').toString();
     if (dt.isEmpty) dt = DateTime.now().toIso8601String();
     String isoDay;
@@ -126,21 +125,16 @@ class TransactionModel {
       isoDay =
           "${parsed.year.toString().padLeft(4, '0')}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')}";
     } catch (_) {
-      isoDay = dt.split('T').first; // best-effort
+      isoDay = dt.split('T').first;
     }
 
-    // Map Akahu type to local domain
-    // Akahu types: CREDIT, DEBIT, PAYMENT, TRANSFER, STANDING ORDER, EFTPOS,
-    //              INTEREST, FEE, TAX, CREDIT CARD, DIRECT DEBIT, DIRECT CREDIT, ATM, LOAN
+    // ── Type & amount ────────────────────────────────────────────────────
     final akahuType = (a['type'] as String?)?.toUpperCase() ?? '';
     final amt = (a['amount'] as num).toDouble();
     final desc = ((a['description'] ?? '') as String).toLowerCase();
 
-    // Detect transfers - check both Akahu type and description keywords
     final isTransfer = _isLikelyTransfer(akahuType, desc);
-
     String localType;
-    // Preserve transfer type so we can exclude them from spending insights
     if (isTransfer) {
       localType = 'transfer';
     } else if (amt < 0) {
@@ -149,49 +143,84 @@ class TransactionModel {
       localType = 'income';
     }
 
-    final merchant = a['merchant'] as Map<String, dynamic>?;
-
-    final categoryObj = a['category'] as Map<String, dynamic>?;
+    // ── Category (handle multiple JSON shapes) ───────────────────────────
+    // Keys to check: category, akahu_category, category_name, groups
     String? catName;
-    if (categoryObj != null) {
-      catName = categoryObj['name'] as String?;
-    } else {
+    for (final key in ['category', 'akahu_category']) {
+      final raw = a[key];
+      if (raw is Map<String, dynamic>) {
+        catName = _str(raw['name']);
+      } else if (raw is String && raw.isNotEmpty) {
+        catName = raw;
+      }
+      if (catName != null && catName.trim().isNotEmpty) break;
+    }
+    if (catName == null || catName.trim().isEmpty) {
+      catName = _str(a['category_name']);
+    }
+    if (catName == null || catName.trim().isEmpty) {
       final groups = a['groups'] as Map<String, dynamic>?;
       if (groups != null && groups['personal_finance'] is Map<String, dynamic>) {
         catName =
             (groups['personal_finance'] as Map<String, dynamic>)['name'] as String?;
       }
     }
-    if (catName == null || catName.trim().isEmpty) {
-      catName = null;
+    if (catName != null && catName.trim().isEmpty) catName = null;
+
+    // ── Merchant (handle multiple JSON shapes) ───────────────────────────
+    String? merchantName;
+    final rawMerchant = a['merchant'];
+    if (rawMerchant is Map<String, dynamic>) {
+      merchantName = rawMerchant['name'] as String?;
+    } else if (rawMerchant is String && rawMerchant.isNotEmpty) {
+      merchantName = rawMerchant;
+    }
+    if (merchantName == null || merchantName.trim().isEmpty) {
+      merchantName = _str(a['merchant_name']);
+    }
+
+    // ── IDs (Akahu uses _id/_account/_connection; backend may use id/account_id) ─
+    final akahuId = _str(a['_id']) ?? _str(a['id']) ?? _str(a['akahu_id']);
+    final accountId = _str(a['_account']) ?? _str(a['account_id']);
+    final connectionId = _str(a['_connection']) ?? _str(a['connection_id']);
+
+    // ── Balance ──────────────────────────────────────────────────────────
+    double? balance;
+    if (a['balance'] is num) {
+      balance = (a['balance'] as num).toDouble();
     }
 
     final akahuHash = _resolveHash(a);
 
     return TransactionModel(
-      akahuId: a['_id'] as String?,
-      accountId: a['_account'] as String?,
-      connectionId: a['_connection'] as String?,
+      akahuId: akahuId,
+      accountId: accountId,
+      connectionId: connectionId,
       akahuHash: akahuHash,
       categoryName: catName,
-      amount: (a['amount'] as num).toDouble(),
+      amount: amt,
       description: (a['description'] ?? '') as String,
       date: isoDay,
       type: localType,
-      balance: a['balance'] is num ? (a['balance'] as num).toDouble() : null,
-      merchantName: merchant == null ? null : (merchant['name'] as String?),
+      balance: balance,
+      merchantName: merchantName,
       excluded: false,
     );
+  }
+
+  /// Safely extracts a non-empty String from a dynamic value.
+  static String? _str(dynamic v) {
+    if (v == null) return null;
+    final s = v.toString().trim();
+    return s.isEmpty ? null : s;
   }
 
   /// Returns the provided Akahu hash if it exists, otherwise derives one using
   /// account/date/amount/description so duplicate detection still works.
   static String _resolveHash(Map<String, dynamic> a) {
-    final provided = (a['hash'] as String?)?.trim();
-    if (provided != null && provided.isNotEmpty) {
-      return provided;
-    }
-    final account = (a['_account'] ?? '').toString();
+    final provided = _str(a['hash']);
+    if (provided != null) return provided;
+    final account = (a['_account'] ?? a['account_id'] ?? '').toString();
     final date = (a['date'] ?? a['created_at'] ?? '').toString();
     final amount = (a['amount'] ?? '').toString();
     final description = (a['description'] ?? '').toString().trim().toLowerCase();

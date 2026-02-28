@@ -37,6 +37,7 @@ import 'package:bfm_app/screens/insights_screen.dart';
 import 'package:bfm_app/screens/settings_screen.dart';
 import 'package:bfm_app/screens/bank_connect_screen.dart'; // BankConnect screen
 import 'package:bfm_app/screens/debug_screen.dart'; // Debug
+import 'package:bfm_app/screens/debug_api_screen.dart'; // Backend API debug
 import 'package:bfm_app/screens/onboarding_screen.dart';
 import 'package:bfm_app/widgets/main_shell.dart'; // Swipeable navigation shell
 
@@ -47,11 +48,11 @@ import 'package:bfm_app/screens/subscriptions_screen.dart';
 import 'package:bfm_app/screens/enter_pin_screen.dart';
 import 'package:bfm_app/screens/savings_screen.dart';
 import 'package:bfm_app/screens/set_pin_screen.dart';
-import 'package:bfm_app/repositories/budget_repository.dart';
+
 import 'package:bfm_app/services/pin_store.dart';
 import 'package:bfm_app/utils/app_route_observer.dart';
 
-import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:bfm_app/services/onboarding_store.dart';
 
 /// Root gate widget that blocks the navigation stack until a user completes
@@ -197,18 +198,8 @@ class _LockGateState extends State<LockGate> {
 
     try {
       final onboardingComplete = await OnboardingStore().isComplete();
-      final prefs = await SharedPreferences.getInstance();
-      final connected = prefs.getBool('bank_connected') ?? false;
 
-      String nextRoute;
-      if (!onboardingComplete) {
-        nextRoute = '/onboarding';
-      } else if (!connected) {
-        nextRoute = '/bankconnect';
-      } else {
-        final budgets = await BudgetRepository.getAll();
-        nextRoute = budgets.isEmpty ? '/subscriptions' : '/dashboard';
-      }
+      final nextRoute = onboardingComplete ? '/dashboard' : '/onboarding';
 
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, nextRoute);
@@ -434,6 +425,12 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       navigatorObservers: [appRouteObserver],
+      builder: (context, child) {
+        return GestureDetector(
+          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+          child: child,
+        );
+      },
       title: 'BFM App',
       theme: ThemeData(
         primaryColor: const Color(0xFF005494),
@@ -446,6 +443,7 @@ class MyApp extends StatelessWidget {
       home: const LockGate(), // Set the home to our LockGate
       routes: {
         '/onboarding': (_) => const OnboardingScreen(),
+        // TODO: BankConnectScreen kept for dev/debug only (manual token entry)
         '/bankconnect': (_) => const BankConnectScreen(),
         // Main navigation shell with swipeable screens
         // Order: Insights(0), Budget(1), Dashboard(2), Savings(3), Chat(4)
@@ -459,6 +457,7 @@ class MyApp extends StatelessWidget {
         '/goals': (_) => const GoalsScreen(),
         '/settings': (_) => const SettingsScreen(),
         '/debug': (_) => const DebugScreen(),
+        '/debug-api': (_) => const DebugApiScreen(),
         '/subscriptions': (_) => const SubscriptionsScreen(),
         '/subscriptions/edit': (_) => const SubscriptionsScreen(editMode: true),
         '/budget/build': (_) => const BudgetBuildScreen(),

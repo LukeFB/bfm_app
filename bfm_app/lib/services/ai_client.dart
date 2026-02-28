@@ -27,6 +27,10 @@ import 'package:bfm_app/services/context_builder.dart';
 
 /// Lightweight OpenAI chat client that injects the Moni system prompt and
 /// private context before sending the latest chat history.
+///
+/// TODO: This is the "local" AI path that calls OpenAI directly. The "backend"
+/// path uses MessagesApi / BackendChatController. The chat screen should offer
+/// a toggle between the two.
 class AiClient {
   static const String _openAiUrl = 'https://api.openai.com/v1/chat/completions';
   static const Duration _requestTimeout = Duration(seconds: 45);

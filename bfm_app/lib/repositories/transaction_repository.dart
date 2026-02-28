@@ -269,13 +269,18 @@ class TransactionRepository {
       return CategoryRepository.ensureByName('Uncategorized');
     }
 
-    final rawCategory = raw['category'] as Map<String, dynamic>?;
+    // Extract Akahu category ID from nested object or flat field
     String? akahuCategoryId;
-    if (rawCategory != null) {
-      akahuCategoryId =
-          (rawCategory['_id'] ?? rawCategory['id'] ?? rawCategory['akahu_id'])
-              as String?;
+    for (final key in ['category', 'akahu_category']) {
+      final rawCat = raw[key];
+      if (rawCat is Map<String, dynamic>) {
+        akahuCategoryId =
+            (rawCat['_id'] ?? rawCat['id'] ?? rawCat['akahu_id'])?.toString();
+        if (akahuCategoryId != null) break;
+      }
     }
+    akahuCategoryId ??= raw['category_id']?.toString();
+
     return CategoryRepository.ensureByName(
       catName,
       akahuCategoryId: akahuCategoryId,

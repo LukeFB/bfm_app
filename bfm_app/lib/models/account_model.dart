@@ -106,10 +106,14 @@ class AccountModel {
     this.syncedAt,
   });
 
-  /// Creates an AccountModel from Akahu API JSON response.
+  /// Creates an AccountModel from Akahu API JSON or backend-proxied equivalent.
+  ///
+  /// Handles both direct Akahu shapes (`_id`, `balance: {current: ...}`,
+  /// `connection: {name: ...}`) and backend-transformed shapes (`id`,
+  /// `balance_current`, `connection_name`, etc.).
   factory AccountModel.fromAkahu(Map<String, dynamic> json) {
     final connection = json['connection'] as Map<String, dynamic>?;
-    final balance = json['balance'] as Map<String, dynamic>?;
+    final rawBalance = json['balance'];
     final meta = json['meta'] as Map<String, dynamic>?;
 
     DateTime? parseDate(dynamic value) {
@@ -125,21 +129,60 @@ class AccountModel {
       return null;
     }
 
+    // ── ID (Akahu: _id, backend may use id/akahu_id) ─────────────────────
+    final akahuId = _str(json['_id']) ?? _str(json['id']) ?? _str(json['akahu_id']) ?? '';
+
+    // ── Balance (Akahu: {current:, available:}, backend may flatten) ──────
+    double balanceCurrent = 0.0;
+    double? balanceAvailable;
+    String? balanceFormatted;
+    if (rawBalance is Map<String, dynamic>) {
+      balanceCurrent = (rawBalance['current'] as num?)?.toDouble() ?? 0.0;
+      balanceAvailable = (rawBalance['available'] as num?)?.toDouble();
+      balanceFormatted = rawBalance['formatted'] as String?;
+    } else if (rawBalance is num) {
+      balanceCurrent = rawBalance.toDouble();
+    } else {
+      balanceCurrent = (json['balance_current'] as num?)?.toDouble() ?? 0.0;
+      balanceAvailable = (json['balance_available'] as num?)?.toDouble();
+      balanceFormatted = json['balance_formatted'] as String?;
+    }
+
+    // ── Connection (Akahu: nested object, backend may flatten) ────────────
+    final connId = connection?['_id'] as String?
+        ?? _str(json['connection_id']);
+    final connName = connection?['name'] as String?
+        ?? _str(json['connection_name']);
+    final connLogo = connection?['logo'] as String?
+        ?? _str(json['connection_logo']);
+    final connType = connection?['connection_type'] as String?
+        ?? _str(json['connection_type']);
+
+    // ── Account number (Akahu: meta.account_number, backend may flatten) ─
+    final accountNumber = meta?['account_number'] as String?
+        ?? _str(json['account_number']);
+
     return AccountModel(
-      akahuId: json['_id'] as String? ?? '',
+      akahuId: akahuId,
       name: json['name'] as String? ?? 'Unknown Account',
       type: AccountType.fromAkahu(json['type'] as String?),
-      balanceCurrent: (balance?['current'] as num?)?.toDouble() ?? 0.0,
-      balanceAvailable: (balance?['available'] as num?)?.toDouble(),
-      balanceFormatted: balance?['formatted'] as String?,
-      connectionId: connection?['_id'] as String?,
-      connectionName: connection?['name'] as String?,
-      connectionLogo: connection?['logo'] as String?,
-      connectionType: connection?['connection_type'] as String?,
-      accountNumber: meta?['account_number'] as String?,
-      refreshedAt: parseDate(json['refreshed']),
+      balanceCurrent: balanceCurrent,
+      balanceAvailable: balanceAvailable,
+      balanceFormatted: balanceFormatted,
+      connectionId: connId,
+      connectionName: connName,
+      connectionLogo: connLogo,
+      connectionType: connType,
+      accountNumber: accountNumber,
+      refreshedAt: parseDate(json['refreshed'] ?? json['refreshed_at']),
       syncedAt: DateTime.now(),
     );
+  }
+
+  static String? _str(dynamic v) {
+    if (v == null) return null;
+    final s = v.toString().trim();
+    return s.isEmpty ? null : s;
   }
 
   /// Creates an AccountModel from SQLite row.

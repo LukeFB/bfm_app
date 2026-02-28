@@ -21,6 +21,7 @@ import 'dart:async';
 
 import 'package:bubble/bubble.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:bfm_app/screens/dashboard_screen.dart';
 
 import 'package:bfm_app/models/alert_model.dart';
@@ -40,8 +41,12 @@ import 'package:bfm_app/services/alert_notification_service.dart';
 import 'package:bfm_app/services/chat_constants.dart';
 import 'package:bfm_app/services/chat_storage.dart';
 import 'package:bfm_app/services/manual_budget_store.dart';
+import 'package:bfm_app/providers/api_providers.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:bfm_app/widgets/manual_alert_sheet.dart';
+
+/// Whether the chat uses the local OpenAI path or the Moni backend.
+enum ChatMode { local, backend }
 
 /// Example questions that scroll through to show chatbot capabilities.
 const List<String> _exampleQuestions = [
@@ -67,7 +72,12 @@ class ChatScreen extends StatefulWidget {
 }
 
 /// Handles conversation state, persistence, and network calls.
+///
+/// Supports two modes:
+/// - **local**: Direct OpenAI calls via [AiClient] (existing, needs API key).
+/// - **backend**: Proxied via Moni backend [MessagesApi] (needs backend auth).
 class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
+  ChatMode _chatMode = ChatMode.local;
   // Replaced _Message with ChatMessage to integrate with storage + AI.
   final List<ChatMessage> _messages = [];
   final List<ChatMessage> _allMessages = [];
@@ -221,6 +231,23 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         .toList();
   }
 
+  /// Sends a message through the Moni backend /messages endpoint.
+  Future<String> _sendViaBackend(String text) async {
+    // Access ProviderScope via context; ChatScreen is inside ProviderScope.
+    final container = ProviderScope.containerOf(context);
+    final api = container.read(messagesApiProvider);
+    final response = await api.sendMessage(text);
+    final content = response['message'] ??
+        response['content'] ??
+        response['response'] ??
+        response['data'] ??
+        response['raw'] ??
+        '';
+    return content.toString().trim().isNotEmpty
+        ? content.toString().trim()
+        : 'Kia ora - I am here. How can I help today?';
+  }
+
   /// Pushes the user message, sends it through AiClient, handles retries, and
   /// appends the assistant response (or an error bubble) while persisting both.
   Future<void> _sendMessage() async {
@@ -244,9 +271,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _scrollToBottom(); // keep view pinned to newest message.
 
     try {
-      // Build a rolling window of the last N turns for the model
-      final recent = _buildRecentTurns();
-      final replyText = await _ai.complete(recent);
+      late final String replyText;
+      if (_chatMode == ChatMode.backend) {
+        replyText = await _sendViaBackend(text);
+      } else {
+        final recent = _buildRecentTurns();
+        replyText = await _ai.complete(recent);
+      }
       final replyWithLinks = _injectReferralLinks(replyText);
 
       // Append assistant response and persist
@@ -1109,6 +1140,26 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   tooltip: 'Clear chat',
                   icon: const Icon(Icons.delete_outline, size: 20),
                   onPressed: _sending ? null : _clearChat,
+                ),
+                GestureDetector(
+                  onTap: _sending
+                      ? null
+                      : () => setState(() {
+                            _chatMode = _chatMode == ChatMode.local
+                                ? ChatMode.backend
+                                : ChatMode.local;
+                          }),
+                  child: Chip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text(
+                      _chatMode == ChatMode.local ? 'Local' : 'Backend',
+                      style: const TextStyle(fontSize: 10),
+                    ),
+                    avatar: Icon(
+                      _chatMode == ChatMode.local ? Icons.computer : Icons.cloud,
+                      size: 14,
+                    ),
+                  ),
                 ),
                 Expanded(
                   child: AnimatedBuilder(

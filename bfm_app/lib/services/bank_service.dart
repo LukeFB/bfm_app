@@ -32,6 +32,11 @@ import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Coordinates cleanup when the user disconnects their bank.
+///
+/// TODO: For production, call AkahuApi.revoke() (via AkahuController) to
+/// revoke the backend Akahu session before clearing local data. Currently
+/// only clears local state. Also add AccountRepository removal for backend-
+/// synced accounts.
 class BankService {
   /// Connects Akahu tokens, flips the bank_connected flag, and optionally kicks
   /// off an initial sync pipeline.

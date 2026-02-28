@@ -26,6 +26,11 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 /// Small singleton because we only need one HTTP client instance + state.
+///
+/// TODO: Once backend auth is the primary flow, replace these direct HTTP calls
+/// with ContentApi (lib/api/content_api.dart) which includes the Bearer token
+/// and goes through the authenticated Moni backend. Keep this for unauthenticated
+/// fallback or local dev.
 class ContentSyncService {
   ContentSyncService._internal();
   static final ContentSyncService _instance = ContentSyncService._internal();
