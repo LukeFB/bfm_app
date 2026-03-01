@@ -14,12 +14,14 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:bfm_app/api/api_client.dart';
+import 'package:bfm_app/auth/credential_store.dart';
 import 'package:bfm_app/models/onboarding_response.dart';
 import 'package:bfm_app/providers/api_providers.dart';
 import 'package:bfm_app/repositories/account_repository.dart';
@@ -72,6 +74,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // Account setup
   String? _incomeFrequency;
   String? _primaryGoal;
+  String? _region;
 
   // Akahu – manual token entry (dev/test)
   final _bankAppTokenCtrl = TextEditingController();
@@ -124,6 +127,24 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     ('BudgetBetter', 'Get better at budgeting'),
     ('TrackSpending', 'Track my spending'),
     ('GrowWealth', 'Grow my wealth'),
+  ];
+
+  static const _regionOptions = [
+    ('northland', 'Northland'),
+    ('auckland', 'Auckland'),
+    ('waikato', 'Waikato'),
+    ('bay_of_plenty', 'Bay of Plenty'),
+    ('gisborne', 'Gisborne'),
+    ('hawkes_bay', "Hawke's Bay"),
+    ('taranaki', 'Taranaki'),
+    ('manawatu', 'Manawat\u016b-Whanganui'),
+    ('wellington', 'Wellington'),
+    ('tasman', 'Tasman / Nelson'),
+    ('marlborough', 'Marlborough'),
+    ('west_coast', 'West Coast'),
+    ('canterbury', 'Canterbury'),
+    ('otago', 'Otago'),
+    ('southland', 'Southland'),
   ];
 
   bool _replaySyncing = false;
@@ -498,6 +519,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
       final token = await authApi.login(email: email, password: password);
       await tokenStore.setToken(token);
+      await CredentialStore().save(email: email, password: password);
 
       if (!mounted) return;
       setState(() {
@@ -643,16 +665,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   textInputAction: TextInputAction.next,
                 ),
                 const SizedBox(height: 16),
-                GestureDetector(
+                _DobPickerField(
+                  value: _selectedDob,
+                  displayText: _dobCtrl.text,
                   onTap: _pickDateOfBirth,
-                  child: AbsorbPointer(
-                    child: _StyledFormField(
-                      controller: _dobCtrl,
-                      label: 'Date of birth',
-                      hint: 'Tap to select',
-                      suffixIcon: const Icon(Icons.calendar_today, size: 20),
-                    ),
-                  ),
                 ),
               ],
               const SizedBox(height: 16),
@@ -821,6 +837,26 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   selected: _primaryGoal == opt.$1,
                   onTap: () => setState(() => _primaryGoal = opt.$1),
                 )),
+            const SizedBox(height: 16),
+            Text(
+              'What region are you in?',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Optional — helps us tailor insights to your area.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.black45,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            _RegionDropdown(
+              value: _region,
+              options: _regionOptions,
+              onChanged: (v) => setState(() => _region = v),
+            ),
           ],
         ),
       ),
@@ -1317,6 +1353,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           'primary_goal': _primaryGoal,
         if (_referrerTokenCtrl.text.trim().isNotEmpty)
           'referrer_token': _referrerTokenCtrl.text.trim(),
+        if (_region != null && _region!.isNotEmpty)
+          'region': _region,
       };
 
       String token;
@@ -1355,6 +1393,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       }
 
       await tokenStore.setToken(token);
+      await CredentialStore().save(email: email, password: password);
 
       // When we fell back to login, the backend didn't get the onboarding
       // profile data (register sends it, login doesn't). Push it now.
@@ -1686,22 +1725,92 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // Helpers
   // ---------------------------------------------------------------------------
 
-  Future<void> _pickDateOfBirth() async {
+  void _pickDateOfBirth() {
     final now = DateTime.now();
-    final picked = await showDatePicker(
+    var tempDate = _selectedDob ?? DateTime(now.year - 25, 6, 15);
+
+    showModalBottomSheet<void>(
       context: context,
-      initialDate: _selectedDob ?? DateTime(now.year - 25),
-      firstDate: DateTime(1920),
-      lastDate: now,
-      helpText: 'Select your date of birth',
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 8),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 8, 0),
+                  child: Row(
+                    children: [
+                      Text(
+                        'Date of birth',
+                        style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        onPressed: () {
+                          Navigator.pop(ctx, true);
+                          setState(() {
+                            _selectedDob = tempDate;
+                            _dobCtrl.text =
+                                '${tempDate.day.toString().padLeft(2, '0')} '
+                                '${_monthName(tempDate.month)} '
+                                '${tempDate.year}';
+                          });
+                        },
+                        child: const Text('Confirm'),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(
+                  height: 216,
+                  child: CupertinoDatePicker(
+                    mode: CupertinoDatePickerMode.date,
+                    initialDateTime: tempDate,
+                    minimumDate: DateTime(1920),
+                    maximumDate: now,
+                    dateOrder: DatePickerDateOrder.dmy,
+                    use24hFormat: true,
+                    onDateTimeChanged: (date) => tempDate = date,
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
     );
-    if (picked != null && mounted) {
-      setState(() {
-        _selectedDob = picked;
-        _dobCtrl.text =
-            '${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}';
-      });
-    }
+  }
+
+  static String _monthName(int month) {
+    const names = [
+      '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return names[month];
   }
 
   String? _trimOrNull(String text) {
@@ -1931,6 +2040,128 @@ class _SelectionTile extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DobPickerField extends StatelessWidget {
+  final DateTime? value;
+  final String displayText;
+  final VoidCallback onTap;
+
+  const _DobPickerField({
+    required this.value,
+    required this.displayText,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasValue = value != null;
+    final primary = Theme.of(context).colorScheme.primary;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: hasValue ? primary.withOpacity(0.06) : Colors.grey.shade50,
+          border: Border.all(
+            color: hasValue ? primary.withOpacity(0.4) : Colors.grey.shade300,
+            width: hasValue ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: hasValue
+                    ? primary.withOpacity(0.12)
+                    : Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                Icons.cake_outlined,
+                size: 20,
+                color: hasValue ? primary : Colors.grey.shade500,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Date of birth',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: hasValue ? primary : Colors.grey.shade600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    hasValue ? displayText : 'Tap to select your birthday',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: hasValue ? FontWeight.w600 : FontWeight.w400,
+                      color: hasValue ? Colors.black87 : Colors.grey.shade500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.expand_more_rounded,
+              color: hasValue ? primary : Colors.grey.shade400,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RegionDropdown extends StatelessWidget {
+  final String? value;
+  final List<(String, String)> options;
+  final ValueChanged<String?> onChanged;
+
+  const _RegionDropdown({
+    required this.value,
+    required this.options,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.grey.shade50,
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          isExpanded: true,
+          hint: const Text('Select region (optional)'),
+          borderRadius: BorderRadius.circular(12),
+          icon: const Icon(Icons.expand_more_rounded),
+          items: options
+              .map((opt) => DropdownMenuItem(
+                    value: opt.$1,
+                    child: Text(opt.$2),
+                  ))
+              .toList(),
+          onChanged: onChanged,
         ),
       ),
     );

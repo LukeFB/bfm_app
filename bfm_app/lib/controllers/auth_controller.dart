@@ -1,9 +1,13 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:bfm_app/auth/token_store.dart';
+import 'package:bfm_app/api/api_client.dart';
 import 'package:bfm_app/api/auth_api.dart';
 import 'package:bfm_app/providers/api_providers.dart';
+
+enum SessionStatus { valid, expired, noToken, networkError }
 
 @immutable
 class AuthState {
@@ -52,6 +56,32 @@ class AuthController extends Notifier<AuthState> {
     final token = await _tokenStore.getToken();
     if (token != null && token.isNotEmpty) {
       state = state.copyWith(isAuthed: true, clearError: true);
+    }
+  }
+
+  /// Validates the stored token against the backend.
+  /// Returns [SessionStatus.valid] if /auth/me succeeds,
+  /// [SessionStatus.expired] if 401, [SessionStatus.noToken] if no stored
+  /// token, or [SessionStatus.networkError] on connectivity failure.
+  Future<SessionStatus> tryRestoreSession() async {
+    final token = await _tokenStore.getToken();
+    if (token == null || token.isEmpty) return SessionStatus.noToken;
+
+    try {
+      final user = await _authApi.me();
+      state = state.copyWith(isAuthed: true, user: user, clearError: true);
+      return SessionStatus.valid;
+    } on DioException catch (e) {
+      if (e.error is UnauthorizedException) {
+        await _tokenStore.clear();
+        state = const AuthState();
+        return SessionStatus.expired;
+      }
+      state = state.copyWith(isAuthed: true, clearError: true);
+      return SessionStatus.networkError;
+    } catch (_) {
+      state = state.copyWith(isAuthed: true, clearError: true);
+      return SessionStatus.networkError;
     }
   }
 

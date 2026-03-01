@@ -191,7 +191,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
                   showStats: true,
                 ),
                 const SizedBox(height: 16),
-                BudgetComparisonCard(
+                WeeklyBudgetBreakdownCard(
                   key: ValueKey(report.weekStart),
                   forWeekStart: report.weekStart,
                 ),

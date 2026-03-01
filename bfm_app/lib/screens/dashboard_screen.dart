@@ -273,7 +273,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // ---------- BIG LEFT TO SPEND FIGURE ----------
+                    // ---------- SAFE TO SPEND FIGURE ----------
                     Center(
                       child: Column(
                         children: [
@@ -289,7 +289,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               const Text(
-                                'left to spend this week',
+                                'Safe to Spend on Non Essentials',
                                 style: TextStyle(
                                   fontSize: 16,
                                   color: Colors.black54,
@@ -297,8 +297,8 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                               ),
                               const SizedBox(width: 4),
                               HelpIconTooltip(
-                                title: 'Left to Spend',
-                                message: 'This is how much you have left to spend this week after accounting for:\n\n'
+                                title: 'Safe to Spend',
+                                message: 'This is how much you can safely spend on non essentials this week after accounting for:\n\n'
                                     '• Your budgeted expenses (bills, groceries, etc.)\n'
                                     '• Any overspending on budgets\n'
                                     '• Non-budgeted spending\n\n'
@@ -310,6 +310,58 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
                           ),
                         ],
                       ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // ---------- INCOME & BUDGETED ROW ----------
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '\$${data.weeklyIncome.toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF4CAF50),
+                                ),
+                              ),
+                              const Text(
+                                'Income',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                '\$${data.totalBudgeted.toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                  color: bfmOrange,
+                                ),
+                              ),
+                              const Text(
+                                'Budgeted',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
 
                     const SizedBox(height: 24),

@@ -1,25 +1,8 @@
-/// ---------------------------------------------------------------------------
-/// File: lib/screens/set_pin_screen.dart
-/// Author: Luke Fraser-Brown
-///
-/// Called by:
-///   - `/setpin` route when the user chooses to create an app PIN.
-///
-/// Purpose:
-///   - Lets the user create or update their app PIN and saves it securely.
-///
-/// Inputs:
-///   - `PinStore` instance, user-entered PIN + confirmation.
-///
-/// Outputs:
-///   - `Navigator.pop(true)` on success; inline errors otherwise.
-/// ---------------------------------------------------------------------------
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../services/pin_store.dart';
+import 'package:bfm_app/services/pin_store.dart';
 
-/// Screen for configuring the fallback app PIN.
 class SetPinScreen extends StatefulWidget {
   const SetPinScreen({super.key, required this.pinStore});
 
@@ -29,132 +12,318 @@ class SetPinScreen extends StatefulWidget {
   State<SetPinScreen> createState() => _SetPinScreenState();
 }
 
-/// Manages the PIN creation form and save lifecycle.
-class _SetPinScreenState extends State<SetPinScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final TextEditingController _pinController = TextEditingController();
-  final TextEditingController _confirmController = TextEditingController();
+class _SetPinScreenState extends State<SetPinScreen>
+    with SingleTickerProviderStateMixin {
+  static const int _pinLength = 4;
 
+  String _pin = '';
+  String? _firstPin;
+  bool _confirming = false;
   bool _saving = false;
   String? _error;
 
-  /// Disposes text controllers.
+  late final AnimationController _shakeController;
+  late final Animation<double> _shakeAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _shakeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+    _shakeAnimation = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 0, end: 12), weight: 1),
+      TweenSequenceItem(tween: Tween(begin: 12, end: -12), weight: 2),
+      TweenSequenceItem(tween: Tween(begin: -12, end: 8), weight: 2),
+      TweenSequenceItem(tween: Tween(begin: 8, end: -8), weight: 2),
+      TweenSequenceItem(tween: Tween(begin: -8, end: 0), weight: 1),
+    ]).animate(CurvedAnimation(
+      parent: _shakeController,
+      curve: Curves.easeInOut,
+    ));
+  }
+
   @override
   void dispose() {
-    _pinController.dispose();
-    _confirmController.dispose();
+    _shakeController.dispose();
     super.dispose();
   }
 
-  /// Validates form input, saves the new PIN, and closes the sheet.
-  Future<void> _savePin() async {
-    final form = _formKey.currentState;
-    if (form == null || !form.validate()) {
+  void _onDigit(int digit) {
+    if (_saving || _pin.length >= _pinLength) return;
+    HapticFeedback.lightImpact();
+    setState(() {
+      _pin += digit.toString();
+      _error = null;
+    });
+    if (_pin.length == _pinLength) {
+      _handleComplete();
+    }
+  }
+
+  void _onBackspace() {
+    if (_saving || _pin.isEmpty) return;
+    HapticFeedback.lightImpact();
+    setState(() {
+      _pin = _pin.substring(0, _pin.length - 1);
+      _error = null;
+    });
+  }
+
+  Future<void> _handleComplete() async {
+    if (!_confirming) {
+      // First entry — save it and move to confirm phase.
+      await Future.delayed(const Duration(milliseconds: 200));
+      if (!mounted) return;
+      setState(() {
+        _firstPin = _pin;
+        _pin = '';
+        _confirming = true;
+      });
       return;
     }
 
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
+    // Confirmation phase — check match.
+    if (_pin != _firstPin) {
+      HapticFeedback.heavyImpact();
+      _shakeController.forward(from: 0);
+      await Future.delayed(const Duration(milliseconds: 200));
+      if (!mounted) return;
+      setState(() {
+        _error = "PINs didn't match. Start over.";
+        _pin = '';
+        _firstPin = null;
+        _confirming = false;
+      });
+      return;
+    }
 
+    // Match — save.
+    setState(() => _saving = true);
     try {
-      await widget.pinStore.setPin(_pinController.text);
+      await widget.pinStore.setPin(_pin);
+      HapticFeedback.mediumImpact();
       if (!mounted) return;
       Navigator.of(context).pop(true);
-    } catch (err) {
-      setState(() => _error = 'Failed to save PIN. Please try again.');
-    } finally {
-      if (mounted) {
-        setState(() => _saving = false);
-      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = 'Failed to save PIN. Try again.';
+        _pin = '';
+        _firstPin = null;
+        _confirming = false;
+      });
     }
   }
 
-  /// Base validation ensuring 4-8 digits before we compare both fields.
-  String? _validatePin(String? value) {
-    final pin = value ?? '';
-    if (pin.length < 4 || pin.length > 8) {
-      return 'PIN must be 4-8 digits';
-    }
-    return null;
-  }
-
-  /// Renders the PIN + confirmation fields plus the save CTA.
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final primary = Theme.of(context).primaryColor;
+
+    final title = _confirming ? 'Confirm your PIN' : 'Create a PIN';
+    final subtitle = _confirming
+        ? 'Enter the same PIN again.'
+        : 'Choose a 4-digit PIN to secure the app.';
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Set App PIN')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Create a backup PIN for devices without biometrics.',
-                style: theme.textTheme.bodyLarge,
-              ),
-              const SizedBox(height: 24),
-              TextFormField(
-                controller: _pinController,
-                decoration: const InputDecoration(
-                  labelText: 'New PIN',
-                  hintText: 'Enter 4-8 digits',
-                ),
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                obscureText: true,
-                maxLength: 8,
-                validator: _validatePin,
-              ),
-              TextFormField(
-                controller: _confirmController,
-                decoration: const InputDecoration(
-                  labelText: 'Confirm PIN',
-                ),
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                obscureText: true,
-                maxLength: 8,
-                validator: (value) {
-                  final validation = _validatePin(value);
-                  if (validation != null) {
-                    return validation;
-                  }
-                  if (value != _pinController.text) {
-                    return 'PINs do not match';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 24),
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    _error!,
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(color: theme.colorScheme.error),
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Column(
+          children: [
+            const Spacer(flex: 2),
+            Icon(
+              _confirming ? Icons.check_circle_outline : Icons.pin_outlined,
+              size: 48,
+              color: primary,
+            ),
+            const SizedBox(height: 20),
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
                   ),
-                ),
-              ElevatedButton(
-                onPressed: _saving ? null : _savePin,
-                child: _saving
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Save PIN'),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              subtitle,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.black54,
+                  ),
+            ),
+            const SizedBox(height: 32),
+            AnimatedBuilder(
+              animation: _shakeAnimation,
+              builder: (context, child) => Transform.translate(
+                offset: Offset(_shakeAnimation.value, 0),
+                child: child,
               ),
-            ],
-          ),
+              child: _PinDots(
+                filled: _pin.length,
+                total: _pinLength,
+                hasError: _error != null,
+                accentColor: primary,
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              height: 20,
+              child: _error != null
+                  ? Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 14,
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            const Spacer(flex: 1),
+            _NumberPad(
+              onDigit: _onDigit,
+              onBackspace: _onBackspace,
+              enabled: !_saving,
+            ),
+            const SizedBox(height: 32),
+          ],
         ),
       ),
     );
   }
 }
 
+// ── Shared widgets (identical to enter_pin_screen) ──────────────────────────
+
+class _PinDots extends StatelessWidget {
+  const _PinDots({
+    required this.filled,
+    required this.total,
+    this.hasError = false,
+    required this.accentColor,
+  });
+
+  final int filled;
+  final int total;
+  final bool hasError;
+  final Color accentColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final activeColor =
+        hasError ? Theme.of(context).colorScheme.error : accentColor;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(total, (i) {
+        final isFilled = i < filled;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          margin: const EdgeInsets.symmetric(horizontal: 10),
+          width: isFilled ? 18 : 16,
+          height: isFilled ? 18 : 16,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: isFilled ? activeColor : Colors.transparent,
+            border: Border.all(
+              color: isFilled ? activeColor : Colors.grey.shade400,
+              width: 2,
+            ),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class _NumberPad extends StatelessWidget {
+  const _NumberPad({
+    required this.onDigit,
+    required this.onBackspace,
+    this.enabled = true,
+  });
+
+  final ValueChanged<int> onDigit;
+  final VoidCallback onBackspace;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 40),
+      child: Column(
+        children: [
+          for (final row in [
+            [1, 2, 3],
+            [4, 5, 6],
+            [7, 8, 9],
+          ])
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: row
+                    .map((d) => _PadButton(
+                          label: '$d',
+                          onTap: enabled ? () => onDigit(d) : null,
+                        ))
+                    .toList(),
+              ),
+            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              const SizedBox(width: 72, height: 72),
+              _PadButton(
+                label: '0',
+                onTap: enabled ? () => onDigit(0) : null,
+              ),
+              _PadButton(
+                icon: Icons.backspace_outlined,
+                onTap: enabled ? onBackspace : null,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PadButton extends StatelessWidget {
+  const _PadButton({this.label, this.icon, this.onTap});
+
+  final String? label;
+  final IconData? icon;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 72,
+      height: 72,
+      child: Material(
+        color: Colors.grey.shade100,
+        shape: const CircleBorder(),
+        clipBehavior: Clip.hardEdge,
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: Center(
+            child: label != null
+                ? Text(
+                    label!,
+                    style: const TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black87,
+                    ),
+                  )
+                : Icon(icon, size: 24, color: Colors.black54),
+          ),
+        ),
+      ),
+    );
+  }
+}

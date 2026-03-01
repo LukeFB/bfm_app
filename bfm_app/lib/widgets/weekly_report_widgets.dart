@@ -1341,28 +1341,23 @@ class _ComparisonRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = comparison;
     
-    // Compare average spending to budget to show if user is consistently over/under
     Color statusColor;
     IconData statusIcon;
     String statusText;
     
     if (c.isAvgOverBudget) {
-      // Average is significantly higher than budget - consistently overspending
       statusColor = Colors.orange;
       statusIcon = Icons.trending_up;
       statusText = "Over budget";
     } else if (c.weeklyAvgSpend > c.budgetLimit) {
-      // Over budget but within tolerance - normal variance
       statusColor = Colors.green;
       statusIcon = Icons.check;
       statusText = "Normal variance";
     } else if (c.isAvgUnderBudget) {
-      // Average is significantly lower than budget - room to spare
       statusColor = Colors.green;
       statusIcon = Icons.trending_down;
       statusText = "Under budget";
     } else {
-      // Average is at or under budget within tolerance - on track
       statusColor = Colors.teal;
       statusIcon = Icons.check;
       statusText = "On track";
@@ -1402,6 +1397,362 @@ class _ComparisonRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Expandable card showing weekly transactions grouped by budget,
+/// with spending progress bars and monthly average comparison.
+/// Replaces BudgetComparisonCard with richer transaction-level detail.
+class WeeklyBudgetBreakdownCard extends StatefulWidget {
+  final DateTime? forWeekStart;
+  const WeeklyBudgetBreakdownCard({super.key, this.forWeekStart});
+
+  @override
+  State<WeeklyBudgetBreakdownCard> createState() =>
+      _WeeklyBudgetBreakdownCardState();
+}
+
+class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
+  bool _isExpanded = false;
+  final Set<int> _expandedGroups = {};
+  CategoryEmojiHelper? _emojiHelper;
+  Future<List<BudgetWeeklyBreakdown>>? _breakdownFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    CategoryEmojiHelper.ensureLoaded().then((h) {
+      if (mounted) setState(() => _emojiHelper = h);
+    });
+    _loadBreakdown();
+  }
+
+  @override
+  void didUpdateWidget(WeeklyBudgetBreakdownCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.forWeekStart != widget.forWeekStart) {
+      _expandedGroups.clear();
+      _loadBreakdown();
+    }
+  }
+
+  void _loadBreakdown() {
+    _breakdownFuture = BudgetComparisonService.getWeeklyBreakdown(
+      forWeekStart: widget.forWeekStart,
+    );
+  }
+
+  String _formatWeekLabel() {
+    if (widget.forWeekStart != null) {
+      final start = widget.forWeekStart!;
+      final end = start.add(const Duration(days: 6));
+      return "${start.day}/${start.month} - ${end.day}/${end.month}";
+    }
+    return "This week";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () => setState(() => _isExpanded = !_isExpanded),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Text(
+                              "Weekly Transactions",
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w600, fontSize: 16),
+                            ),
+                            const SizedBox(width: 4),
+                            const HelpIconTooltip(
+                              title: 'Weekly Transactions',
+                              message:
+                                  'All transactions for the week grouped by budget.\n\n'
+                                  '• Each budget shows a spending bar and your 4-week average\n'
+                                  '• Tap a budget to see individual transactions\n'
+                                  '• Non-budgeted spending appears at the bottom',
+                              size: 14,
+                            ),
+                          ],
+                        ),
+                        Text(
+                          _formatWeekLabel(),
+                          style: TextStyle(
+                              fontSize: 12, color: Colors.grey.shade600),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    _isExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.grey.shade600,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_isExpanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: FutureBuilder<List<BudgetWeeklyBreakdown>>(
+                future: _breakdownFuture,
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: CircularProgressIndicator(),
+                      ),
+                    );
+                  }
+                  final breakdowns = snapshot.data!;
+                  if (breakdowns.isEmpty) {
+                    return const Text("No transactions this week.");
+                  }
+                  final budgeted =
+                      breakdowns.where((b) => b.isBudgeted).toList();
+                  final other =
+                      breakdowns.where((b) => !b.isBudgeted).toList();
+                  return Column(
+                    children: [
+                      if (budgeted.isNotEmpty) ...[
+                        _sectionDivider('budgeted'),
+                        const SizedBox(height: 8),
+                        for (var i = 0; i < budgeted.length; i++)
+                          _buildGroupRow(budgeted[i], i),
+                      ],
+                      if (other.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        _sectionDivider('other spending'),
+                        const SizedBox(height: 8),
+                        for (var i = 0; i < other.length; i++)
+                          _buildGroupRow(other[i], budgeted.length + i),
+                      ],
+                    ],
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionDivider(String text) {
+    return Row(
+      children: [
+        Expanded(child: Divider(color: Colors.grey.shade400)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey.shade600,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ),
+        Expanded(child: Divider(color: Colors.grey.shade400)),
+      ],
+    );
+  }
+
+  Widget _buildGroupRow(BudgetWeeklyBreakdown b, int index) {
+    final isGroupExpanded = _expandedGroups.contains(index);
+    final emoji = _emojiHelper?.emojiForName(b.label) ??
+        CategoryEmojiHelper.defaultEmoji;
+
+    final barPercent = b.budgetLimit > 0
+        ? (b.thisWeekSpend / b.budgetLimit).clamp(0.0, 1.0)
+        : 0.0;
+    final isOverBudget =
+        b.budgetLimit > 0 && b.thisWeekSpend > b.budgetLimit;
+    final barColor = isOverBudget ? Colors.redAccent : Colors.blueAccent;
+
+    String avgStatus = '';
+    Color avgColor = Colors.grey;
+    if (b.isBudgeted && b.budgetLimit > 0) {
+      if (b.isAvgOverBudget) {
+        avgStatus = 'Over budget';
+        avgColor = Colors.orange;
+      } else if (b.weeklyAvgSpend > b.budgetLimit) {
+        avgStatus = 'Normal variance';
+        avgColor = Colors.green;
+      } else if (b.isAvgUnderBudget) {
+        avgStatus = 'Under budget';
+        avgColor = Colors.green;
+      } else {
+        avgStatus = 'On track';
+        avgColor = Colors.teal;
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: b.transactions.isNotEmpty
+              ? () {
+                  setState(() {
+                    if (isGroupExpanded) {
+                      _expandedGroups.remove(index);
+                    } else {
+                      _expandedGroups.add(index);
+                    }
+                  });
+                }
+              : null,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child:
+                      Text(emoji, style: const TextStyle(fontSize: 18)),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment:
+                            MainAxisAlignment.spaceBetween,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              b.label,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 14),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Text(
+                            b.budgetLimit > 0
+                                ? "\$${b.thisWeekSpend.toStringAsFixed(0)} / \$${b.budgetLimit.toStringAsFixed(0)}"
+                                : "\$${b.thisWeekSpend.toStringAsFixed(0)}",
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: isOverBudget
+                                  ? Colors.redAccent
+                                  : Colors.black87,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (b.budgetLimit > 0) ...[
+                        const SizedBox(height: 4),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: barPercent,
+                            minHeight: 6,
+                            backgroundColor: Colors.grey.shade200,
+                            color: barColor,
+                          ),
+                        ),
+                      ],
+                      if (b.isBudgeted && b.budgetLimit > 0) ...[
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            Text(
+                              "Monthly avg: \$${b.weeklyAvgSpend.toStringAsFixed(0)}/wk",
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey.shade600),
+                            ),
+                            if (avgStatus.isNotEmpty) ...[
+                              Text(
+                                " · ",
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey.shade400),
+                              ),
+                              Text(
+                                avgStatus,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: avgColor,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (b.transactions.isNotEmpty) ...[
+                  const SizedBox(width: 4),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Icon(
+                      isGroupExpanded
+                          ? Icons.expand_less
+                          : Icons.expand_more,
+                      size: 20,
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        if (isGroupExpanded && b.transactions.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 30, bottom: 4),
+            child: Column(
+              children: [
+                for (final txn in b.transactions)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            txn.description,
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade700),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          "-\$${txn.amount.toStringAsFixed(2)}",
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade700),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        Divider(height: 1, color: Colors.grey.shade200),
+      ],
     );
   }
 }

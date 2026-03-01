@@ -141,11 +141,9 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
           TextEditingController(text: defaultAmount.toStringAsFixed(2));
 
       // In edit mode, select items that have existing budgets
-      // In create mode, select all by default
+      // In create mode, start unselected
       if (widget.editMode) {
         if (existingBudget != null) selection.add(rid);
-      } else {
-        selection.add(rid);
       }
     }
 
@@ -256,7 +254,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
       appBar: AppBar(
         automaticallyImplyLeading: widget.editMode,
         title: Text(
-            widget.editMode ? 'Edit subscriptions' : 'Review subscriptions'),
+            widget.editMode ? 'Edit recurring payments' : 'Recurring payments'),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -316,7 +314,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
               ),
               const SizedBox(height: 2),
               Text(
-                'per week in subscriptions',
+                'per week in recurring payments',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Colors.black54,
                     ),
@@ -350,7 +348,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
             ),
             const SizedBox(height: 24),
             Text(
-              'No subscriptions found',
+              'No recurring payments found',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
@@ -377,7 +375,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
         Padding(
           padding: const EdgeInsets.only(bottom: 16),
           child: Text(
-            'Select the subscriptions you would like to keep. These will be automatically budgeted for.',
+            'Select the detected recurring payments you would like to create budgets for. Reminders will be created to cancel unselected recurring payments.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Colors.black54,
                   height: 1.4,

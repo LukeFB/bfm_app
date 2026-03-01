@@ -186,6 +186,7 @@ class MainShellState extends State<MainShell> {
 
   /// Called when page swipe completes.
   void _onPageChanged(int index) {
+    FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       _currentIndex = index;
     });

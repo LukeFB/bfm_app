@@ -53,7 +53,10 @@ import 'package:bfm_app/services/pin_store.dart';
 import 'package:bfm_app/utils/app_route_observer.dart';
 
 
+import 'package:bfm_app/screens/login_screen.dart';
 import 'package:bfm_app/services/onboarding_store.dart';
+import 'package:bfm_app/controllers/auth_controller.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// Root gate widget that blocks the navigation stack until a user completes
 /// biometrics or PIN auth. Owned by `MyApp` and pushed right after launch.
@@ -66,15 +69,13 @@ class LockGate extends StatefulWidget {
 }
 
 /// Internal lifecycle states so we can drive the UI copy and spinners.
-enum _LockStatus { initializing, idle, authenticating, routing }
+enum _LockStatus { initializing, idle, routing }
 
 /// Handles auth orchestration plus the conditional routing side effects.
 class _LockGateState extends State<LockGate> {
-  // final LocalAuthentication _localAuth = LocalAuthentication();
   final PinStore _pinStore = PinStore();
 
   _LockStatus _status = _LockStatus.initializing;
-  bool _pinAvailable = false;
   bool _navigating = false;
   String? _errorMessage;
 
@@ -86,105 +87,36 @@ class _LockGateState extends State<LockGate> {
     _bootstrap();
   }
 
-  /// Collects device/security capabilities and caches them on state so we know
-  /// whether to offer biometrics, device PIN, or fall back to our in-app PIN.
-  /// Also auto-starts a device auth attempt if supported to keep UX friction low.
+  /// Checks PIN state and either skips straight past (grace period), or
+  /// immediately pushes the enter / create PIN screen — no intermediate
+  /// landing page required.
   Future<void> _bootstrap() async {
     setState(() {
       _status = _LockStatus.initializing;
       _errorMessage = null;
     });
 
-    // Device security temporarily disabled; skip LocalAuthentication bootstrap.
-    // bool supported = false;
-    // bool hasBiometrics = false;
-    // try {
-    //   supported = await _localAuth.isDeviceSupported();
-    //   hasBiometrics = await _localAuth.canCheckBiometrics;
-    // } on PlatformException {
-    //   supported = false;
-    //   hasBiometrics = false;
-    // }
-
     final pinExists = await _pinStore.hasPin();
     if (!mounted) return;
 
-    setState(() {
-      // _deviceSecurityAvailable = supported;
-      // _biometricHardwareDetected = hasBiometrics;
-      _pinAvailable = pinExists;
-      _status = _LockStatus.idle;
-    });
-
-    // if (supported) {
-    //   await _handleDeviceAuth(autoTriggered: true);
-    // }
+    setState(() => _status = _LockStatus.idle);
 
     if (pinExists && await _pinStore.isWithinGracePeriod()) {
       await _routeAfterAuth();
-    }
-  }
-
-  /*
-  /// Asks LocalAuthentication to verify the user. If `autoTriggered` is false,
-  /// the UI explicitly showed a button tap so we reset error messaging.
-  /// Successful auth flows straight into `_routeAfterAuth`.
-  Future<void> _handleDeviceAuth({bool autoTriggered = false}) async {
-    if (!_deviceSecurityAvailable) {
       return;
     }
 
-    setState(() {
-      _status = _LockStatus.authenticating;
-      if (!autoTriggered) {
-        _errorMessage = null;
-      }
-    });
-
-    try {
-      final didAuthenticate = await _localAuth.authenticate(
-        localizedReason: 'Unlock Bay Financial Mentors',
-        options: const AuthenticationOptions(
-          stickyAuth: true,
-          biometricOnly: false,
-          useErrorDialogs: true,
-        ),
-      );
-
-      if (!mounted) return;
-      if (didAuthenticate) {
-        await _routeAfterAuth();
-      } else {
-        setState(() {
-          _status = _LockStatus.idle;
-          _errorMessage = 'Authentication was cancelled or failed.';
-        });
-      }
-    } on PlatformException catch (err) {
-      if (!mounted) return;
-      final disableDeviceAuth =
-          err.code == auth_error.notAvailable ||
-          err.code == auth_error.passcodeNotSet;
-      setState(() {
-        _status = _LockStatus.idle;
-        if (disableDeviceAuth) {
-          _deviceSecurityAvailable = false;
-        }
-        _errorMessage = _friendlyAuthError(err);
-      });
-    } catch (err) {
-      if (!mounted) return;
-      setState(() {
-        _status = _LockStatus.idle;
-        _errorMessage = 'Device authentication error. $err';
-      });
+    // Go straight to the appropriate PIN screen.
+    if (pinExists) {
+      _launchPinEntry();
+    } else {
+      _launchPinSetup();
     }
   }
-  */
 
-  /// Looks at persisted state (bank connection flag + budgets) to decide which
-  /// named route to push after auth. Guarded by `_navigating` so multiple async
-  /// calls cannot accidentally stack navigations.
+  /// Looks at persisted state (onboarding flag + backend token) to decide
+  /// which named route to push after auth. Guarded by `_navigating` so
+  /// multiple async calls cannot accidentally stack navigations.
   Future<void> _routeAfterAuth() async {
     if (_navigating) {
       return;
@@ -199,10 +131,30 @@ class _LockGateState extends State<LockGate> {
     try {
       final onboardingComplete = await OnboardingStore().isComplete();
 
-      final nextRoute = onboardingComplete ? '/dashboard' : '/onboarding';
+      if (!onboardingComplete) {
+        if (!mounted) return;
+        Navigator.pushReplacementNamed(context, '/onboarding');
+        return;
+      }
+
+      // Onboarding done – validate the stored backend session.
+      final container = ProviderScope.containerOf(context);
+      final status = await container
+          .read(authControllerProvider.notifier)
+          .tryRestoreSession();
 
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, nextRoute);
+
+      switch (status) {
+        case SessionStatus.valid:
+        case SessionStatus.networkError:
+          // Valid token or offline – head to the dashboard.
+          Navigator.pushReplacementNamed(context, '/dashboard');
+        case SessionStatus.expired:
+        case SessionStatus.noToken:
+          // Token missing or expired – prompt for re-login.
+          Navigator.pushReplacementNamed(context, '/login');
+      }
     } catch (err) {
       if (!mounted) return;
       setState(() {
@@ -240,172 +192,43 @@ class _LockGateState extends State<LockGate> {
     );
 
     if (result == true) {
-      setState(() => _pinAvailable = true);
       await _pinStore.recordAuthSuccess();
       await _routeAfterAuth();
     }
   }
 
-  /*
-  /// Converts the LocalAuth error codes into human copy so the screen can
-  /// explain what went wrong and how to retry.
-  String _friendlyAuthError(PlatformException error) {
-    switch (error.code) {
-      case auth_error.notAvailable:
-        return 'Device security is unavailable. Use the app PIN instead.';
-      case auth_error.notEnrolled:
-        return 'No biometrics are enrolled. Use your app PIN.';
-      case auth_error.passcodeNotSet:
-        return 'Set a device passcode to use biometrics, or create an app PIN.';
-      case auth_error.lockedOut:
-      case auth_error.permanentlyLockedOut:
-        return 'Device security is locked. Use your app PIN.';
-      default:
-        return error.message ?? 'Authentication error. Try a different method.';
-    }
-  }
-  */
-
-  /// Helper that keeps spinner logic in one place so the widget tree reads well.
-  bool get _showProgress =>
-      _status == _LockStatus.initializing ||
-      _status == _LockStatus.authenticating;
-
-  /// Renders the secure login shell with action cards, error copy, and spinners.
-  /// Keeps button enabled/disabled state aligned with our private state flags.
+  /// The build now only shows a minimal splash / loading indicator because
+  /// `_bootstrap` immediately pushes to the PIN screen.
   @override
   Widget build(BuildContext context) {
-    final canShowActions = !_showProgress && _status != _LockStatus.routing;
-
     return Scaffold(
-      appBar: AppBar(title: const Text('Secure Login')),
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  const Icon(Icons.lock, size: 80, color: Colors.black54),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Unlock to continue',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Enter your Bay Financial Mentors app PIN to continue.',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 24),
-                  if (_showProgress || _status == _LockStatus.routing)
-                    const CircularProgressIndicator()
-                  else
-                    const SizedBox(height: 4),
-                  if (canShowActions) ...[
-                    const SizedBox(height: 16),
-                    _ActionColumn(
-                      children: [
-                        if (_pinAvailable)
-                          _LockGateActionCard(
-                            title: 'App PIN',
-                            description:
-                                'Enter the PIN you created for this app.',
-                            buttonLabel: 'Enter PIN',
-                            onPressed: _launchPinEntry,
-                          )
-                        else
-                          _LockGateActionCard(
-                            title: 'Create an app PIN',
-                            description:
-                                'Create a PIN to unlock the app on this device.',
-                            buttonLabel: 'Create PIN',
-                            onPressed: _launchPinSetup,
-                          ),
-                      ],
-                    ),
-                  ],
-                  if (_errorMessage != null) ...[
-                    const SizedBox(height: 24),
-                    Text(
-                      _errorMessage!,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Column wrapper so the action cards stay spaced consistently regardless of
-/// how many auth options the device exposes.
-class _ActionColumn extends StatelessWidget {
-  const _ActionColumn({required this.children});
-
-  final List<Widget> children;
-
-  /// Builds the stack of action cards, padding each item to keep buttons legible.
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final child in children)
-          Padding(padding: const EdgeInsets.only(bottom: 16), child: child),
-      ],
-    );
-  }
-}
-
-/// Shared card used for the LockGate action buttons. Keeps
-/// layout consistent and makes the logic above easier to read.
-class _LockGateActionCard extends StatelessWidget {
-  const _LockGateActionCard({
-    required this.title,
-    required this.description,
-    required this.buttonLabel,
-    this.onPressed,
-  });
-
-  final String title;
-  final String description;
-  final String buttonLabel;
-  final VoidCallback? onPressed;
-
-  /// Builds the CTA card with iconography and button behavior provided above.
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
+      backgroundColor: Colors.white,
+      body: Center(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Text(description, style: Theme.of(context).textTheme.bodyMedium),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: onPressed,
-                child: Text(buttonLabel),
+            if (_status == _LockStatus.initializing ||
+                _status == _LockStatus.routing)
+              const CircularProgressIndicator(),
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  _errorMessage!,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: _bootstrap,
+                child: const Text('Retry'),
+              ),
+            ],
           ],
         ),
       ),
@@ -442,6 +265,7 @@ class MyApp extends StatelessWidget {
       ),
       home: const LockGate(), // Set the home to our LockGate
       routes: {
+        '/login': (_) => const LoginScreen(),
         '/onboarding': (_) => const OnboardingScreen(),
         // TODO: BankConnectScreen kept for dev/debug only (manual token entry)
         '/bankconnect': (_) => const BankConnectScreen(),

@@ -1,26 +1,8 @@
-/// ---------------------------------------------------------------------------
-/// File: lib/screens/enter_pin_screen.dart
-/// Author: Luke Fraser-Brown
-///
-/// Called by:
-///   - LockGate when the user chooses the app PIN fallback.
-///
-/// Purpose:
-///   - Collects the stored app PIN, validates it locally, and returns `true`
-///     when the PIN matches.
-///
-/// Inputs:
-///   - `PinStore` instance injected from the caller.
-///
-/// Outputs:
-///   - `Navigator.pop(true)` on success, otherwise shows inline errors.
-/// ---------------------------------------------------------------------------
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../services/pin_store.dart';
+import 'package:bfm_app/services/pin_store.dart';
 
-/// PIN entry modal for unlocking the app without biometrics.
 class EnterPinScreen extends StatefulWidget {
   const EnterPinScreen({super.key, required this.pinStore});
 
@@ -30,116 +12,272 @@ class EnterPinScreen extends StatefulWidget {
   State<EnterPinScreen> createState() => _EnterPinScreenState();
 }
 
-/// Manages the PIN form, validation, and verification state.
-class _EnterPinScreenState extends State<EnterPinScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final TextEditingController _pinController = TextEditingController();
+class _EnterPinScreenState extends State<EnterPinScreen>
+    with SingleTickerProviderStateMixin {
+  static const int _pinLength = 4;
 
+  String _pin = '';
   bool _verifying = false;
   String? _error;
 
-  /// Cleans up the text controller.
+  late final AnimationController _shakeController;
+  late final Animation<double> _shakeAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _shakeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+    _shakeAnimation = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 0, end: 12), weight: 1),
+      TweenSequenceItem(tween: Tween(begin: 12, end: -12), weight: 2),
+      TweenSequenceItem(tween: Tween(begin: -12, end: 8), weight: 2),
+      TweenSequenceItem(tween: Tween(begin: 8, end: -8), weight: 2),
+      TweenSequenceItem(tween: Tween(begin: -8, end: 0), weight: 1),
+    ]).animate(CurvedAnimation(
+      parent: _shakeController,
+      curve: Curves.easeInOut,
+    ));
+  }
+
   @override
   void dispose() {
-    _pinController.dispose();
+    _shakeController.dispose();
     super.dispose();
   }
 
-  /// Validates the form, calls the PinStore, and closes the sheet on success.
-  Future<void> _verifyPin() async {
-    final form = _formKey.currentState;
-    if (form == null || !form.validate()) {
-      return;
-    }
-
+  void _onDigit(int digit) {
+    if (_verifying || _pin.length >= _pinLength) return;
+    HapticFeedback.lightImpact();
     setState(() {
-      _verifying = true;
+      _pin += digit.toString();
       _error = null;
     });
+    if (_pin.length == _pinLength) {
+      _verifyPin();
+    }
+  }
 
-    final result = await widget.pinStore.verifyPin(_pinController.text);
+  void _onBackspace() {
+    if (_verifying || _pin.isEmpty) return;
+    HapticFeedback.lightImpact();
+    setState(() {
+      _pin = _pin.substring(0, _pin.length - 1);
+      _error = null;
+    });
+  }
+
+  Future<void> _verifyPin() async {
+    setState(() => _verifying = true);
+
+    final ok = await widget.pinStore.verifyPin(_pin);
     if (!mounted) return;
 
-    if (result) {
+    if (ok) {
+      HapticFeedback.mediumImpact();
       Navigator.of(context).pop(true);
     } else {
+      HapticFeedback.heavyImpact();
+      _shakeController.forward(from: 0);
       setState(() {
-        _error = 'Incorrect PIN. Try again.';
+        _error = 'Wrong PIN. Try again.';
+        _pin = '';
         _verifying = false;
       });
     }
   }
 
-  /// Ensures the PIN length is between 4 and 8 digits inclusive.
-  String? _validatePin(String? value) {
-    final pin = value ?? '';
-    if (pin.length < 4 || pin.length > 8) {
-      return 'Enter 4-8 digits';
-    }
-    return null;
-  }
-
-  /// Renders the PIN input field, inline errors, and submission button.
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final primary = Theme.of(context).primaryColor;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Enter App PIN')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Unlock using your app PIN.',
-                style: theme.textTheme.bodyLarge,
-              ),
-              const SizedBox(height: 24),
-              TextFormField(
-                controller: _pinController,
-                decoration: const InputDecoration(
-                  labelText: 'PIN',
-                  hintText: 'Enter PIN',
-                ),
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                textInputAction: TextInputAction.done,
-                onFieldSubmitted: (_) {
-                  if (!_verifying) {
-                    _verifyPin();
-                  }
-                },
-                obscureText: true,
-                maxLength: 8,
-                validator: _validatePin,
-              ),
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Text(
-                    _error!,
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(color: theme.colorScheme.error),
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Column(
+          children: [
+            const Spacer(flex: 2),
+            Icon(Icons.lock_rounded, size: 48, color: primary),
+            const SizedBox(height: 20),
+            Text(
+              'Enter your PIN',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
                   ),
-                ),
-              const Spacer(),
-              ElevatedButton(
-                onPressed: _verifying ? null : _verifyPin,
-                child: _verifying
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Unlock'),
+            ),
+            const SizedBox(height: 32),
+            AnimatedBuilder(
+              animation: _shakeAnimation,
+              builder: (context, child) => Transform.translate(
+                offset: Offset(_shakeAnimation.value, 0),
+                child: child,
               ),
-            ],
-          ),
+              child: _PinDots(
+                filled: _pin.length,
+                total: _pinLength,
+                hasError: _error != null,
+                accentColor: primary,
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              height: 20,
+              child: _error != null
+                  ? Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 14,
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            const Spacer(flex: 1),
+            _NumberPad(
+              onDigit: _onDigit,
+              onBackspace: _onBackspace,
+              enabled: !_verifying,
+            ),
+            const SizedBox(height: 48),
+          ],
         ),
       ),
     );
   }
 }
 
+// ── Shared widgets ──────────────────────────────────────────────────────────
+
+class _PinDots extends StatelessWidget {
+  const _PinDots({
+    required this.filled,
+    required this.total,
+    this.hasError = false,
+    required this.accentColor,
+  });
+
+  final int filled;
+  final int total;
+  final bool hasError;
+  final Color accentColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final activeColor = hasError ? Theme.of(context).colorScheme.error : accentColor;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(total, (i) {
+        final isFilled = i < filled;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          margin: const EdgeInsets.symmetric(horizontal: 10),
+          width: isFilled ? 18 : 16,
+          height: isFilled ? 18 : 16,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: isFilled ? activeColor : Colors.transparent,
+            border: Border.all(
+              color: isFilled ? activeColor : Colors.grey.shade400,
+              width: 2,
+            ),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class _NumberPad extends StatelessWidget {
+  const _NumberPad({
+    required this.onDigit,
+    required this.onBackspace,
+    this.enabled = true,
+  });
+
+  final ValueChanged<int> onDigit;
+  final VoidCallback onBackspace;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 40),
+      child: Column(
+        children: [
+          for (final row in [
+            [1, 2, 3],
+            [4, 5, 6],
+            [7, 8, 9],
+          ])
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: row
+                    .map((d) => _PadButton(
+                          label: '$d',
+                          onTap: enabled ? () => onDigit(d) : null,
+                        ))
+                    .toList(),
+              ),
+            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              const SizedBox(width: 72, height: 72),
+              _PadButton(
+                label: '0',
+                onTap: enabled ? () => onDigit(0) : null,
+              ),
+              _PadButton(
+                icon: Icons.backspace_outlined,
+                onTap: enabled ? onBackspace : null,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PadButton extends StatelessWidget {
+  const _PadButton({this.label, this.icon, this.onTap});
+
+  final String? label;
+  final IconData? icon;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 72,
+      height: 72,
+      child: Material(
+        color: Colors.grey.shade100,
+        shape: const CircleBorder(),
+        clipBehavior: Clip.hardEdge,
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: Center(
+            child: label != null
+                ? Text(
+                    label!,
+                    style: const TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black87,
+                    ),
+                  )
+                : Icon(icon, size: 24, color: Colors.black54),
+          ),
+        ),
+      ),
+    );
+  }
+}

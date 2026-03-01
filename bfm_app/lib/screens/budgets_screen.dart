@@ -120,6 +120,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       BudgetSeenStore.getSeenCategoryAmounts(),
       BudgetSeenStore.getSeenUncatKeys(),
       BudgetSeenStore.getSeenUncatAmounts(),
+      BudgetSeenStore.isInitialized(),
     ]);
     
     _seenSubscriptionIds = seenResults[0] as Set<int>;
@@ -128,6 +129,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     _seenCategoryAmounts = seenResults[3] as Map<int, double>;
     _seenUncatKeys = seenResults[4] as Set<String>;
     _seenUncatAmounts = seenResults[5] as Map<String, double>;
+    final isFirstRun = !(seenResults[6] as bool);
 
     final results = await Future.wait([
       DashboardService.getWeeklyIncome(),
@@ -303,6 +305,40 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       _uncatIsNew[key] = isTrulyNew;
       _uncatHasSuggestion[key] = hasSuggestion;
       _uncatShowAlert[key] = showAlert || isTrulyNew;
+    }
+
+    // On first run, suppress all alerts and seed the baseline so the user
+    // doesn't see an alert on every single item when first setting up.
+    if (isFirstRun) {
+      _recurringIsNew.updateAll((_, __) => false);
+      _recurringShowAlert.updateAll((_, __) => false);
+      _categoryIsNew.updateAll((_, __) => false);
+      _categoryShowAlert.updateAll((_, __) => false);
+      _uncatIsNew.updateAll((_, __) => false);
+      _uncatShowAlert.updateAll((_, __) => false);
+
+      final subAmounts = <int, double>{};
+      for (final sub in subscriptions) {
+        if (sub.recurringId != null) {
+          subAmounts[sub.recurringId!] = sub.weeklyAmount;
+        }
+      }
+      final catAmounts = <int, double>{};
+      for (final cat in categoryBudgets) {
+        if (cat.categoryId != null) {
+          catAmounts[cat.categoryId!] = cat.weeklyLimit;
+        }
+      }
+      final uncatAmounts = <String, double>{};
+      for (final uncat in uncategorizedBudgets) {
+        uncatAmounts[uncat.key] = uncat.weeklyAmount;
+      }
+      await Future.wait([
+        BudgetSeenStore.markAllSubscriptionsSeen(subAmounts),
+        BudgetSeenStore.markAllCategoriesSeen(catAmounts),
+        BudgetSeenStore.markAllUncatSeen(uncatAmounts),
+        BudgetSeenStore.markInitialized(),
+      ]);
     }
 
     if (!mounted) return;

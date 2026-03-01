@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:bfm_app/auth/credential_store.dart';
 import 'package:bfm_app/controllers/auth_controller.dart';
 import 'package:bfm_app/controllers/akahu_controller.dart';
 import 'package:bfm_app/providers/api_providers.dart';
@@ -27,7 +28,24 @@ class _DebugApiScreenState extends ConsumerState<DebugApiScreen> {
   final _firstNameCtrl = TextEditingController(text: 'Test');
   final _messageCtrl = TextEditingController();
   final _output = StringBuffer();
+  final _credentialStore = CredentialStore();
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedCredentials();
+  }
+
+  Future<void> _loadSavedCredentials() async {
+    final email = await _credentialStore.getEmail();
+    final password = await _credentialStore.getPassword();
+    if (!mounted) return;
+    setState(() {
+      if (email != null && email.isNotEmpty) _emailCtrl.text = email;
+      if (password != null && password.isNotEmpty) _passwordCtrl.text = password;
+    });
+  }
 
   @override
   void dispose() {
@@ -156,19 +174,29 @@ class _DebugApiScreenState extends ConsumerState<DebugApiScreen> {
             child: Row(
               children: [
                 _Btn('Register', () => _run('Register', () async {
+                  final email = _emailCtrl.text.trim();
+                  final password = _passwordCtrl.text.trim();
                   final ok = await ref.read(authControllerProvider.notifier).register(
-                    email: _emailCtrl.text.trim(),
-                    password: _passwordCtrl.text.trim(),
-                    passwordConfirmation: _passwordCtrl.text.trim(),
+                    email: email,
+                    password: password,
+                    passwordConfirmation: password,
                     firstName: _firstNameCtrl.text.trim(),
                   );
+                  if (ok) {
+                    await _credentialStore.save(email: email, password: password);
+                  }
                   _log('Register', ok ? 'Success' : ref.read(authControllerProvider).error ?? 'Failed');
                 })),
                 _Btn('Login', () => _run('Login', () async {
+                  final email = _emailCtrl.text.trim();
+                  final password = _passwordCtrl.text.trim();
                   final ok = await ref.read(authControllerProvider.notifier).login(
-                    email: _emailCtrl.text.trim(),
-                    password: _passwordCtrl.text.trim(),
+                    email: email,
+                    password: password,
                   );
+                  if (ok) {
+                    await _credentialStore.save(email: email, password: password);
+                  }
                   _log('Login', ok ? 'Success' : ref.read(authControllerProvider).error ?? 'Failed');
                 })),
                 _Btn('Raw Login', () => _run('Raw Login', () async {

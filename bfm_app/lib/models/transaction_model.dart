@@ -199,13 +199,20 @@ class TransactionModel {
       akahuHash: akahuHash,
       categoryName: catName,
       amount: amt,
-      description: (a['description'] ?? '') as String,
+      description: _stripCardSuffix((a['description'] ?? '') as String),
       date: isoDay,
       type: localType,
       balance: balance,
       merchantName: merchantName,
       excluded: false,
     );
+  }
+
+  /// Strips "Card number: ..." suffix that the backend sometimes appends.
+  static String _stripCardSuffix(String desc) {
+    final idx = desc.indexOf('Card number:');
+    if (idx < 0) return desc;
+    return desc.substring(0, idx).trim();
   }
 
   /// Safely extracts a non-empty String from a dynamic value.

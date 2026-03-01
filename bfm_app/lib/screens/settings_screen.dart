@@ -14,36 +14,49 @@
 ///   and routes to other screens as needed.
 /// ---------------------------------------------------------------------------
 
+import 'package:bfm_app/auth/credential_store.dart';
+import 'package:bfm_app/controllers/auth_controller.dart';
+import 'package:bfm_app/providers/api_providers.dart';
 import 'package:bfm_app/screens/onboarding_screen.dart';
 import 'package:bfm_app/services/api_key_store.dart';
 import 'package:bfm_app/services/bank_service.dart';
 import 'package:bfm_app/services/income_settings_store.dart';
+import 'package:bfm_app/services/onboarding_store.dart';
+import 'package:bfm_app/services/pin_store.dart';
 import 'package:bfm_app/services/weekly_overview_service.dart';
 import 'package:bfm_app/widgets/weekly_overview_sheet.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// Settings surface for keys, disconnect, and debug entry points.
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 /// Holds controller state for the settings form.
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _apiKeyCtrl = TextEditingController();
+  final _referralCodeCtrl = TextEditingController();
   String _apiKeyStatus = '';
   bool _openingWeeklyOverview = false;
   IncomeType _incomeType = IncomeType.regular;
   bool _incomeTypeLoaded = false;
 
-  /// Boots the API key load as soon as the screen mounts.
+  List<Map<String, dynamic>> _organisations = [];
+  bool _orgsLoading = false;
+  bool _joiningOrg = false;
+  String? _orgError;
+  String? _orgSuccess;
+
   @override
   void initState() {
     super.initState();
     _loadApiKey();
     _loadIncomeType();
+    _loadOrganisations();
   }
 
   Future<void> _loadIncomeType() async {
@@ -107,6 +120,109 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Organisation / Referral Code
+  // ---------------------------------------------------------------------------
+
+  Future<void> _loadOrganisations() async {
+    setState(() {
+      _orgsLoading = true;
+      _orgError = null;
+    });
+    try {
+      final profileApi = ref.read(profileApiProvider);
+      final orgs = await profileApi.organisations();
+      if (!mounted) return;
+      setState(() {
+        _organisations = orgs;
+        _orgsLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _orgsLoading = false;
+        _orgError = 'Could not load organisations.';
+      });
+    }
+  }
+
+  Future<void> _joinOrganisation() async {
+    final code = _referralCodeCtrl.text.trim();
+    if (code.isEmpty) {
+      setState(() => _orgError = 'Please enter a referral code.');
+      return;
+    }
+
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _joiningOrg = true;
+      _orgError = null;
+      _orgSuccess = null;
+    });
+
+    try {
+      final profileApi = ref.read(profileApiProvider);
+      await profileApi.joinOrganisation(code);
+      _referralCodeCtrl.clear();
+      if (!mounted) return;
+      setState(() {
+        _joiningOrg = false;
+        _orgSuccess = 'Joined successfully!';
+      });
+      _loadOrganisations();
+    } catch (e) {
+      if (!mounted) return;
+      String msg = 'Failed to join. Check the code and try again.';
+      if (e.toString().contains('422')) {
+        msg = 'Invalid or expired referral code.';
+      } else if (e.toString().contains('409') || e.toString().contains('already')) {
+        msg = 'You are already a member of this organisation.';
+      }
+      setState(() {
+        _joiningOrg = false;
+        _orgError = msg;
+      });
+    }
+  }
+
+  Future<void> _leaveOrganisation(int orgId, String orgName) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Leave organisation?'),
+        content: Text('Remove yourself from "$orgName"? You can rejoin later with a new referral code.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Leave'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
+    setState(() {
+      _orgError = null;
+      _orgSuccess = null;
+    });
+
+    try {
+      final profileApi = ref.read(profileApiProvider);
+      await profileApi.leaveOrganisation(orgId);
+      if (!mounted) return;
+      setState(() => _orgSuccess = 'Left "$orgName".');
+      _loadOrganisations();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _orgError = 'Could not leave organisation.');
+    }
+  }
+
   /// Loads the stored API key, pre-fills the text field, and updates the inline
   /// status message.
   Future<void> _loadApiKey() async {
@@ -137,11 +253,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  /// Cleans up controllers.
   @override
   void dispose() {
     _apiKeyCtrl.dispose();
+    _referralCodeCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _confirmLogout(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Log out?'),
+        content: const Text(
+          'You will need to sign in again next time you open the app.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Log out'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
+    await ref.read(authControllerProvider.notifier).logout();
+    await CredentialStore().clear();
+    await OnboardingStore().reset();
+    await PinStore().clearPin();
+
+    if (!context.mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
   }
 
   Future<void> _replayOnboarding(BuildContext context) async {
@@ -294,6 +442,158 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 8),
 
+          // --- Organisation / Referral Code section ---
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Card(
+              elevation: 1,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Organisation',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Join an organisation with a referral code from your advisor or provider.',
+                      style: TextStyle(fontSize: 14, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 12),
+
+                    if (_orgsLoading)
+                      const Center(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      )
+                    else if (_organisations.isNotEmpty) ...[
+                      ..._organisations.map((org) {
+                        final name = org['name'] as String? ?? 'Organisation';
+                        final id = org['id'] as int? ?? 0;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(10),
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .primary
+                                  .withOpacity(0.06),
+                              border: Border.all(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .primary
+                                    .withOpacity(0.2),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.business_outlined,
+                                  size: 20,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    name,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.close, size: 18),
+                                  tooltip: 'Leave organisation',
+                                  onPressed: () => _leaveOrganisation(id, name),
+                                  visualDensity: VisualDensity.compact,
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                      const SizedBox(height: 4),
+                    ],
+
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _referralCodeCtrl,
+                            textCapitalization: TextCapitalization.characters,
+                            decoration: InputDecoration(
+                              hintText: 'e.g. YEQX9A',
+                              labelText: 'Referral code',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 12,
+                              ),
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton(
+                          onPressed: _joiningOrg ? null : _joinOrganisation,
+                          child: _joiningOrg
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text('Join'),
+                        ),
+                      ],
+                    ),
+
+                    if (_orgError != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _orgError!,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.red.shade700,
+                        ),
+                      ),
+                    ],
+                    if (_orgSuccess != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _orgSuccess!,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.green.shade700,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+
           ListTile(
             leading: const Icon(Icons.auto_stories_outlined),
             title: const Text('Replay onboarding tour'),
@@ -384,6 +684,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SnackBar(content: Text('Akahu revoke requires backend auth. Use Debug API screen.')),
               );
             },
+          ),
+
+          const Divider(height: 32),
+
+          ListTile(
+            leading: const Icon(Icons.logout, color: Colors.red),
+            title: const Text('Log out'),
+            subtitle: const Text('Sign out of your account on this device'),
+            onTap: () => _confirmLogout(context),
           ),
 
           const SizedBox(height: 16),

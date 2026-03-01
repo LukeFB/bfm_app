@@ -10,6 +10,7 @@ import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
+import 'package:bfm_app/models/transaction_model.dart';
 
 /// Comparison data for a budget item's spend this week vs weekly average.
 class BudgetSpendComparison {
@@ -44,6 +45,45 @@ class BudgetSpendComparison {
   
   /// True if average spending is roughly in line with budget
   bool get isAvgOnTrack => avgVsBudgetPercent.abs() <= 15;
+}
+
+/// A single transaction within a budget group.
+class BudgetTransactionItem {
+  final String description;
+  final double amount;
+  final String date;
+
+  const BudgetTransactionItem({
+    required this.description,
+    required this.amount,
+    required this.date,
+  });
+}
+
+/// Budget group with this week's transactions, spending, and historical average.
+class BudgetWeeklyBreakdown {
+  final String label;
+  final double budgetLimit;
+  final double thisWeekSpend;
+  final double weeklyAvgSpend;
+  final List<BudgetTransactionItem> transactions;
+  final bool isBudgeted;
+
+  const BudgetWeeklyBreakdown({
+    required this.label,
+    required this.budgetLimit,
+    required this.thisWeekSpend,
+    required this.weeklyAvgSpend,
+    required this.transactions,
+    required this.isBudgeted,
+  });
+
+  double get avgVsBudgetPercent => budgetLimit > 0
+      ? ((weeklyAvgSpend - budgetLimit) / budgetLimit * 100)
+      : (weeklyAvgSpend > 0 ? 100.0 : 0.0);
+
+  bool get isAvgOverBudget => avgVsBudgetPercent > 15;
+  bool get isAvgUnderBudget => avgVsBudgetPercent < -15;
 }
 
 /// Service for comparing budget spend against historical averages.
@@ -189,7 +229,208 @@ class BudgetComparisonService {
     comparisons.sort((a, b) => b.difference.abs().compareTo(a.difference.abs()));
     return comparisons;
   }
-  
+
+  /// Returns weekly transaction breakdown grouped by budget, with spending
+  /// totals, individual transactions, and 4-week average per group.
+  static Future<List<BudgetWeeklyBreakdown>> getWeeklyBreakdown({
+    DateTime? forWeekStart,
+  }) async {
+    final DateTime weekStart;
+    final DateTime weekEnd;
+
+    if (forWeekStart != null) {
+      weekStart = DateTime(forWeekStart.year, forWeekStart.month, forWeekStart.day);
+      weekEnd = weekStart.add(const Duration(days: 6));
+    } else {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      weekStart = today.subtract(Duration(days: today.weekday - 1));
+      weekEnd = today;
+    }
+
+    final monthStart = weekStart.subtract(const Duration(days: 28));
+    final monthEnd = weekStart.subtract(const Duration(days: 1));
+
+    final budgets = await BudgetRepository.getAll();
+    final allTxns = await TransactionRepository.getBetween(weekStart, weekEnd);
+    final expenses = allTxns.where((t) => t.isExpense && !t.excluded).toList();
+    if (expenses.isEmpty && budgets.isEmpty) return [];
+
+    // Resolve category names for budgets and transactions
+    final allCatIds = <int>{
+      ...budgets.where((b) => b.categoryId != null).map((b) => b.categoryId!),
+      ...expenses.where((t) => t.categoryId != null).map((t) => t.categoryId!),
+    };
+    final catNames = allCatIds.isEmpty
+        ? <int, String>{}
+        : await CategoryRepository.getNamesByIds(allCatIds);
+
+    final uncatCatIds = <int>{};
+    for (final e in catNames.entries) {
+      final l = e.value.toLowerCase();
+      if (l == 'uncategorized' || l == 'uncategorised') uncatCatIds.add(e.key);
+    }
+
+    // Historical weekly averages (4-week lookback)
+    final avgByCat = await TransactionRepository.sumExpensesByCategoryBetween(
+        monthStart, monthEnd);
+    final avgByKey = await TransactionRepository.sumExpensesByUncategorizedKeyBetween(
+        monthStart, monthEnd);
+
+    // Recurring transaction keys for description matching
+    final recIds = budgets
+        .map((b) => b.recurringTransactionId)
+        .whereType<int>()
+        .toSet();
+    final recKeyById = <int, String>{};
+    if (recIds.isNotEmpty) {
+      final recs = await RecurringRepository.getByIds(recIds);
+      for (final r in recs) {
+        if (r.id != null && r.description != null) {
+          recKeyById[r.id!] = _normalizeKey(r.description!);
+        }
+      }
+    }
+
+    // Display names for uncategorized keys
+    final allUncatKeys = <String>{...avgByKey.keys};
+    for (final t in expenses) {
+      if (t.categoryId == null || uncatCatIds.contains(t.categoryId)) {
+        allUncatKeys.add(_normalizeKey(t.description));
+      }
+    }
+    final uncatNames = allUncatKeys.isEmpty
+        ? <String, String>{}
+        : await TransactionRepository.getDisplayNamesForUncategorizedKeys(
+            allUncatKeys, monthStart, weekEnd);
+
+    // Budget group slots
+    final labels = <String>[];
+    final limitsList = <double>[];
+    final avgsList = <double>[];
+    final txnLists = <List<BudgetTransactionItem>>[];
+    final spendsList = <double>[];
+    final catToIdx = <int, int>{};
+    final keyToIdx = <String, int>{};
+    final seenCats = <int>{};
+    final seenKeys = <String>{};
+    final seenRecs = <int>{};
+
+    for (final b in budgets) {
+      bool isUncatCat = false;
+      if (b.categoryId != null) {
+        final n = catNames[b.categoryId!]?.toLowerCase() ?? '';
+        isUncatCat = n == 'uncategorized' || n == 'uncategorised';
+      }
+
+      if (b.categoryId != null && !isUncatCat) {
+        final cid = b.categoryId!;
+        if (seenCats.contains(cid)) continue;
+        seenCats.add(cid);
+        final idx = labels.length;
+        labels.add(catNames[cid] ?? 'Category');
+        limitsList.add(b.weeklyLimit);
+        avgsList.add((avgByCat[cid]?.abs() ?? 0) / 4);
+        txnLists.add([]);
+        spendsList.add(0);
+        catToIdx[cid] = idx;
+      } else if (b.recurringTransactionId != null) {
+        final rid = b.recurringTransactionId!;
+        if (seenRecs.contains(rid)) continue;
+        seenRecs.add(rid);
+        final k = recKeyById[rid];
+        if (k == null || k.isEmpty || seenKeys.contains(k)) continue;
+        seenKeys.add(k);
+        final idx = labels.length;
+        labels.add(_getBudgetLabel(b, uncatNames, k));
+        limitsList.add(b.weeklyLimit);
+        avgsList.add((avgByKey[k]?.abs() ?? 0) / 4);
+        txnLists.add([]);
+        spendsList.add(0);
+        keyToIdx[k] = idx;
+      } else if (b.uncategorizedKey != null && b.uncategorizedKey!.isNotEmpty) {
+        final k = b.uncategorizedKey!;
+        if (seenKeys.contains(k)) continue;
+        seenKeys.add(k);
+        final idx = labels.length;
+        labels.add(_getBudgetLabel(b, uncatNames, k));
+        limitsList.add(b.weeklyLimit);
+        avgsList.add((avgByKey[k]?.abs() ?? 0) / 4);
+        txnLists.add([]);
+        spendsList.add(0);
+        keyToIdx[k] = idx;
+      }
+    }
+
+    // Assign each expense transaction to a budget group or "other"
+    final otherMap = <String, ({double spend, List<BudgetTransactionItem> txns})>{};
+
+    for (final t in expenses) {
+      final item = BudgetTransactionItem(
+        description: t.description,
+        amount: t.amount.abs(),
+        date: t.date,
+      );
+
+      int? idx;
+      if (t.categoryId != null && !uncatCatIds.contains(t.categoryId)) {
+        idx = catToIdx[t.categoryId!];
+      }
+      idx ??= keyToIdx[_normalizeKey(t.description)];
+
+      if (idx != null) {
+        txnLists[idx].add(item);
+        spendsList[idx] += item.amount;
+      } else {
+        final label = (t.categoryId != null && !uncatCatIds.contains(t.categoryId))
+            ? (catNames[t.categoryId!] ?? 'Other')
+            : 'Other';
+        final existing = otherMap[label];
+        if (existing != null) {
+          existing.txns.add(item);
+          otherMap[label] = (spend: existing.spend + item.amount, txns: existing.txns);
+        } else {
+          otherMap[label] = (spend: item.amount, txns: [item]);
+        }
+      }
+    }
+
+    // Build result
+    final result = <BudgetWeeklyBreakdown>[];
+    for (var i = 0; i < labels.length; i++) {
+      if (spendsList[i] == 0 && avgsList[i] == 0 && txnLists[i].isEmpty) continue;
+      result.add(BudgetWeeklyBreakdown(
+        label: labels[i],
+        budgetLimit: limitsList[i],
+        thisWeekSpend: spendsList[i],
+        weeklyAvgSpend: avgsList[i],
+        transactions: txnLists[i],
+        isBudgeted: true,
+      ));
+    }
+
+    for (final e in otherMap.entries) {
+      result.add(BudgetWeeklyBreakdown(
+        label: e.key,
+        budgetLimit: 0,
+        thisWeekSpend: e.value.spend,
+        weeklyAvgSpend: 0,
+        transactions: e.value.txns,
+        isBudgeted: false,
+      ));
+    }
+
+    result.sort((a, b) {
+      if (a.isBudgeted != b.isBudgeted) return a.isBudgeted ? -1 : 1;
+      return b.thisWeekSpend.compareTo(a.thisWeekSpend);
+    });
+
+    return result;
+  }
+
+  static String _normalizeKey(String raw) =>
+      raw.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
+
   /// Gets the display label for a budget, preferring custom label over transaction name.
   static String _getBudgetLabel(
     dynamic budget,

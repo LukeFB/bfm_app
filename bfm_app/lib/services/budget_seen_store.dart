@@ -24,6 +24,20 @@ class BudgetSeenStore {
   static const _keySeenCategoryAmounts = 'budget_seen_category_amounts';
   static const _keySeenUncatKeys = 'budget_seen_uncat_keys';
   static const _keySeenUncatAmounts = 'budget_seen_uncat_amounts';
+  static const _keyInitialized = 'budget_seen_initialized';
+
+  /// Whether the seen store has been seeded with initial data.
+  /// False on first app setup, true after the first load seeds the baseline.
+  static Future<bool> isInitialized() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_keyInitialized) ?? false;
+  }
+
+  /// Marks the seen store as initialized (first-run baseline has been set).
+  static Future<void> markInitialized() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyInitialized, true);
+  }
 
   /// Loads the set of seen subscription (recurring) IDs.
   static Future<Set<int>> getSeenSubscriptionIds() async {
@@ -210,5 +224,6 @@ class BudgetSeenStore {
     await prefs.remove(_keySeenCategoryAmounts);
     await prefs.remove(_keySeenUncatKeys);
     await prefs.remove(_keySeenUncatAmounts);
+    await prefs.remove(_keyInitialized);
   }
 }

@@ -379,7 +379,7 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
                       showStats: false,
                     ),
                     const SizedBox(height: 16),
-                    BudgetComparisonCard(
+                    WeeklyBudgetBreakdownCard(
                       key: ValueKey(_payload.weekStart),
                       forWeekStart: _payload.weekStart,
                     ),
