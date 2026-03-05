@@ -15,7 +15,9 @@ import 'package:bfm_app/repositories/alert_repository.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
+import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/services/budget_analysis_service.dart';
+import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
 
 class SubscriptionsScreen extends StatefulWidget {
@@ -28,8 +30,10 @@ class SubscriptionsScreen extends StatefulWidget {
 }
 
 class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
+  bool _waitingForSync = false;
   bool _loading = true;
   bool _saving = false;
+  bool _syncFailed = false;
   List<_SubscriptionItem> _subscriptions = [];
   final Set<int> _selectedIds = {};
   final Map<int, TextEditingController> _amountCtrls = {};
@@ -40,7 +44,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
   @override
   void initState() {
     super.initState();
-    _load();
+    _ensureTransactionsAndLoad();
   }
 
   @override
@@ -51,9 +55,47 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  /// Ensures transactions exist in the local DB before analysing them.
+  /// If no transactions are found, waits for any running sync or starts one.
+  Future<void> _ensureTransactionsAndLoad() async {
+    setState(() {
+      _loading = true;
+      _waitingForSync = true;
+      _syncFailed = false;
+    });
 
+    // Check if we already have transactions locally
+    final existing = await TransactionRepository.getRecent(1);
+    final hasTransactions = existing.isNotEmpty;
+
+    if (!hasTransactions) {
+      // Wait for a running sync, or start a fresh one
+      if (TransactionSyncService.isSyncing) {
+        try {
+          await TransactionSyncService.waitForSync();
+        } catch (_) {}
+      } else {
+        try {
+          await TransactionSyncService().syncNow();
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+
+      // Check again after sync
+      final afterSync = await TransactionRepository.getRecent(1);
+      if (afterSync.isEmpty) {
+        setState(() => _syncFailed = true);
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _waitingForSync = false);
+
+    await _loadRecurring();
+  }
+
+  Future<void> _loadRecurring() async {
     // Identify recurring transactions
     await BudgetAnalysisService.identifyRecurringTransactions();
 
@@ -257,7 +299,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
             widget.editMode ? 'Edit recurring payments' : 'Recurring payments'),
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? _buildLoadingState()
           : Column(
               children: [
                 Expanded(
@@ -279,6 +321,72 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
                 if (_saving) const LinearProgressIndicator(minHeight: 2),
               ],
             ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return Column(
+      children: [
+        const LinearProgressIndicator(minHeight: 3),
+        Expanded(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF6934).withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.sync,
+                      size: 36,
+                      color: Color(0xFFFF6934),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    _waitingForSync
+                        ? 'Pulling your transactions…'
+                        : 'Analysing your spending…',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _waitingForSync
+                        ? 'Hang tight — we\'re fetching your bank data so Moni can find your recurring payments.'
+                        : 'Identifying recurring payments from your transactions.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Colors.black54,
+                          height: 1.5,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_waitingForSync)
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: TextButton(
+                onPressed: () {
+                  Navigator.pushReplacementNamed(context, '/dashboard');
+                },
+                child: const Text('Skip to dashboard'),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -341,26 +449,40 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
                 shape: BoxShape.circle,
               ),
               child: Icon(
-                Icons.autorenew,
+                _syncFailed ? Icons.cloud_off : Icons.autorenew,
                 size: 36,
                 color: Colors.grey.shade400,
               ),
             ),
             const SizedBox(height: 24),
             Text(
-              'No recurring payments found',
+              _syncFailed
+                  ? 'Couldn\'t pull transactions'
+                  : 'No recurring payments found',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
             ),
             const SizedBox(height: 8),
             Text(
-              "We didn't detect any recurring payments yet. You can add them later as more transactions come in.",
+              _syncFailed
+                  ? 'We had trouble fetching your bank data. You can continue to the dashboard and try again later.'
+                  : "We didn't detect any recurring payments yet. You can add them later as more transactions come in.",
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: Colors.black54,
                   ),
             ),
+            if (_syncFailed) ...[
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                icon: const Icon(Icons.arrow_forward, size: 18),
+                label: const Text('Go to dashboard'),
+                onPressed: () {
+                  Navigator.pushReplacementNamed(context, '/dashboard');
+                },
+              ),
+            ],
           ],
         ),
       ),

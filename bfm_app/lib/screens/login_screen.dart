@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:bfm_app/auth/credential_store.dart';
+import 'package:bfm_app/controllers/akahu_controller.dart';
 import 'package:bfm_app/controllers/auth_controller.dart';
+import 'package:bfm_app/screens/onboarding_screen.dart';
 
 /// Lightweight sign-in screen shown when a returning user's session has
 /// expired. Auto-fills saved credentials so the user can tap once to log in.
@@ -74,7 +76,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (ok) {
       await _credentialStore.save(email: email, password: password);
       if (!mounted) return;
-      Navigator.pushNamedAndRemoveUntil(context, '/dashboard', (_) => false);
+      await _routeBasedOnBankStatus();
     } else {
       final authError = ref.read(authControllerProvider).error;
       setState(() {
@@ -82,6 +84,33 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         _error = _friendlyError(authError ?? 'Login failed');
       });
     }
+  }
+
+  /// After successful login, verify bank connection and route to the
+  /// appropriate onboarding page. Connected users start at the post-bank-
+  /// connect pages; unconnected users start at bank connect. Navigates
+  /// immediately — sync runs in the background.
+  Future<void> _routeBasedOnBankStatus() async {
+    final connected = await ref
+        .read(akahuControllerProvider.notifier)
+        .verifyConnected();
+
+    if (!mounted) return;
+
+    final startPage = connected
+        ? OnboardingScreen.postBankConnectPage
+        : OnboardingScreen.bankConnectPage;
+
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        builder: (_) => OnboardingScreen(
+          startPage: startPage,
+          onCompleteRoute: '/dashboard',
+        ),
+      ),
+      (_) => false,
+    );
   }
 
   String _friendlyError(String raw) {

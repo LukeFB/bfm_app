@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------------
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:bubble/bubble.dart';
 import 'package:flutter/material.dart';
@@ -36,6 +37,7 @@ import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/referral_repository.dart';
 import 'package:bfm_app/services/ai_client.dart';
 import 'package:bfm_app/services/api_key_store.dart';
+import 'package:bfm_app/services/dev_config.dart';
 import 'package:bfm_app/services/chat_action_extractor.dart';
 import 'package:bfm_app/services/alert_notification_service.dart';
 import 'package:bfm_app/services/chat_constants.dart';
@@ -78,7 +80,7 @@ class ChatScreen extends StatefulWidget {
 /// - **local**: Direct OpenAI calls via [AiClient] (existing, needs API key).
 /// - **backend**: Proxied via Moni backend [MessagesApi] (needs backend auth).
 class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
-  ChatMode _chatMode = ChatMode.local;
+  ChatMode _chatMode = kDevMode ? ChatMode.local : ChatMode.backend;
   // Replaced _Message with ChatMessage to integrate with storage + AI.
   final List<ChatMessage> _messages = [];
   final List<ChatMessage> _allMessages = [];
@@ -242,15 +244,53 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
 
     final response = await api.sendMessage(text, userContext: userContext);
-    final content = response['message'] ??
-        response['content'] ??
-        response['response'] ??
-        response['data'] ??
-        response['raw'] ??
-        '';
-    return content.toString().trim().isNotEmpty
-        ? content.toString().trim()
+    final extracted = _extractBackendMessage(response);
+    return extracted.isNotEmpty
+        ? extracted
         : 'Kia ora - I am here. How can I help today?';
+  }
+
+  /// Pulls the assistant text out of a backend JSON response, handling nested
+  /// maps and JSON-encoded strings.
+  String _extractBackendMessage(Map<String, dynamic> response) {
+    const keys = ['message', 'content', 'response', 'data', 'raw'];
+    for (final key in keys) {
+      if (!response.containsKey(key)) continue;
+      final value = response[key];
+      final text = _resolveTextValue(value);
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
+  /// Recursively resolves a value to a plain-text string.
+  String _resolveTextValue(dynamic value) {
+    if (value == null) return '';
+    if (value is String) {
+      // If the string looks like JSON, try to decode and extract 'message'.
+      if (value.trimLeft().startsWith('{')) {
+        try {
+          final parsed = jsonDecode(value);
+          if (parsed is Map<String, dynamic>) {
+            return _extractBackendMessage(parsed);
+          }
+        } catch (_) {}
+      }
+      return value.trim();
+    }
+    if (value is Map) {
+      const nested = ['message', 'content', 'text', 'response', 'data'];
+      for (final k in nested) {
+        if (value.containsKey(k)) {
+          final inner = _resolveTextValue(value[k]);
+          if (inner.isNotEmpty) return inner;
+        }
+      }
+    }
+    if (value is List && value.isNotEmpty) {
+      return _resolveTextValue(value.first);
+    }
+    return '';
   }
 
   /// Pushes the user message, sends it through AiClient, handles retries, and
@@ -1146,38 +1186,40 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   icon: const Icon(Icons.delete_outline, size: 20),
                   onPressed: _sending ? null : _clearChat,
                 ),
-                GestureDetector(
-                  onTap: _sending
-                      ? null
-                      : () => setState(() {
-                            _chatMode = _chatMode == ChatMode.local
-                                ? ChatMode.backend
-                                : ChatMode.local;
-                          }),
-                  child: Chip(
-                    visualDensity: VisualDensity.compact,
-                    label: Text(
-                      _chatMode == ChatMode.local ? 'Local' : 'Backend',
-                      style: const TextStyle(fontSize: 10),
-                    ),
-                    avatar: Icon(
-                      _chatMode == ChatMode.local ? Icons.computer : Icons.cloud,
-                      size: 14,
+                if (kDevMode)
+                  GestureDetector(
+                    onTap: _sending
+                        ? null
+                        : () => setState(() {
+                              _chatMode = _chatMode == ChatMode.local
+                                  ? ChatMode.backend
+                                  : ChatMode.local;
+                            }),
+                    child: Chip(
+                      visualDensity: VisualDensity.compact,
+                      label: Text(
+                        _chatMode == ChatMode.local ? 'Local' : 'Backend',
+                        style: const TextStyle(fontSize: 10),
+                      ),
+                      avatar: Icon(
+                        _chatMode == ChatMode.local ? Icons.computer : Icons.cloud,
+                        size: 14,
+                      ),
                     ),
                   ),
-                ),
                 Expanded(
                   child: AnimatedBuilder(
                     animation: _hintFadeAnimation,
                     builder: (context, child) {
-                      final hintText = _hasApiKey
+                      final canSend = _chatMode == ChatMode.backend || _hasApiKey;
+                      final hintText = canSend
                           ? _exampleQuestions[_hintIndex].replaceAll('"', '')
                           : "Type a message... (Add API key in Settings)";
                       return TextField(
                         controller: _controller,
                         // allow Enter to send. TODO: not working
                         onSubmitted: (_) {
-                          if (_hasApiKey && !_sending) _sendMessage();
+                          if (canSend && !_sending) _sendMessage();
                         },
                         decoration: InputDecoration(
                           hintText: hintText,
@@ -1200,7 +1242,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.send),
-                  onPressed: (_hasApiKey && !_sending) ? _sendMessage : null,
+                  onPressed: ((_chatMode == ChatMode.backend || _hasApiKey) && !_sending)
+                      ? _sendMessage
+                      : null,
                 ),
               ],
             ),

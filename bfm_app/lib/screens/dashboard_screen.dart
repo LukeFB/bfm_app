@@ -102,26 +102,53 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     _refresh();
   }
 
-  /// Syncs transactions/content when stale and composes the `DashData` bundle.
+  /// Loads local DB data immediately and kicks off a background sync.
+  /// The UI renders whatever is in the local DB right away; when the sync
+  /// finishes, `_syncInBackground` triggers a rebuild with fresh data.
   Future<DashData> _load() async {
-    await TransactionSyncService().syncIfStale();
+    _syncInBackground();
+    final data = await _loadLocal();
+    _scheduleWeeklyOverviewCheck();
+    return data;
+  }
+
+  /// Runs transaction + content syncs in the background. When either completes,
+  /// refreshes the dashboard so the UI picks up new data without blocking.
+  Future<void> _syncInBackground() async {
+    var needsRefresh = false;
+    try {
+      final synced = await TransactionSyncService().syncIfStale();
+      if (synced) needsRefresh = true;
+    } catch (e) {
+      debugPrint('Transaction sync: $e');
+    }
     try {
       await ContentSyncService().syncDashboardContent();
-    } catch (err) {
-      debugPrint('Content sync skipped: $err');
+      needsRefresh = true;
+    } catch (e) {
+      debugPrint('Content sync: $e');
     }
+    if (needsRefresh && mounted) {
+      setState(() {
+        _future = _loadLocal();
+      });
+    }
+  }
+
+  /// Loads dashboard data from local DB only (no network).
+  Future<DashData> _loadLocal() async {
     final results = await Future.wait([
-      DashboardService.getWeeklyIncome(), // Weekly income
-      DashboardService.getTotalBudgeted(), // Sum of non-goal budgets
-      DashboardService.getSpentOnBudgets(), // Spent on budgeted categories (excludes goals)
-      DashboardService.getTotalExpensesThisWeek(), // Total expenses this week
-      GoalRepository.getSavingsGoals(), // Only savings goals for dashboard (excludes recovery)
+      DashboardService.getWeeklyIncome(),
+      DashboardService.getTotalBudgeted(),
+      DashboardService.getSpentOnBudgets(),
+      DashboardService.getTotalExpensesThisWeek(),
+      GoalRepository.getSavingsGoals(),
       DashboardService.getAlerts(),
       TransactionRepository.getRecent(5),
       DashboardService.getFeaturedTip(),
       DashboardService.getUpcomingEvents(limit: 3),
       BudgetStreakService.calculateStreak(),
-      DashboardService.getGoalBudgetTotal(), // Goal weekly contributions (separate from budgets)
+      DashboardService.getGoalBudgetTotal(),
     ]);
 
     final weeklyIncome = results[0] as double;
@@ -136,15 +163,13 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     final budgetStreak = results[9] as BudgetStreakData;
     final goalBudgetTotal = results[10] as double;
 
-    // Calculate left to spend: income - budgeted - goalContributions - budget overspend - non budget spend
-    // Goals are subtracted separately so they don't affect budget overspend calculation
     final budgetOverspend = (spentOnBudgets - totalBudgeted).clamp(0.0, double.infinity);
     final nonBudgetSpend = (totalExpenses - spentOnBudgets).clamp(0.0, double.infinity);
     final leftToSpend = weeklyIncome - totalBudgeted - goalBudgetTotal - budgetOverspend - nonBudgetSpend;
 
-    final data = DashData(
+    return DashData(
       leftToSpendThisWeek: leftToSpend,
-      totalWeeklyBudget: weeklyIncome - totalBudgeted - goalBudgetTotal, // Discretionary budget (income - budgets - goals)
+      totalWeeklyBudget: weeklyIncome - totalBudgeted - goalBudgetTotal,
       primaryGoal: allGoals.isNotEmpty ? allGoals.first : null,
       allGoals: allGoals,
       alerts: alerts,
@@ -153,12 +178,10 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       events: events,
       budgetStreak: budgetStreak,
       weeklyIncome: weeklyIncome,
-      totalBudgeted: totalBudgeted + goalBudgetTotal, // Include goals in total budgeted for display
+      totalBudgeted: totalBudgeted + goalBudgetTotal,
       spentOnBudgets: spentOnBudgets,
       discretionarySpent: nonBudgetSpend,
     );
-    _scheduleWeeklyOverviewCheck();
-    return data;
   }
 
   /// Triggers a rebuild by swapping the Future (uses stale check).
@@ -174,7 +197,7 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     await TransactionSyncService().syncNow(forceRefresh: true);
     if (!mounted) return;
     setState(() {
-      _future = _load();
+      _future = _loadLocal();
     });
   }
 

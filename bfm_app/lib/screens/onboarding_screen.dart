@@ -22,6 +22,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'package:bfm_app/api/api_client.dart';
 import 'package:bfm_app/auth/credential_store.dart';
+import 'package:bfm_app/controllers/akahu_controller.dart';
 import 'package:bfm_app/models/onboarding_response.dart';
 import 'package:bfm_app/providers/api_providers.dart';
 import 'package:bfm_app/repositories/account_repository.dart';
@@ -36,6 +37,10 @@ import 'package:bfm_app/services/transaction_sync_service.dart';
 enum _AkahuConnectMode { webflow, manualTokens }
 
 class OnboardingScreen extends StatefulWidget {
+  /// Page indices exposed for external navigation (e.g. LoginScreen).
+  static const int bankConnectPage = 4;
+  static const int postBankConnectPage = 5;
+
   final String onCompleteRoute;
 
   /// When true, skips registration + Akahu connect and starts at the data
@@ -43,10 +48,15 @@ class OnboardingScreen extends StatefulWidget {
   /// transactions before showing those pages.
   final bool replayMode;
 
+  /// When non-null, jumps to this page on init. Used by LoginScreen to skip
+  /// registration/profile pages for returning users.
+  final int? startPage;
+
   const OnboardingScreen({
     super.key,
     this.onCompleteRoute = '/subscriptions',
     this.replayMode = false,
+    this.startPage,
   });
 
   @override
@@ -148,6 +158,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   ];
 
   bool _replaySyncing = false;
+  
 
   @override
   void initState() {
@@ -167,6 +178,15 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       _backendAuthed = true;
       _bankConnected = true;
       _replaySyncTransactions();
+    } else if (widget.startPage != null) {
+      _backendAuthed = true;
+      if (widget.startPage! > _akahuConnectIndex) {
+        _bankConnected = true;
+        _startBackgroundSync();
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _pageController.jumpToPage(widget.startPage!);
+      });
     }
   }
 
@@ -181,6 +201,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     }
     if (!mounted) return;
     setState(() => _replaySyncing = false);
+  }
+
+  /// Kicks off a background sync. The subscriptions screen will wait for it
+  /// via TransactionSyncService.waitForSync().
+  void _startBackgroundSync() {
+    TransactionSyncService().syncNow().catchError((e) {
+      debugPrint('Background sync error: $e');
+    });
   }
 
   Future<void> _hydrateBankStatus() async {
@@ -240,7 +268,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             Expanded(
               child: PageView(
                 controller: _pageController,
-                physics: const NeverScrollableScrollPhysics(),
+                physics: const ClampingScrollPhysics(),
                 onPageChanged: (index) {
                   setState(() {
                     _currentPage = index;
@@ -493,8 +521,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     }
   }
 
-  /// Login flow: authenticate → check Akahu connection → sync data →
-  /// jump to the appropriate page.
+  /// Login flow: authenticate → verify Akahu connection → navigate immediately.
+  /// Sync runs in the background while the user reads the explain pages.
   Future<void> _handleLogin() async {
     final email = _emailCtrl.text.trim();
     final password = _authPasswordCtrl.text.trim();
@@ -512,9 +540,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       final container = ProviderScope.containerOf(context);
       final authApi = container.read(authApiProvider);
       final tokenStore = container.read(tokenStoreProvider);
-      final akahuApi = container.read(akahuApiProvider);
 
-      // Clear any stale JWT so the login request goes out clean
       await tokenStore.clear();
 
       final token = await authApi.login(email: email, password: password);
@@ -527,55 +553,22 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         _backendAuthLoading = false;
       });
 
-      // Check if Akahu is already connected
-      List<Map<String, dynamic>> accounts = [];
-      try {
-        accounts = await akahuApi.accounts();
-      } catch (_) {}
+      final akahuCtrl = container.read(akahuControllerProvider.notifier);
+      final connected = await akahuCtrl.verifyConnected();
 
       if (!mounted) return;
 
-      if (accounts.isNotEmpty) {
-        setState(() {
-          _bankConnected = true;
-          _backendAuthLoading = true;
-        });
+      if (connected) {
+        setState(() => _bankConnected = true);
 
-        // Mark connected BEFORE any DB writes
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('bank_connected', true);
         await prefs.remove('last_sync_at');
 
-        // Store accounts directly (same as webflow verify & manual token paths)
-        await AccountRepository.upsertFromAkahu(accounts);
-
-        // Pull transactions using the same provider client the debug screen uses
-        List<Map<String, dynamic>> txnPayloads = [];
-        try {
-          txnPayloads = await akahuApi.transactions();
-        } catch (e) {
-          debugPrint('Login txn fetch error: $e');
-        }
-
-        if (txnPayloads.isNotEmpty) {
-          // This calls TransactionModel.fromAkahu → _resolveCategoryId →
-          // CategoryRepository.ensureByName — exact same pipeline as manual tokens
-          await TransactionRepository.upsertFromAkahu(txnPayloads);
-        }
-
-        debugPrint('Login sync: ${accounts.length} accounts, '
-            '${txnPayloads.length} transactions upserted to local DB');
-
-        // Same post-processing as manual token flow
-        await IncomeSettingsStore.detectAndSetIncomeType();
-        await BudgetAnalysisService.identifyRecurringTransactions();
-
-        if (!mounted) return;
-        setState(() => _backendAuthLoading = false);
+        _startBackgroundSync();
 
         _pageController.jumpToPage(_recurringExplainIndex);
       } else {
-        // Not connected – jump to Akahu connect (skip profile pages)
         _pageController.jumpToPage(_akahuConnectIndex);
       }
     } catch (err) {
@@ -1569,19 +1562,31 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       final container = ProviderScope.containerOf(context);
       final akahuApi = container.read(akahuApiProvider);
 
-      // Poll for accounts - the backend may still be processing the callback
+      // Poll for accounts - the backend may still be processing the callback.
+      // Bail immediately on 429 (rate-limited) instead of making things worse.
       List<Map<String, dynamic>> accounts = [];
       const maxAttempts = 6;
       for (var attempt = 1; attempt <= maxAttempts; attempt++) {
         if (!mounted) return;
         try {
           accounts = await akahuApi.accounts();
+        } on DioException catch (e) {
+          if (e.error is RateLimitedException || e.response?.statusCode == 429) {
+            if (!mounted) return;
+            setState(() {
+              _verifyingConnection = false;
+              _bankConnectError =
+                  'The server is temporarily limiting requests. '
+                  'Please wait about 60 seconds and try again.';
+            });
+            return;
+          }
         } catch (_) {
-          // Swallow individual poll errors; we'll surface a final one below
+          // Swallow other individual poll errors
         }
         if (accounts.isNotEmpty) break;
         if (attempt < maxAttempts) {
-          await Future.delayed(const Duration(seconds: 3));
+          await Future.delayed(const Duration(seconds: 5));
         }
       }
 
@@ -1600,12 +1605,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       // Store accounts in local DB (same as manual-token flow)
       await AccountRepository.upsertFromAkahu(accounts);
 
-      // Pull transactions (may be empty initially - Akahu syncs asynchronously)
+      // Pull transactions (may be empty initially - Akahu syncs asynchronously).
+      // Skip gracefully on rate-limit; dashboard sync will pick them up later.
       List<Map<String, dynamic>> transactions = [];
       try {
         transactions = await akahuApi.transactions();
         if (transactions.isNotEmpty) {
           await TransactionRepository.upsertFromAkahu(transactions);
+        }
+      } on DioException catch (e) {
+        if (e.error is RateLimitedException || e.response?.statusCode == 429) {
+          // Rate limited fetching transactions – continue onboarding anyway,
+          // the dashboard sync will pick them up once the window resets.
         }
       } catch (_) {
         // Transactions may not be ready yet - dashboard sync will pick them up

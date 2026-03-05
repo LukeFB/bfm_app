@@ -64,7 +64,6 @@ class AkahuApi {
   }) async {
     final all = <Map<String, dynamic>>[];
     String? cursor;
-
     do {
       final params = <String, dynamic>{};
       if (start != null) params['start'] = start.toUtc().toIso8601String();
@@ -80,7 +79,6 @@ class AkahuApi {
       final data = response.data;
       all.addAll(_extractList(data));
 
-      // Cursor pagination: { cursor: { next: "..." } } or { cursor: "..." }
       cursor = _extractCursor(data);
     } while (cursor != null);
 

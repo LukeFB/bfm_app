@@ -14,11 +14,13 @@
 ///   Reads Akahu tokens from `SecureCredentialStore`, writes transactions via
 ///   `TransactionRepository`, and stores sync timestamps in SharedPreferences.
 /// ---------------------------------------------------------------------------
+import 'dart:async';
 import 'dart:developer';
 
 import 'package:bfm_app/api/akahu_api.dart';
 import 'package:bfm_app/api/api_client.dart';
 import 'package:bfm_app/auth/token_store.dart';
+import 'package:bfm_app/services/debug_log.dart';
 import 'package:bfm_app/repositories/account_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/services/akahu_service.dart';
@@ -39,6 +41,16 @@ class TransactionSyncService {
   static const Duration _defaultStaleThreshold = Duration(hours: 1);
   static const Duration _refreshCooldown = Duration(hours: 1);
 
+  static bool _syncing = false;
+  static Future<void>? _activeSyncFuture;
+
+  /// Whether a sync is currently in progress.
+  static bool get isSyncing => _syncing;
+
+  /// Returns a Future that completes when the most recent sync finishes.
+  /// Resolves immediately if no sync has been started.
+  static Future<void> waitForSync() => _activeSyncFuture ?? Future.value();
+
   TransactionSyncService({SecureCredentialStore? credentialStore})
       : _credentialStore = credentialStore ?? SecureCredentialStore();
 
@@ -47,7 +59,30 @@ class TransactionSyncService {
   /// Pulls accounts + transactions and writes them to the local DB.
   ///
   /// Uses the backend when a JWT exists, otherwise falls back to direct tokens.
+  /// Guarded against concurrent runs – a second call while one is in progress
+  /// returns immediately.
   Future<void> syncNow({bool forceRefresh = false}) async {
+    if (_syncing) {
+      log('Sync already in progress – skipping.');
+      return;
+    }
+    _syncing = true;
+    final completer = Completer<void>();
+    // Ignore errors on the future itself so Dart doesn't report unhandled
+    // exceptions. Callers of waitForSync() handle errors themselves.
+    _activeSyncFuture = completer.future.catchError((_) {});
+    try {
+      await _syncNowInner(forceRefresh: forceRefresh);
+      completer.complete();
+    } catch (e) {
+      completer.completeError(e);
+      rethrow;
+    } finally {
+      _syncing = false;
+    }
+  }
+
+  Future<void> _syncNowInner({bool forceRefresh = false}) async {
     final prefs = await SharedPreferences.getInstance();
     final connected = prefs.getBool('bank_connected') ?? false;
     if (!connected) {
@@ -63,6 +98,7 @@ class TransactionSyncService {
         return;
       } catch (e) {
         log('Backend sync failed, trying direct: $e');
+        DebugLog.instance.add('SYNC', 'Backend sync failed: $e');
       }
     }
 
@@ -73,6 +109,7 @@ class TransactionSyncService {
   // ── Backend-proxied sync ──────────────────────────────────────────────────
 
   Future<void> _syncViaBackend() async {
+    final syncStart = DateTime.now();
     final prefs = await SharedPreferences.getInstance();
     final tokenStore = TokenStore();
     final client = ApiClient(tokenStore: tokenStore);
@@ -84,6 +121,9 @@ class TransactionSyncService {
     final windowStart = nowUtc.subtract(
       hasBackfilled ? _rollingWindow : _initialBackfillWindow,
     );
+
+    final window = hasBackfilled ? '120d' : '365d';
+    DebugLog.instance.add('SYNC', 'Backend sync starting ($window window)');
 
     final results = await Future.wait([
       api.accounts(),
@@ -101,10 +141,11 @@ class TransactionSyncService {
 
     final allTxnPayloads = [...settledPayloads, ...pendingPayloads];
 
+    final fetchMs = DateTime.now().difference(syncStart).inMilliseconds;
     log('Backend sync: ${accountPayloads.length} accounts, '
         '${settledPayloads.length} settled + '
         '${pendingPayloads.length} pending transactions '
-        '(window: ${hasBackfilled ? "120d" : "365d"})');
+        '(window: $window)');
 
     if (accountPayloads.isNotEmpty) {
       await AccountRepository.upsertFromAkahu(accountPayloads);
@@ -115,6 +156,12 @@ class TransactionSyncService {
 
     await IncomeSettingsStore.detectAndSetIncomeType();
     await _markSynced(markBackfillComplete: usedBackfillWindow);
+
+    final totalMs = DateTime.now().difference(syncStart).inMilliseconds;
+    DebugLog.instance.add('SYNC',
+        'Done: ${accountPayloads.length} accts, '
+        '${settledPayloads.length}+${pendingPayloads.length} txns '
+        '(fetch ${fetchMs}ms, total ${totalMs}ms)');
   }
 
   // ── Direct Akahu sync (dev/manual tokens) ─────────────────────────────────

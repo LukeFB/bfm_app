@@ -20,6 +20,8 @@ import 'package:bfm_app/providers/api_providers.dart';
 import 'package:bfm_app/screens/onboarding_screen.dart';
 import 'package:bfm_app/services/api_key_store.dart';
 import 'package:bfm_app/services/bank_service.dart';
+import 'package:bfm_app/services/debug_log.dart';
+import 'package:bfm_app/services/dev_config.dart';
 import 'package:bfm_app/services/income_settings_store.dart';
 import 'package:bfm_app/services/onboarding_store.dart';
 import 'package:bfm_app/services/pin_store.dart';
@@ -260,13 +262,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     super.dispose();
   }
 
-  Future<void> _confirmLogout(BuildContext context) async {
+  /// Signs the user out of their account (clears session + credentials) but
+  /// keeps local data intact. Sends them to the login screen.
+  Future<void> _confirmSignOut(BuildContext context) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Log out?'),
+        title: const Text('Sign out?'),
         content: const Text(
-          'You will need to sign in again next time you open the app.',
+          'You will be signed out and taken to the login screen.',
         ),
         actions: [
           TextButton(
@@ -276,7 +280,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Log out'),
+            child: const Text('Sign out'),
           ),
         ],
       ),
@@ -285,7 +289,51 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     await ref.read(authControllerProvider.notifier).logout();
     await CredentialStore().clear();
-    await OnboardingStore().reset();
+
+    if (!context.mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
+  }
+
+  /// Revokes the Akahu connection, deletes ALL local data (transactions,
+  /// budgets, goals, chat, etc.), clears the PIN, and resets onboarding.
+  /// This is a full factory reset of the app.
+  Future<void> _confirmResetApp(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reset app?'),
+        content: const Text(
+          'This will revoke your bank connection and delete ALL data '
+          'including transactions, budgets, goals, and chat history. '
+          'Your PIN will be removed. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Reset everything'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
+    // Revoke Akahu session on the backend (best-effort)
+    try {
+      final akahuApi = ref.read(akahuApiProvider);
+      await akahuApi.revoke();
+    } catch (e) {
+      debugPrint('Akahu revoke failed (continuing reset): $e');
+    }
+
+    // Wipe all local data
+    await BankService.disconnect();
+    await ref.read(authControllerProvider.notifier).logout();
+    await CredentialStore().clear();
     await PinStore().clearPin();
 
     if (!context.mounted) return;
@@ -333,52 +381,53 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         children: [
-          // --- API Key section ---
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Card(
-              elevation: 1,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('OpenAI API Key',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _apiKeyCtrl,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'sk-...',
-                        border: OutlineInputBorder(),
+          // --- API Key section (dev only) ---
+          if (kDevMode)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Card(
+                elevation: 1,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('OpenAI API Key',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _apiKeyCtrl,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: 'sk-...',
+                          border: OutlineInputBorder(),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        FilledButton(
-                          onPressed: _saveApiKey,
-                          child: const Text('Save'),
-                        ),
-                        const SizedBox(width: 8),
-                        OutlinedButton(
-                          onPressed: _clearApiKey,
-                          child: const Text('Clear'),
-                        ),
-                        const Spacer(),
-                        Text(
-                          _apiKeyStatus,
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ],
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          FilledButton(
+                            onPressed: _saveApiKey,
+                            child: const Text('Save'),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: _clearApiKey,
+                            child: const Text('Clear'),
+                          ),
+                          const Spacer(),
+                          Text(
+                            _apiKeyStatus,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
 
           // --- Income Type section ---
           Padding(
@@ -615,114 +664,137 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onTap: _openingWeeklyOverview ? null : _openWeeklyOverviewFromSettings,
           ),
 
-          // --- Disconnect Bank ---
-          ListTile(
-            leading: const Icon(Icons.link_off, color: Colors.red),
-            title: const Text('Disconnect Bank'),
-            subtitle:
-                const Text('Remove bank account and all transactions data'),
-            onTap: () async {
-              // Confirm the action:
-              final confirm = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('Disconnect Bank'),
-                  content: const Text(
-                      'This will delete all your data including transactions, budgets, and goals. You will need to start over. Are you sure?'),
-                  actions: [
-                    TextButton(
-                        child: const Text('Cancel'),
-                        onPressed: () => Navigator.pop(ctx, false)),
-                    ElevatedButton(
-                        child: const Text('Disconnect'),
-                        onPressed: () => Navigator.pop(ctx, true)),
-                  ],
-                ),
-              );
-
-              if (confirm != true) return;
-
-              // Clear all user data and reset to fresh state
-              await BankService.disconnect();
-
-              // Navigate back to onboarding (reset navigation stack)
-              if (!context.mounted) return;
-              Navigator.pushNamedAndRemoveUntil(
-                  context, '/onboarding', (route) => false);
-            },
-          ),
-          const SizedBox(height: 16),
-          // --- Revoke Akahu (backend) ---
-          // TODO: wire this to the production Akahu flow once backend auth is live
-          ListTile(
-            leading: const Icon(Icons.cloud_off, color: Colors.orange),
-            title: const Text('Revoke Akahu Connection (backend)'),
-            subtitle: const Text('Revoke Akahu session via the Moni backend'),
-            onTap: () async {
-              final confirm = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('Revoke Akahu?'),
-                  content: const Text(
-                    'This will revoke your Akahu session on the backend. '
-                    'You will need to reconnect via the Akahu OAuth flow.',
-                  ),
-                  actions: [
-                    TextButton(
-                      child: const Text('Cancel'),
-                      onPressed: () => Navigator.pop(ctx, false),
-                    ),
-                    ElevatedButton(
-                      child: const Text('Revoke'),
-                      onPressed: () => Navigator.pop(ctx, true),
-                    ),
-                  ],
-                ),
-              );
-              if (confirm != true || !context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Akahu revoke requires backend auth. Use Debug API screen.')),
-              );
-            },
-          ),
-
           const Divider(height: 32),
 
           ListTile(
-            leading: const Icon(Icons.logout, color: Colors.red),
-            title: const Text('Log out'),
-            subtitle: const Text('Sign out of your account on this device'),
-            onTap: () => _confirmLogout(context),
+            leading: const Icon(Icons.delete_forever, color: Colors.red),
+            title: const Text('Reset app'),
+            subtitle: const Text(
+              'Revoke bank access and delete all data. Completely resets the app.',
+            ),
+            onTap: () => _confirmResetApp(context),
           ),
 
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blueGrey,
+          if (kDevMode) ...[
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueGrey,
+                  ),
+                  icon: const Icon(Icons.bug_report),
+                  label: const Text("Debug Data"),
+                  onPressed: () {
+                    Navigator.pushNamed(context, '/debug');
+                  },
                 ),
-                icon: const Icon(Icons.bug_report),
-                label: const Text("Debug Data"),
-                onPressed: () {
-                  Navigator.pushNamed(context, '/debug');
-                },
-              ),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.deepPurple,
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.deepPurple,
+                  ),
+                  icon: const Icon(Icons.api),
+                  label: const Text("Debug API"),
+                  onPressed: () {
+                    Navigator.pushNamed(context, '/debug-api');
+                  },
                 ),
-                icon: const Icon(Icons.api),
-                label: const Text("Debug API"),
-                onPressed: () {
-                  Navigator.pushNamed(context, '/debug-api');
-                },
-              ),
-            ],
-          ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal,
+                  ),
+                  icon: const Icon(Icons.timer_outlined),
+                  label: const Text("API Log"),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const _ApiLogScreen()),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
+  }
+}
+
+/// Live viewer for API request timings captured by [DebugLog].
+class _ApiLogScreen extends StatefulWidget {
+  const _ApiLogScreen();
+
+  @override
+  State<_ApiLogScreen> createState() => _ApiLogScreenState();
+}
+
+class _ApiLogScreenState extends State<_ApiLogScreen> {
+  @override
+  Widget build(BuildContext context) {
+    final entries = DebugLog.instance.entries.reversed.toList();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('API Log'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+            onPressed: () => setState(() {}),
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Clear',
+            onPressed: () {
+              DebugLog.instance.clear();
+              setState(() {});
+            },
+          ),
+        ],
+      ),
+      body: entries.isEmpty
+          ? const Center(
+              child: Text(
+                'No API calls logged yet.\nUse the app and come back.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey),
+              ),
+            )
+          : ListView.builder(
+              itemCount: entries.length,
+              padding: const EdgeInsets.all(8),
+              itemBuilder: (context, index) {
+                final e = entries[index];
+                final isError = e.message.contains('429') ||
+                    e.message.contains('401') ||
+                    e.message.contains('timeout');
+                final isSlow = _extractMs(e.message) > 3000;
+
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Text(
+                    e.formatted,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      color: isError
+                          ? Colors.red
+                          : isSlow
+                              ? Colors.orange.shade800
+                              : Colors.black87,
+                    ),
+                  ),
+                );
+              },
+            ),
+    );
+  }
+
+  int _extractMs(String msg) {
+    final match = RegExp(r'\((\d+)ms\)').firstMatch(msg);
+    if (match == null) return 0;
+    return int.tryParse(match.group(1)!) ?? 0;
   }
 }

@@ -1,8 +1,10 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:bfm_app/api/akahu_api.dart';
+import 'package:bfm_app/api/api_client.dart';
 import 'package:bfm_app/providers/api_providers.dart';
 
 @immutable
@@ -72,6 +74,12 @@ class AkahuController extends Notifier<AkahuState> {
         accounts: accts,
       );
       return connected;
+    } on DioException catch (e) {
+      final msg = (e.error is RateLimitedException)
+          ? e.error.toString()
+          : 'Verification failed: ${e.message}';
+      state = state.copyWith(isLoading: false, error: msg);
+      return false;
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
       return false;
@@ -97,6 +105,11 @@ class AkahuController extends Notifier<AkahuState> {
     try {
       final txns = await _api.transactions();
       state = state.copyWith(isLoading: false, transactions: txns);
+    } on DioException catch (e) {
+      final msg = (e.error is RateLimitedException)
+          ? e.error.toString()
+          : 'Failed to fetch transactions: ${e.message}';
+      state = state.copyWith(isLoading: false, error: msg);
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
     }
