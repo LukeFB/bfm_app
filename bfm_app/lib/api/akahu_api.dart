@@ -56,42 +56,63 @@ class AkahuApi {
 
   /// GET /akahu/transactions -> list of transaction maps.
   ///
-  /// Paginates automatically if the backend returns Laravel-style pagination
-  /// (`current_page`, `last_page`) so we get ALL transactions, not just one
-  /// page. Falls back to a single-request fetch if no pagination metadata.
-  Future<List<Map<String, dynamic>>> transactions() async {
+  /// Uses cursor-based pagination (matching Akahu's native API). Loops until
+  /// no cursor is returned. [start] and [end] control the date window.
+  Future<List<Map<String, dynamic>>> transactions({
+    DateTime? start,
+    DateTime? end,
+  }) async {
     final all = <Map<String, dynamic>>[];
-    int page = 1;
+    String? cursor;
 
-    while (true) {
+    do {
+      final params = <String, dynamic>{};
+      if (start != null) params['start'] = start.toUtc().toIso8601String();
+      if (end != null) params['end'] = end.toUtc().toIso8601String();
+      if (cursor != null) params['cursor'] = cursor;
+
       final response = await _client.dio.get(
         '/akahu/transactions',
-        queryParameters: {'page': page, 'per_page': 500},
+        queryParameters: params,
         options: Options(receiveTimeout: const Duration(seconds: 60)),
       );
 
       final data = response.data;
-      final items = _extractList(data);
-      all.addAll(items);
+      all.addAll(_extractList(data));
 
-      // Laravel pagination: { data: [...], current_page: 1, last_page: 3 }
-      if (data is Map<String, dynamic>) {
-        final currentPage = data['current_page'] as int?;
-        final lastPage = data['last_page'] as int?;
-        if (currentPage != null && lastPage != null && currentPage < lastPage) {
-          page++;
-          continue;
-        }
-      }
-      break;
-    }
+      // Cursor pagination: { cursor: { next: "..." } } or { cursor: "..." }
+      cursor = _extractCursor(data);
+    } while (cursor != null);
 
     return all;
+  }
+
+  /// GET /akahu/transactions/pending -> list of pending transaction maps.
+  Future<List<Map<String, dynamic>>> pendingTransactions() async {
+    final response = await _client.dio.get(
+      '/akahu/transactions/pending',
+      options: Options(receiveTimeout: const Duration(seconds: 60)),
+    );
+    return _extractList(response.data);
   }
 
   /// DELETE /akahu/revoke -> revoke the Akahu session on the backend.
   Future<void> revoke() async {
     await _client.dio.delete('/akahu/revoke');
+  }
+
+  /// Extracts the next-page cursor from Akahu-style responses.
+  ///
+  /// Supports `{ cursor: { next: "..." } }` and `{ cursor: "..." }`.
+  String? _extractCursor(dynamic data) {
+    if (data is! Map<String, dynamic>) return null;
+    final cursorField = data['cursor'];
+    if (cursorField is Map<String, dynamic>) {
+      final next = cursorField['next'];
+      return (next is String && next.isNotEmpty) ? next : null;
+    }
+    if (cursorField is String && cursorField.isNotEmpty) return cursorField;
+    return null;
   }
 
   /// Handles both `[...]` and `{ data: [...] }` shapes.

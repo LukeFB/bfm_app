@@ -73,39 +73,48 @@ class TransactionSyncService {
   // ── Backend-proxied sync ──────────────────────────────────────────────────
 
   Future<void> _syncViaBackend() async {
+    final prefs = await SharedPreferences.getInstance();
     final tokenStore = TokenStore();
     final client = ApiClient(tokenStore: tokenStore);
     final api = AkahuApi(client);
 
+    final nowUtc = DateTime.now().toUtc();
+    final hasBackfilled = prefs.getBool(_backfillCompleteKey) ?? false;
+    final usedBackfillWindow = !hasBackfilled;
+    final windowStart = nowUtc.subtract(
+      hasBackfilled ? _rollingWindow : _initialBackfillWindow,
+    );
+
     final results = await Future.wait([
       api.accounts(),
-      api.transactions(),
+      api.transactions(start: windowStart, end: nowUtc),
+      api.pendingTransactions(),
     ]);
 
     final accountPayloads = results[0];
-    final txnPayloads = results[1];
+    final settledPayloads = results[1];
+    final pendingPayloads = results[2];
+
+    for (final payload in pendingPayloads) {
+      payload['_pending'] = true;
+    }
+
+    final allTxnPayloads = [...settledPayloads, ...pendingPayloads];
 
     log('Backend sync: ${accountPayloads.length} accounts, '
-        '${txnPayloads.length} transactions');
-
-    // Log a sample transaction so we can verify the JSON shape matches fromAkahu
-    if (txnPayloads.isNotEmpty) {
-      log('Sample txn keys: ${txnPayloads.first.keys.toList()}');
-    }
-    if (accountPayloads.isNotEmpty) {
-      log('Sample account keys: ${accountPayloads.first.keys.toList()}');
-    }
+        '${settledPayloads.length} settled + '
+        '${pendingPayloads.length} pending transactions '
+        '(window: ${hasBackfilled ? "120d" : "365d"})');
 
     if (accountPayloads.isNotEmpty) {
       await AccountRepository.upsertFromAkahu(accountPayloads);
     }
-    if (txnPayloads.isNotEmpty) {
-      await TransactionRepository.upsertFromAkahu(txnPayloads);
+    if (allTxnPayloads.isNotEmpty) {
+      await TransactionRepository.upsertFromAkahu(allTxnPayloads);
     }
 
-    // Same post-processing as the direct path
     await IncomeSettingsStore.detectAndSetIncomeType();
-    await _markSynced(markBackfillComplete: true);
+    await _markSynced(markBackfillComplete: usedBackfillWindow);
   }
 
   // ── Direct Akahu sync (dev/manual tokens) ─────────────────────────────────

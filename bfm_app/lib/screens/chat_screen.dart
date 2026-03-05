@@ -40,6 +40,7 @@ import 'package:bfm_app/services/chat_action_extractor.dart';
 import 'package:bfm_app/services/alert_notification_service.dart';
 import 'package:bfm_app/services/chat_constants.dart';
 import 'package:bfm_app/services/chat_storage.dart';
+import 'package:bfm_app/services/context_builder.dart';
 import 'package:bfm_app/services/manual_budget_store.dart';
 import 'package:bfm_app/providers/api_providers.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -233,10 +234,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   /// Sends a message through the Moni backend /messages endpoint.
   Future<String> _sendViaBackend(String text) async {
-    // Access ProviderScope via context; ChatScreen is inside ProviderScope.
     final container = ProviderScope.containerOf(context);
     final api = container.read(messagesApiProvider);
-    final response = await api.sendMessage(text);
+
+    final userContext = await ContextBuilder.build(
+      recentTurns: _buildRecentTurns(),
+    );
+
+    final response = await api.sendMessage(text, userContext: userContext);
     final content = response['message'] ??
         response['content'] ??
         response['response'] ??
