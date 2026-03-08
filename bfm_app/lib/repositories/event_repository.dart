@@ -39,15 +39,12 @@ class EventRepository {
     });
   }
 
-  /// Returns future events ordered by end date.
+  /// Returns all synced events, ordered by datetime (soonest first, nulls last).
   static Future<List<EventModel>> getUpcoming({int limit = 5}) async {
     final db = await AppDatabase.instance.database;
-    final nowIso = DateTime.now().toIso8601String();
     final rows = await db.query(
       'events',
-      where: 'end_date IS NOT NULL AND end_date >= ?',
-      whereArgs: [nowIso],
-      orderBy: 'end_date ASC',
+      orderBy: "CASE WHEN end_date IS NULL THEN 1 ELSE 0 END, end_date ASC",
       limit: limit,
     );
     return rows.map(EventModel.fromMap).toList();

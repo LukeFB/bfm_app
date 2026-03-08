@@ -15,6 +15,9 @@
 /// ---------------------------------------------------------------------------
 import 'dart:convert';
 
+import 'package:bfm_app/api/api_client.dart';
+import 'package:bfm_app/api/content_api.dart';
+import 'package:bfm_app/auth/token_store.dart';
 import 'package:bfm_app/config/backend_config.dart';
 import 'package:bfm_app/models/event_model.dart';
 import 'package:bfm_app/models/referral_model.dart';
@@ -25,18 +28,18 @@ import 'package:bfm_app/repositories/tip_repository.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-/// Small singleton because we only need one HTTP client instance + state.
-///
-/// TODO: Once backend auth is the primary flow, replace these direct HTTP calls
-/// with ContentApi (lib/api/content_api.dart) which includes the Bearer token
-/// and goes through the authenticated Moni backend. Keep this for unauthenticated
-/// fallback or local dev.
+/// Singleton that pulls dashboard content from the authenticated Moni backend
+/// (tips, events) and the legacy CMS (referrals) into local SQLite.
 class ContentSyncService {
   ContentSyncService._internal();
   static final ContentSyncService _instance = ContentSyncService._internal();
   factory ContentSyncService() => _instance;
 
   final http.Client _client = http.Client();
+
+  late final ContentApi _contentApi = ContentApi(
+    ApiClient(tokenStore: TokenStore()),
+  );
 
   /// Fan-out helper used by the dashboard to refresh everything at once.
   /// Runs referral, tip, and event sync in parallel.
@@ -62,12 +65,11 @@ class ContentSyncService {
     }
   }
 
-  /// Same as `syncReferrals` but for the rotating financial tips.
+  /// Pulls tips from the authenticated Moni backend and mirrors into SQLite.
   Future<void> syncTips() async {
     try {
-      final list = await _fetchList('/api/tips', {'limit': '3'});
+      final list = await _contentApi.tips();
       final models = list
-          .whereType<Map<String, dynamic>>()
           .map(_mapTip)
           .whereType<TipModel>()
           .toList();
@@ -79,12 +81,11 @@ class ContentSyncService {
     }
   }
 
-  /// Same idea for live events/clinics. Keeps only the most recent items.
+  /// Pulls events from the authenticated Moni backend and mirrors into SQLite.
   Future<void> syncEvents() async {
     try {
-      final list = await _fetchList('/api/events', {'limit': '5'});
+      final list = await _contentApi.events();
       final models = list
-          .whereType<Map<String, dynamic>>()
           .map(_mapEvent)
           .whereType<EventModel>()
           .toList();
@@ -155,29 +156,16 @@ class ContentSyncService {
     );
   }
 
-  /// Converts a tip payload into `TipModel`, giving it a title fallback and
-  /// parsing expiry/updated timestamps.
   TipModel? _mapTip(Map<String, dynamic> data) {
-    DateTime? parseDate(dynamic value) {
-      if (value == null) return null;
-      try {
-        return DateTime.parse(value as String);
-      } catch (_) {
-        return null;
-      }
-    }
-
-    final title = data['title'] as String? ?? 'Financial Tip';
+    final title = (data['name'] as String?) ?? 'Financial Tip';
     return TipModel(
       backendId: (data['id'] as num?)?.toInt(),
       title: title,
-      expiresAt: parseDate(data['expiresAt']),
-      updatedAt: parseDate(data['updatedAt']) ?? DateTime.now(),
+      description: data['description'] as String?,
+      updatedAt: DateTime.now(),
     );
   }
 
-  /// Converts event payloads into `EventModel`, capturing backend ids and
-  /// guarding against bad timestamps.
   EventModel? _mapEvent(Map<String, dynamic> data) {
     DateTime? parseDate(dynamic value) {
       if (value == null) return null;
@@ -190,9 +178,10 @@ class ContentSyncService {
 
     return EventModel(
       backendId: (data['id'] as num?)?.toInt(),
-      title: data['title'] as String? ?? 'Upcoming event',
-      endDate: parseDate(data['endDate']),
-      updatedAt: parseDate(data['updatedAt']) ?? DateTime.now(),
+      title: (data['name'] as String?) ?? 'Upcoming event',
+      description: data['description'] as String?,
+      endDate: parseDate(data['datetime']),
+      updatedAt: DateTime.now(),
     );
   }
 

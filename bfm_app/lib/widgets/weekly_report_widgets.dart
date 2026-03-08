@@ -1363,7 +1363,7 @@ class _ComparisonRow extends StatelessWidget {
       statusText = "On track";
     }
     
-    final emoji = emojiHelper?.emojiForName(c.label) ?? CategoryEmojiHelper.defaultEmoji;
+    final emoji = emojiHelper?.emojiForName(c.emojiHint ?? c.label) ?? CategoryEmojiHelper.defaultEmoji;
     
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -1571,7 +1571,7 @@ class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
 
   Widget _buildGroupRow(BudgetWeeklyBreakdown b, int index) {
     final isGroupExpanded = _expandedGroups.contains(index);
-    final emoji = _emojiHelper?.emojiForName(b.label) ??
+    final emoji = _emojiHelper?.emojiForName(b.emojiHint ?? b.label) ??
         CategoryEmojiHelper.defaultEmoji;
 
     final barPercent = b.budgetLimit > 0

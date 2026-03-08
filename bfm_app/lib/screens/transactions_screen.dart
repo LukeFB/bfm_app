@@ -20,6 +20,7 @@ import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/models/transaction_model.dart';
 import 'package:bfm_app/models/category_model.dart';
+import 'package:bfm_app/widgets/swipe_back_wrapper.dart';
 
 /// List of all stored transactions with search, filters, and add/delete affordances.
 class TransactionsScreen extends StatefulWidget {
@@ -213,18 +214,19 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Transactions"),
-        actions: [
-          if (_hasActiveFilters)
-            TextButton.icon(
-              onPressed: _clearFilters,
-              icon: const Icon(Icons.clear_all, size: 20),
-              label: const Text('Clear'),
-            ),
-        ],
-      ),
+    return SwipeBackWrapper(
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text("Transactions"),
+          actions: [
+            if (_hasActiveFilters)
+              TextButton.icon(
+                onPressed: _clearFilters,
+                icon: const Icon(Icons.clear_all, size: 20),
+                label: const Text('Clear'),
+              ),
+          ],
+        ),
       body: FutureBuilder<List<TransactionModel>>(
         future: _transactionsFuture,
         builder: (context, snapshot) {
@@ -418,6 +420,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       floatingActionButton: FloatingActionButton(
         onPressed: _showAddTransactionDialog,
         child: const Icon(Icons.add),
+      ),
       ),
     );
   }

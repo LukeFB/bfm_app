@@ -50,7 +50,7 @@ class AppDatabase {
     // Open the database with version and an onUpgrade callback
     return await openDatabase(
       path,
-      version: 25,
+      version: 26,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },
@@ -138,6 +138,12 @@ class AppDatabase {
       if (needsTipSimplify) {
         await _recreateTipsTable(db);
       }
+    }
+    if (!await hasCol('tips', 'description')) {
+      await db.execute('ALTER TABLE tips ADD COLUMN description TEXT;');
+    }
+    if (!await hasCol('events', 'description')) {
+      await db.execute('ALTER TABLE events ADD COLUMN description TEXT;');
     }
     if (!await hasTable('goal_progress_log')) await _createGoalProgressLog(db);
     if (!await hasTable('weekly_reports')) await _createWeeklyReports(db);
@@ -598,6 +604,7 @@ class AppDatabase {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         backend_id INTEGER,
         title TEXT NOT NULL,
+        description TEXT,
         end_date TEXT,
         updated_at TEXT,
         synced_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -673,6 +680,7 @@ class AppDatabase {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         backend_id INTEGER,
         title TEXT NOT NULL,
+        description TEXT,
         is_active INTEGER NOT NULL DEFAULT 1,
         expires_at TEXT,
         updated_at TEXT,

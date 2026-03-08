@@ -19,6 +19,7 @@ import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/services/budget_analysis_service.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
+import 'package:bfm_app/theme/buxly_theme.dart';
 
 class SubscriptionsScreen extends StatefulWidget {
   const SubscriptionsScreen({super.key, this.editMode = false});
@@ -37,6 +38,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
   List<_SubscriptionItem> _subscriptions = [];
   final Set<int> _selectedIds = {};
   final Map<int, TextEditingController> _amountCtrls = {};
+  final Map<int, String> _nameOverrides = {};
   CategoryEmojiHelper? _emojiHelper;
 
   static const double _kWeeksPerMonth = 4.345;
@@ -182,10 +184,13 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
       controllers[rid] =
           TextEditingController(text: defaultAmount.toStringAsFixed(2));
 
-      // In edit mode, select items that have existing budgets
-      // In create mode, start unselected
       if (widget.editMode) {
-        if (existingBudget != null) selection.add(rid);
+        if (existingBudget != null) {
+          selection.add(rid);
+          if (existingBudget.label != null && existingBudget.label!.trim().isNotEmpty) {
+            _nameOverrides[rid] = existingBudget.label!;
+          }
+        }
       }
     }
 
@@ -238,17 +243,20 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
         final weeklyLimit = _parseAmount(_amountCtrls[rid]?.text ?? '');
         if (weeklyLimit <= 0) continue;
 
+        final customName = _nameOverrides[rid];
         final budget = BudgetModel(
           categoryId: item.categoryId,
           recurringTransactionId: rid,
+          label: customName,
           weeklyLimit: weeklyLimit,
           periodStart: periodStart,
         );
         await BudgetRepository.insertOrUpdateRecurring(budget);
 
+        final displayTitle = _displayName(item);
         await AlertRepository.upsertRecurringAlert(
           recurringId: rid,
-          title: item.label,
+          title: displayTitle,
           message: 'Due soon for \$${item.amount.toStringAsFixed(2)}',
           icon: emoji,
           leadTimeDays: 3,
@@ -256,9 +264,10 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
       } else {
         await BudgetRepository.deleteByRecurringId(rid);
 
+        final displayTitle = _displayName(item);
         await AlertRepository.insertCancelSubscription(
           recurringId: rid,
-          title: 'Cancel ${item.label}',
+          title: 'Cancel $displayTitle',
           icon: emoji,
           amount: item.amount,
         );
@@ -506,26 +515,29 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
           ),
         ),
 
-        // Subscription cards
-        Card(
-          margin: EdgeInsets.zero,
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: BorderSide(color: Colors.black.withOpacity(0.08)),
-          ),
-          child: Column(
-            children: [
-              for (var i = 0; i < _subscriptions.length; i++) ...[
-                _buildSubscriptionTile(_subscriptions[i]),
-                if (i < _subscriptions.length - 1) 
-                  Divider(height: 1, color: Colors.black.withOpacity(0.06)),
-              ],
-            ],
+        Text(
+          'Hold to edit',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.black.withOpacity(0.35),
           ),
         ),
+        const SizedBox(height: 8),
+
+        // Subscription cards
+        for (final sub in _subscriptions)
+          _buildSubscriptionTile(sub),
       ],
     );
+  }
+
+  String _displayName(_SubscriptionItem item) {
+    final rid = item.recurringId;
+    if (rid != null && _nameOverrides.containsKey(rid)) {
+      return _nameOverrides[rid]!;
+    }
+    return item.transactionName ?? item.label;
   }
 
   Widget _buildSubscriptionTile(_SubscriptionItem item) {
@@ -533,118 +545,110 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
     if (rid == null) return const SizedBox.shrink();
 
     final isSelected = _selectedIds.contains(rid);
-    final weeklyLimit = _parseAmount(_amountCtrls[rid]?.text ?? '');
     final emoji = _getEmoji(item);
-    final paymentLabel = item.frequency == 'monthly'
-        ? '\$${item.amount.toStringAsFixed(2)}/month'
-        : '\$${item.amount.toStringAsFixed(2)}/week';
+    final name = _displayName(item);
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => _toggleSelection(rid, !isSelected),
-      onLongPress: () => _editAmount(item),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? Theme.of(context).colorScheme.primary.withOpacity(0.08)
-              : null,
-          border: isSelected
-              ? Border(
-                  left: BorderSide(
-                    width: 3,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                )
-              : null,
-        ),
-        child: Padding(
+    final isMonthly = item.frequency == 'monthly';
+    final weeklyAmount = _parseAmount(_amountCtrls[rid]?.text ?? '');
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _toggleSelection(rid, !isSelected),
+        onLongPress: () => _editSubscription(item),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? BuxlyColors.teal.withOpacity(0.08)
+                : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isSelected
+                  ? BuxlyColors.teal.withOpacity(0.4)
+                  : Colors.black12,
+              width: isSelected ? 1.5 : 1,
+            ),
+          ),
           child: Row(
             children: [
               Text(emoji, style: const TextStyle(fontSize: 28)),
-              const SizedBox(width: 12),
+              const SizedBox(width: 14),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.label,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: isSelected ? Colors.black : Colors.black87,
-                      ),
-                    ),
-                    if (item.transactionName != null &&
-                        item.transactionName!.toLowerCase() !=
-                            item.label.toLowerCase())
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          item.transactionName!,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.black.withOpacity(0.5),
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(4),
-                            color: isSelected
-                                ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
-                                : Colors.grey.shade100,
-                          ),
-                          child: Text(
-                            paymentLabel,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                              color: isSelected
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Colors.black.withOpacity(0.6),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '→ \$${weeklyLimit.toStringAsFixed(2)}/wk',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.black.withOpacity(0.5),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                child: Text(
+                  name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              // Selection indicator instead of checkbox
+              if (isMonthly) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? BuxlyColors.teal.withOpacity(0.1)
+                        : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '\$${item.amount.toStringAsFixed(0)}/mo',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isSelected
+                          ? BuxlyColors.darkText.withOpacity(0.6)
+                          : Colors.black.withOpacity(0.5),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+              ],
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? BuxlyColors.teal.withOpacity(0.1)
+                      : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '\$${weeklyAmount.toStringAsFixed(0)}/wk',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: isSelected
+                        ? BuxlyColors.darkText
+                        : Colors.black87,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
               AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                width: 24,
-                height: 24,
+                width: 28,
+                height: 28,
                 decoration: BoxDecoration(
-                  shape: BoxShape.circle,
                   color: isSelected
-                      ? Theme.of(context).colorScheme.primary
+                      ? BuxlyColors.teal
                       : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
                   border: Border.all(
                     width: 2,
                     color: isSelected
-                        ? Theme.of(context).colorScheme.primary
+                        ? BuxlyColors.teal
                         : Colors.black26,
                   ),
                 ),
                 child: isSelected
-                    ? const Icon(Icons.check, size: 16, color: Colors.white)
+                    ? const Icon(Icons.check, size: 18, color: Colors.white)
                     : null,
               ),
             ],
@@ -664,19 +668,20 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
     });
   }
 
-  Future<void> _editAmount(_SubscriptionItem item) async {
+  Future<void> _editSubscription(_SubscriptionItem item) async {
     final rid = item.recurringId;
     if (rid == null) return;
 
-    final controller = _amountCtrls[rid];
-    if (controller == null) return;
+    final amountCtrl = _amountCtrls[rid];
+    if (amountCtrl == null) return;
 
-    final result = await showModalBottomSheet<String>(
+    final currentName = _displayName(item);
+    final result = await showModalBottomSheet<_SubscriptionEditResult>(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => _AmountEditorSheet(
-        title: item.label,
-        initialValue: controller.text,
+      builder: (ctx) => _SubscriptionEditorSheet(
+        initialName: currentName,
+        initialAmount: amountCtrl.text,
         helperText: item.frequency == 'monthly'
             ? 'Original: \$${item.amount.toStringAsFixed(2)}/month'
             : 'Original: \$${item.amount.toStringAsFixed(2)}/week',
@@ -685,16 +690,20 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
 
     if (result != null) {
       setState(() {
-        controller.text = _parseAmount(result).toStringAsFixed(2);
+        amountCtrl.text = _parseAmount(result.amount).toStringAsFixed(2);
+        final trimmedName = result.name.trim();
+        final defaultName = item.transactionName ?? item.label;
+        if (trimmedName.isNotEmpty && trimmedName != defaultName) {
+          _nameOverrides[rid] = trimmedName;
+        } else {
+          _nameOverrides.remove(rid);
+        }
       });
     }
   }
 
   String _getEmoji(_SubscriptionItem item) {
-    final source = item.label.trim().isNotEmpty
-        ? item.label
-        : (item.transactionName ?? 'Subscription');
-    return _emojiHelper?.emojiForName(source) ??
+    return _emojiHelper?.emojiForName(item.label) ??
         CategoryEmojiHelper.defaultEmoji;
   }
 
@@ -767,33 +776,43 @@ class _SubscriptionItem {
   });
 }
 
-class _AmountEditorSheet extends StatefulWidget {
-  final String title;
-  final String initialValue;
+class _SubscriptionEditResult {
+  final String name;
+  final String amount;
+  const _SubscriptionEditResult({required this.name, required this.amount});
+}
+
+class _SubscriptionEditorSheet extends StatefulWidget {
+  final String initialName;
+  final String initialAmount;
   final String? helperText;
 
-  const _AmountEditorSheet({
-    required this.title,
-    required this.initialValue,
+  const _SubscriptionEditorSheet({
+    required this.initialName,
+    required this.initialAmount,
     this.helperText,
   });
 
   @override
-  State<_AmountEditorSheet> createState() => _AmountEditorSheetState();
+  State<_SubscriptionEditorSheet> createState() =>
+      _SubscriptionEditorSheetState();
 }
 
-class _AmountEditorSheetState extends State<_AmountEditorSheet> {
-  late final TextEditingController _controller;
+class _SubscriptionEditorSheetState extends State<_SubscriptionEditorSheet> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _amountCtrl;
 
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController(text: widget.initialValue);
+    _nameCtrl = TextEditingController(text: widget.initialName);
+    _amountCtrl = TextEditingController(text: widget.initialAmount);
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _nameCtrl.dispose();
+    _amountCtrl.dispose();
     super.dispose();
   }
 
@@ -821,12 +840,9 @@ class _AmountEditorSheetState extends State<_AmountEditorSheet> {
             ),
           ),
           const SizedBox(height: 20),
-          Text(
-            widget.title,
-            style: const TextStyle(
-              fontWeight: FontWeight.w600,
-              fontSize: 16,
-            ),
+          const Text(
+            'Edit recurring payment',
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
           ),
           if (widget.helperText != null) ...[
             const SizedBox(height: 4),
@@ -837,9 +853,21 @@ class _AmountEditorSheetState extends State<_AmountEditorSheet> {
           ],
           const SizedBox(height: 16),
           TextField(
-            controller: _controller,
+            controller: _nameCtrl,
             autofocus: true,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            textCapitalization: TextCapitalization.words,
+            decoration: InputDecoration(
+              labelText: 'Name',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _amountCtrl,
+            keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
             decoration: InputDecoration(
               labelText: 'Weekly limit',
               prefixText: '\$',
@@ -858,7 +886,13 @@ class _AmountEditorSheetState extends State<_AmountEditorSheet> {
               ),
               const SizedBox(width: 8),
               FilledButton(
-                onPressed: () => Navigator.pop(context, _controller.text.trim()),
+                onPressed: () => Navigator.pop(
+                  context,
+                  _SubscriptionEditResult(
+                    name: _nameCtrl.text.trim(),
+                    amount: _amountCtrl.text.trim(),
+                  ),
+                ),
                 child: const Text('Save'),
               ),
             ],

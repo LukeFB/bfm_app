@@ -20,27 +20,35 @@ enum ChatRole { user, assistant }
 class ChatMessage {
   final ChatRole role;
   final String content;
+  final DateTime? timestamp;
 
-  /// Create a message with a specific role + content.
-  ChatMessage({required this.role, required this.content});
+  ChatMessage({required this.role, required this.content, DateTime? timestamp})
+      : timestamp = timestamp ?? DateTime.now();
 
-  /// Convenience constructors to make usages more readable.
   factory ChatMessage.user(String s) =>
       ChatMessage(role: ChatRole.user, content: s);
 
   factory ChatMessage.assistant(String s) =>
       ChatMessage(role: ChatRole.assistant, content: s);
 
-  /// Converts this message to OpenAI's `{role, content}` schema.
   Map<String, String> toOpenAiRoleContent() =>
       {'role': role == ChatRole.user ? 'user' : 'assistant', 'content': content};
 
-  /// Serialises to JSON for local persistence (role name + content).
-  Map<String, dynamic> toJson() => {'role': role.name, 'content': content};
+  Map<String, dynamic> toJson() => {
+        'role': role.name,
+        'content': content,
+        if (timestamp != null) 'timestamp': timestamp!.toIso8601String(),
+      };
 
-  /// Hydrates from JSON stored on disk. Defaults to assistant role/content if
-  /// the payload is malformed so downstream code never crashes.
-  factory ChatMessage.fromJson(Map<String, dynamic> j) => ChatMessage(
+  factory ChatMessage.fromJson(Map<String, dynamic> j) {
+    DateTime? ts;
+    if (j['timestamp'] is String) {
+      ts = DateTime.tryParse(j['timestamp'] as String);
+    }
+    return ChatMessage(
       role: (j['role'] == 'user') ? ChatRole.user : ChatRole.assistant,
-      content: (j['content'] as String?) ?? '');
+      content: (j['content'] as String?) ?? '',
+      timestamp: ts,
+    );
+  }
 }

@@ -64,6 +64,8 @@ dependencies:
   flutter_local_notifications: ^19.5.0
   flutter_timezone: ^5.0.1
   timezone: ^0.10.1
+  flutter_svg: ^2.0.9
+  google_fonts: ^6.1.0
 
 
 dependency_overrides:
@@ -79,6 +81,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -94,6 +97,7 @@ flutter:
   assets:
     - assets/referrals.json
     - assets/data/nzfcc_categories.csv
+    - assets/images/SVG/
     
   # BFM fonts go here
 
@@ -127,3 +131,12 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/Buxly app icon design in turquoise.png"
+  min_sdk_android: 21
+  remove_alpha_ios: true
+  adaptive_icon_foreground: "assets/images/Buxly app icon design in turquoise.png"
+  adaptive_icon_background: "#7EC8C8"

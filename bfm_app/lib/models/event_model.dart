@@ -23,6 +23,7 @@ class EventModel {
   final int? id;
   final int? backendId;
   final String title;
+  final String? description;
   final DateTime? endDate;
   final DateTime? updatedAt;
 
@@ -30,6 +31,7 @@ class EventModel {
     this.id,
     this.backendId,
     required this.title,
+    this.description,
     this.endDate,
     this.updatedAt,
   });
@@ -50,17 +52,17 @@ class EventModel {
       id: m['id'] as int?,
       backendId: m['backend_id'] as int?,
       title: (m['title'] ?? '') as String,
+      description: m['description'] as String?,
       endDate: parse(m['end_date']),
       updatedAt: parse(m['updated_at']),
     );
   }
 
-  /// Serialises the model back to DB columns, using `DateTime.now()` as a
-  /// fallback start time when no end date exists. Optionally includes the id.
   Map<String, dynamic> toMap({bool includeId = false}) {
     final map = <String, dynamic>{
       'backend_id': backendId,
       'title': title,
+      'description': description,
       'end_date': endDate?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
     };

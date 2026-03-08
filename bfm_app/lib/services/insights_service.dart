@@ -129,11 +129,12 @@ class InsightsService {
         .toSet();
     final recurringTransactions = await RecurringRepository.getByIds(recurringIds);
     final recurringById = <int, String>{};
+    final recurringCatById = <int, int>{};
     for (final rt in recurringTransactions) {
       if (rt.id != null && rt.description != null) {
-        // Normalize the description the same way as uncategorizedSpendMap keys
         recurringById[rt.id!] = rt.description!.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
       }
+      if (rt.id != null) recurringCatById[rt.id!] = rt.categoryId;
     }
 
     final List<CategoryWeeklySummary> categories = [];
@@ -159,9 +160,9 @@ class InsightsService {
     final usedUncategorizedKeys = <String>{};
     var hasUncategorizedCatchAll = false;
 
-    // Group budgets by category/key to avoid double-counting spend
-    // Key format: "cat:{id}" for categories, "goal:{id}" for goals, "key:{key}" for uncategorized, "rec:{id}" for recurring
     final groupedBudgets = <String, ({String label, double budgetTotal, double spent, bool isGoal})>{};
+    // Maps a normalized uncategorized key to its group key for merging
+    final uncatKeyToGroupKey = <String, String>{};
     
     for (final budget in budgets) {
       String groupKey;
@@ -172,22 +173,21 @@ class InsightsService {
       if (budget.categoryId != null) {
         final rawLabel = budgetCategoryNames[budget.categoryId!] ?? 'Category';
         final labelLower = rawLabel.toLowerCase();
-        // If linked to "Uncategorized" category but has a recurring transaction,
-        // treat it as an uncategorized budget using the recurring transaction's description
         if (labelLower == 'uncategorized' || labelLower == 'uncategorised') {
           if (budget.recurringTransactionId != null) {
             final recurringKey = recurringById[budget.recurringTransactionId!];
             if (recurringKey != null && recurringKey.isNotEmpty) {
               groupKey = 'rec:${budget.recurringTransactionId}';
-              label = _uncategorizedDisplayLabel(recurringKey, uncategorizedNames);
+              label = budget.label ?? _uncategorizedDisplayLabel(recurringKey, uncategorizedNames);
               spent = uncategorizedSpendMap[recurringKey] ?? 0.0;
               usedUncategorizedKeys.add(recurringKey);
+              uncatKeyToGroupKey[recurringKey] = groupKey;
               remainingUncategorized = math.max(remainingUncategorized - spent, 0.0);
             } else {
-              continue; // No description to match
+              continue;
             }
           } else {
-            continue; // Skip non-recurring uncategorized category budgets
+            continue;
           }
         } else {
           groupKey = 'cat:${budget.categoryId}';
@@ -201,31 +201,60 @@ class InsightsService {
         spent = goalSpendMap[budget.goalId!] ?? 0.0;
         isGoal = true;
       } else if (budget.recurringTransactionId != null) {
-        // Handle recurring transaction budgets
         final recurringKey = recurringById[budget.recurringTransactionId!];
         if (recurringKey != null && recurringKey.isNotEmpty) {
-          groupKey = 'rec:${budget.recurringTransactionId}';
-          label = _uncategorizedDisplayLabel(recurringKey, uncategorizedNames);
-          spent = uncategorizedSpendMap[recurringKey] ?? 0.0;
-          usedUncategorizedKeys.add(recurringKey);
-          remainingUncategorized = math.max(remainingUncategorized - spent, 0.0);
+          final recCatId = recurringCatById[budget.recurringTransactionId!];
+          final recCatName = recCatId != null ? budgetCategoryNames[recCatId] : null;
+          final isRecCatUncategorized = recCatName != null &&
+              (recCatName.toLowerCase() == 'uncategorized' ||
+               recCatName.toLowerCase() == 'uncategorised');
+          final mergeIntoCat = recCatId != null &&
+              !isRecCatUncategorized &&
+              groupedBudgets.containsKey('cat:$recCatId');
+
+          if (mergeIntoCat) {
+            groupKey = 'cat:$recCatId';
+            label = budgetCategoryNames[recCatId!] ?? 'Category';
+            spent = 0;
+          } else {
+            // Check if an uncategorized-key budget already created a group for this key
+            final existingGroupKey = uncatKeyToGroupKey[recurringKey];
+            if (existingGroupKey != null && groupedBudgets.containsKey(existingGroupKey)) {
+              groupKey = existingGroupKey;
+              label = groupedBudgets[existingGroupKey]!.label;
+              spent = 0; // Already counted
+            } else {
+              groupKey = 'rec:${budget.recurringTransactionId}';
+              label = budget.label ?? _uncategorizedDisplayLabel(recurringKey, uncategorizedNames);
+              spent = uncategorizedSpendMap[recurringKey] ?? 0.0;
+              usedUncategorizedKeys.add(recurringKey);
+              uncatKeyToGroupKey[recurringKey] = groupKey;
+              remainingUncategorized = math.max(remainingUncategorized - spent, 0.0);
+            }
+          }
         } else {
-          // Recurring transaction doesn't have a description, skip
           continue;
         }
       } else {
         label = _uncategorizedLabelForBudget(budget, uncategorizedNames);
         final key = budget.uncategorizedKey;
         if (key != null && key.isNotEmpty) {
-          groupKey = 'key:$key';
-          // Always use the display label for better names
-          label = _uncategorizedDisplayLabel(key, uncategorizedNames);
-          spent = uncategorizedSpendMap[key] ?? 0.0;
-          usedUncategorizedKeys.add(key);
-          remainingUncategorized =
-              math.max(remainingUncategorized - spent, 0.0);
+          // Check if a recurring budget already created a group for this key
+          final existingGroupKey = uncatKeyToGroupKey[key];
+          if (existingGroupKey != null && groupedBudgets.containsKey(existingGroupKey)) {
+            groupKey = existingGroupKey;
+            label = groupedBudgets[existingGroupKey]!.label;
+            spent = 0; // Already counted
+          } else {
+            groupKey = 'key:$key';
+            label = _uncategorizedDisplayLabel(key, uncategorizedNames);
+            spent = uncategorizedSpendMap[key] ?? 0.0;
+            usedUncategorizedKeys.add(key);
+            uncatKeyToGroupKey[key] = groupKey;
+            remainingUncategorized =
+                math.max(remainingUncategorized - spent, 0.0);
+          }
         } else {
-          // Skip budgets with no specific uncategorized key - they're catch-all placeholders
           final labelLower = label.toLowerCase();
           if (labelLower == 'uncategorized' || 
               labelLower == 'uncategorised' || 

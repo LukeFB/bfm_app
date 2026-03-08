@@ -29,34 +29,30 @@ import 'package:flutter/material.dart';
 // import 'package:local_auth/error_codes.dart' as auth_error;
 // import 'package:local_auth/local_auth.dart'; // Auth
 
-import 'package:bfm_app/screens/dashboard_screen.dart';
 import 'package:bfm_app/screens/transactions_screen.dart';
 import 'package:bfm_app/screens/goals_screen.dart';
-import 'package:bfm_app/screens/chat_screen.dart';
-import 'package:bfm_app/screens/insights_screen.dart';
 import 'package:bfm_app/screens/settings_screen.dart';
-import 'package:bfm_app/screens/bank_connect_screen.dart'; // BankConnect screen
-import 'package:bfm_app/screens/debug_screen.dart'; // Debug
-import 'package:bfm_app/screens/debug_api_screen.dart'; // Backend API debug
+import 'package:bfm_app/screens/bank_connect_screen.dart';
+import 'package:bfm_app/screens/debug_screen.dart';
+import 'package:bfm_app/screens/debug_api_screen.dart';
 import 'package:bfm_app/screens/onboarding_screen.dart';
-import 'package:bfm_app/widgets/main_shell.dart'; // Swipeable navigation shell
+import 'package:bfm_app/widgets/main_shell.dart';
 
 import 'package:bfm_app/screens/budget_build_screen.dart';
 import 'package:bfm_app/screens/budget_recurring_screen.dart';
-import 'package:bfm_app/screens/budgets_screen.dart';
 import 'package:bfm_app/screens/subscriptions_screen.dart';
 import 'package:bfm_app/screens/enter_pin_screen.dart';
-import 'package:bfm_app/screens/savings_screen.dart';
 import 'package:bfm_app/screens/set_pin_screen.dart';
 
 import 'package:bfm_app/services/pin_store.dart';
 import 'package:bfm_app/utils/app_route_observer.dart';
-
+import 'package:bfm_app/theme/buxly_theme.dart';
 
 import 'package:bfm_app/screens/login_screen.dart';
 import 'package:bfm_app/services/onboarding_store.dart';
 import 'package:bfm_app/controllers/auth_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 /// Root gate widget that blocks the navigation stack until a user completes
 /// biometrics or PIN auth. Owned by `MyApp` and pushed right after launch.
@@ -254,14 +250,9 @@ class MyApp extends StatelessWidget {
           child: child,
         );
       },
-      title: 'BFM App',
-      theme: ThemeData(
-        primaryColor: const Color(0xFF005494),
-        colorScheme: ColorScheme.fromSwatch().copyWith(
-          secondary: const Color(0xFFFF6934),
-        ),
-        scaffoldBackgroundColor: Colors.grey[100],
-        fontFamily: 'Roboto',
+      title: 'Buxly',
+      theme: BuxlyTheme.light.copyWith(
+        textTheme: GoogleFonts.nunitoTextTheme(BuxlyTheme.light.textTheme),
       ),
       home: const LockGate(), // Set the home to our LockGate
       routes: {

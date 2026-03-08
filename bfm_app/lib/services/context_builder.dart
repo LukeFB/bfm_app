@@ -25,6 +25,7 @@ import 'package:bfm_app/models/onboarding_response.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/services/app_savings_store.dart';
+import 'package:bfm_app/services/budget_buffer_store.dart';
 import 'package:bfm_app/services/budget_comparison_service.dart';
 import 'package:bfm_app/services/budget_streak_service.dart';
 import 'package:bfm_app/services/chat_storage.dart';
@@ -76,6 +77,11 @@ class ContextBuilder {
     buf.writeln('\n--- APP SAVINGS ---');
     buf.writeln('(Cumulative money saved by staying under budget each week.)');
     await _appSavingsSection(buf);
+
+    // ── Budget buffer ──────────────────────────────────────────────────────
+    buf.writeln('\n--- BUDGET BUFFER ---');
+    buf.writeln('(Money put aside from weekly budget surpluses as a safety net for budgets.)');
+    await _budgetBufferSection(buf);
 
     // ── Savings goals ──────────────────────────────────────────────────────
     buf.writeln('\n--- SAVINGS GOALS ---');
@@ -276,6 +282,38 @@ class ContextBuilder {
       }
     } catch (e) {
       buf.writeln('Unable to load app savings: $e');
+    }
+  }
+
+  /// Per-budget buffer — money set aside from weekly surpluses per budget.
+  static Future<void> _budgetBufferSection(StringBuffer buf) async {
+    try {
+      final balances = await BudgetBufferStore.getAll();
+      final lastContribs = await BudgetBufferStore.getLastContributions();
+
+      buf.writeln('');
+      buf.writeln('How the budget buffer works:');
+      buf.writeln('  Each budget has its own buffer. Weekly surpluses (budget limit minus spend)');
+      buf.writeln('  are added to that budget\'s buffer. If overspent, the buffer absorbs it.');
+      buf.writeln('  If a budget\'s buffer goes negative, app savings cover that individual shortfall.');
+      buf.writeln('  This is a safety net — if there\'s a big payment on a budget but');
+      buf.writeln('  that budget\'s buffer covers it, the user is still on track.');
+      buf.writeln('');
+
+      if (balances.isEmpty) {
+        buf.writeln('No buffer built up yet — it grows as budgets have surpluses each week.');
+        return;
+      }
+
+      for (final entry in balances.entries) {
+        final lastContrib = lastContribs[entry.key];
+        final contribStr = lastContrib != null
+            ? ' (last week: ${lastContrib >= 0 ? '+' : ''}\$${lastContrib.toStringAsFixed(0)})'
+            : '';
+        buf.writeln('• ${entry.key}: \$${entry.value.toStringAsFixed(0)} buffered$contribStr');
+      }
+    } catch (e) {
+      buf.writeln('Unable to load budget buffer: $e');
     }
   }
 

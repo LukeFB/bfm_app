@@ -39,24 +39,23 @@ class AppSavingsStore {
   }
 
   /// Withdraws from savings (e.g., to cover a deficit).
-  /// Returns the amount actually withdrawn (may be less than requested if insufficient).
+  /// Savings can go negative — this represents money the user needs to
+  /// "earn back" by staying under budget in future weeks.
+  /// Returns the amount withdrawn (always equals [amount]).
   static Future<double> withdraw(double amount) async {
     if (amount <= 0) return 0.0;
     final prefs = await SharedPreferences.getInstance();
     final current = prefs.getDouble(_prefsTotalKey) ?? 0.0;
-    final withdrawn = amount.clamp(0.0, current);
-    final newTotal = current - withdrawn;
+    final newTotal = current - amount;
     await prefs.setDouble(_prefsTotalKey, newTotal);
-    if (withdrawn > 0) {
-      await _recordHistory(prefs, withdrawn, 'withdraw');
-    }
-    return withdrawn;
+    await _recordHistory(prefs, amount, 'withdraw');
+    return amount;
   }
 
   /// Sets the total directly (use sparingly, mainly for testing/debugging).
   static Future<void> setTotal(double amount) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble(_prefsTotalKey, amount.clamp(0.0, double.infinity));
+    await prefs.setDouble(_prefsTotalKey, amount);
   }
 
   /// Clears all savings (for testing/debugging).

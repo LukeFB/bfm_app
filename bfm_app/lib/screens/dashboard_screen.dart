@@ -1,45 +1,17 @@
-/// ---------------------------------------------------------------------------
-/// File: lib/screens/dashboard_screen.dart
-/// Author: Luke Fraser-Brown
-///
-/// Called by:
-///   - `/dashboard` route (main entry after LockGate).
-///
-/// Purpose:
-///   - Aggregates and displays the user's weekly budget, alerts, goals, tips,
-///     events, and recent transactions in one scrollable surface.
-///
-/// Inputs:
-///   - Fetches data via `DashboardService`, `TransactionRepository`, and
-///     `ContentSyncService`.
-///
-/// Outputs:
-///   - UI summarising money health plus navigation entry points.
-///
-/// Budget header logic:
-///   leftToSpend = income - budgeted - budgetOverspend - nonBudgetSpend
-///
-/// Where:
-///   budgetOverspend = max(0, spentOnBudgets - totalBudgeted)
-///   nonBudgetSpend = expenses this week NOT in budgeted categories
-/// (uncategorised counts as non-budget spend).
-/// ---------------------------------------------------------------------------
+import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:bfm_app/utils/app_route_observer.dart';
 import 'package:bfm_app/models/dash_data.dart';
 import 'package:bfm_app/services/dashboard_service.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:bfm_app/utils/date_utils.dart';
-import 'package:bfm_app/widgets/dashboard_card.dart';
-import 'package:bfm_app/widgets/bottom_bar_button.dart';
-import 'package:bfm_app/widgets/activity_item.dart';
+import 'package:bfm_app/utils/category_emoji_helper.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
-
 import 'package:bfm_app/repositories/transaction_repository.dart';
-
+import 'package:bfm_app/repositories/tip_repository.dart';
 import 'package:bfm_app/models/alert_model.dart';
 import 'package:bfm_app/repositories/alert_repository.dart';
 import 'package:bfm_app/models/event_model.dart';
@@ -50,61 +22,54 @@ import 'package:bfm_app/services/budget_streak_service.dart';
 import 'package:bfm_app/services/content_sync_service.dart';
 import 'package:bfm_app/services/weekly_overview_service.dart';
 import 'package:bfm_app/widgets/weekly_overview_sheet.dart';
-import 'package:bfm_app/widgets/help_icon_tooltip.dart';
+import 'package:bfm_app/theme/buxly_theme.dart';
 
-const Color bfmBlue = Color(0xFF005494); // TODO: make a themes file
-const Color bfmOrange = Color(0xFFFF6934);
-const Color bfmBeige = Color(0xFFF5F5E1);
-
-/// Home surface summarising budgets, goals, alerts, and recent activity.
 class DashboardScreen extends StatefulWidget {
-  /// When true, the screen is embedded in MainShell and won't show its own bottom nav.
   final bool embedded;
-
   const DashboardScreen({super.key, this.embedded = false});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-/// Manages refresh logic, route awareness, and UI helpers for dashboard data.
-class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
+class _DashboardScreenState extends State<DashboardScreen>
+    with RouteAware, AutomaticKeepAliveClientMixin {
   late Future<DashData> _future;
+  DashData? _lastData;
   bool _weeklyOverviewCheckInFlight = false;
+  CategoryEmojiHelper? _emojiHelper;
 
-  /// Bootstraps the dashboard load as soon as the widget mounts.
+  @override
+  bool get wantKeepAlive => true;
+
   @override
   void initState() {
     super.initState();
     _future = _load();
+    _initEmojiHelper();
   }
 
-  /// Subscribes to route observer so we can refresh when returning to the tab.
+  Future<void> _initEmojiHelper() async {
+    final helper = await CategoryEmojiHelper.ensureLoaded();
+    if (mounted) setState(() => _emojiHelper = helper);
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final route = ModalRoute.of(context);
-    if (route != null) {
-      appRouteObserver.subscribe(this, route);
-    }
+    if (route != null) appRouteObserver.subscribe(this, route);
   }
 
-  /// Unsubscribes from the route observer.
   @override
   void dispose() {
     appRouteObserver.unsubscribe(this);
     super.dispose();
   }
 
-  /// Refresh when returning from another screen (e.g., budget edit) so totals update.
   @override
-  void didPopNext() {
-    _refresh();
-  }
+  void didPopNext() => _refresh();
 
-  /// Loads local DB data immediately and kicks off a background sync.
-  /// The UI renders whatever is in the local DB right away; when the sync
-  /// finishes, `_syncInBackground` triggers a rebuild with fresh data.
   Future<DashData> _load() async {
     _syncInBackground();
     final data = await _loadLocal();
@@ -112,8 +77,6 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     return data;
   }
 
-  /// Runs transaction + content syncs in the background. When either completes,
-  /// refreshes the dashboard so the UI picks up new data without blocking.
   Future<void> _syncInBackground() async {
     var needsRefresh = false;
     try {
@@ -129,13 +92,10 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
       debugPrint('Content sync: $e');
     }
     if (needsRefresh && mounted) {
-      setState(() {
-        _future = _loadLocal();
-      });
+      setState(() => _future = _loadLocal());
     }
   }
 
-  /// Loads dashboard data from local DB only (no network).
   Future<DashData> _loadLocal() async {
     final results = await Future.wait([
       DashboardService.getWeeklyIncome(),
@@ -163,9 +123,15 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     final budgetStreak = results[9] as BudgetStreakData;
     final goalBudgetTotal = results[10] as double;
 
-    final budgetOverspend = (spentOnBudgets - totalBudgeted).clamp(0.0, double.infinity);
-    final nonBudgetSpend = (totalExpenses - spentOnBudgets).clamp(0.0, double.infinity);
-    final leftToSpend = weeklyIncome - totalBudgeted - goalBudgetTotal - budgetOverspend - nonBudgetSpend;
+    final budgetOverspend =
+        (spentOnBudgets - totalBudgeted).clamp(0.0, double.infinity);
+    final nonBudgetSpend =
+        (totalExpenses - spentOnBudgets).clamp(0.0, double.infinity);
+    final leftToSpend = weeklyIncome -
+        totalBudgeted -
+        goalBudgetTotal -
+        budgetOverspend -
+        nonBudgetSpend;
 
     return DashData(
       leftToSpendThisWeek: leftToSpend,
@@ -184,55 +150,25 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     );
   }
 
-  /// Triggers a rebuild by swapping the Future (uses stale check).
   Future<void> _refresh() async {
-    setState(() {
-      _future = _load();
-    });
+    setState(() => _future = _load());
   }
 
-  /// Force syncs transactions immediately (bypasses stale check).
-  /// Used for pull-to-refresh when user wants latest data NOW.
   Future<void> _forceSync() async {
     await TransactionSyncService().syncNow(forceRefresh: true);
     if (!mounted) return;
-    setState(() {
-      _future = _loadLocal();
-    });
+    setState(() => _future = _loadLocal());
   }
 
-  /// Pushes a named route and refreshes the dashboard after returning.
   Future<void> _openRoute(String route) async {
     await Navigator.pushNamed(context, route);
     if (!mounted) return;
     _refresh();
   }
 
-
-  /// Tiny helper for "Apr 12" style date labels.
-  String _formatShortDate(DateTime date) {
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    final month = months[date.month - 1];
-    return '$month ${date.day}';
-  }
-
   void _scheduleWeeklyOverviewCheck() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _maybeShowWeeklyOverview();
-    });
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _maybeShowWeeklyOverview());
   }
 
   Future<void> _maybeShowWeeklyOverview() async {
@@ -246,7 +182,8 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
           builder: (_) => WeeklyOverviewSheet(
             payload: payload,
             onFinish: () async {
-              await WeeklyOverviewService.markOverviewHandled(payload.weekStart);
+              await WeeklyOverviewService.markOverviewHandled(
+                  payload.weekStart);
               if (!mounted) return;
               await _refresh();
             },
@@ -259,18 +196,28 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
     }
   }
 
-  /// Renders the scrollable dashboard plus bottom navigation.
+  Future<void> _openSettings() async {
+    await Navigator.pushNamed(context, '/settings');
+    if (mounted) _refresh();
+  }
+
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Scaffold(
+      backgroundColor: BuxlyColors.offWhite,
       body: SafeArea(
         child: FutureBuilder<DashData>(
           future: _future,
           builder: (context, snap) {
             if (snap.connectionState != ConnectionState.done) {
-              return const Center(child: CircularProgressIndicator());
+              if (_lastData != null) return _buildContent(_lastData!);
+              return const Center(
+                child: CircularProgressIndicator(color: BuxlyColors.teal),
+              );
             }
             if (snap.hasError) {
+              if (_lastData != null) return _buildContent(_lastData!);
               return Center(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -282,632 +229,883 @@ class _DashboardScreenState extends State<DashboardScreen> with RouteAware {
               );
             }
 
-            final data = snap.data!;
-
-            final featuredTip = data.featuredTip;
-            final upcomingEvents = data.events;
-            final isOverspent = data.leftToSpendThisWeek < 0;
-
-            return RefreshIndicator(
-              onRefresh: _forceSync,
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // ---------- SAFE TO SPEND FIGURE ----------
-                    Center(
-                      child: Column(
-                        children: [
-                          Text(
-                            '${isOverspent ? '-' : ''}\$${data.leftToSpendThisWeek.abs().toStringAsFixed(0)}',
-                            style: TextStyle(
-                              fontSize: 64,
-                              fontWeight: FontWeight.bold,
-                              color: isOverspent ? const Color(0xFFE53935) : bfmBlue,
-                            ),
-                          ),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text(
-                                'Safe to Spend on Non Essentials',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.black54,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              HelpIconTooltip(
-                                title: 'Safe to Spend',
-                                message: 'This is how much you can safely spend on non essentials this week after accounting for:\n\n'
-                                    '• Your budgeted expenses (bills, groceries, etc.)\n'
-                                    '• Any overspending on budgets\n'
-                                    '• Non-budgeted spending\n\n'
-                                    'Formula: Income - Budgeted - Budget Overspend - Non-budget Spend\n\n'
-                                    'Keep this positive to stay on track!',
-                                size: 16,
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // ---------- INCOME & BUDGETED ROW ----------
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '\$${data.weeklyIncome.toStringAsFixed(0)}',
-                                style: const TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF4CAF50),
-                                ),
-                              ),
-                              const Text(
-                                'Income',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.black54,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                '\$${data.totalBudgeted.toStringAsFixed(0)}',
-                                style: const TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.bold,
-                                  color: bfmOrange,
-                                ),
-                              ),
-                              const Text(
-                                'Budgeted',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.black54,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // ---------- ALERTS AND GOALS SIDE BY SIDE ----------
-                    SizedBox(
-                      height: 160,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          // Alerts Card (Left)
-                          Expanded(
-                            child: _AlertsCard(
-                              alerts: data.alerts,
-                              onAlertsPressed: () => _openRoute('/alerts/manage'),
-                              onDataChanged: _refresh,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          // Goals Card (Right)
-                          Expanded(
-                            child: _GoalsCard(
-                              goals: data.allGoals,
-                              onGoalsPressed: () => _openRoute('/goals'),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    // ---------- RECENT ACTIVITY ----------
-                    DashboardCard(
-                      title: "Recent Activity",
-                      trailing: IconButton(
-                        icon: const Icon(Icons.chevron_right),
-                        tooltip: 'View all transactions',
-                        onPressed: () => _openRoute('/transaction'),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          ...data.recent.map((t) {
-                            final date = DateUtilsBFM.weekdayLabel(t.date);
-                            final amt = (t.type == 'expense')
-                                ? -t.amount.abs()
-                                : t.amount.abs();
-                            return ActivityItem(
-                              label: t.description.isEmpty
-                                  ? "Transaction"
-                                  : t.description,
-                              amount: amt,
-                              date: date,
-                              excluded: t.excluded,
-                            );
-                          }),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    // ---------- FINANCIAL TIP ----------
-                    DashboardCard(
-                      title: "Financial Tip",
-                      child: featuredTip == null
-                          ? const Text(
-                              "No curated tips yet — connect to Wi-Fi to grab the latest advice.",
-                            )
-                          : Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  featuredTip.title,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  featuredTip.expiresAt != null
-                                      ? 'Ends ${_formatShortDate(featuredTip.expiresAt!)}'
-                                      : 'No finish date set',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.black54,
-                                  ),
-                                ),
-                              ],
-                            ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    // ---------- EVENTS ----------
-                    DashboardCard(
-                      title: "Upcoming Events",
-                      child: upcomingEvents.isEmpty
-                          ? const Text(
-                              "No upcoming campus events right now. Check back soon!",
-                            )
-                          : Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                for (
-                                  int i = 0;
-                                  i < upcomingEvents.length;
-                                  i++
-                                ) ...[
-                                  Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        upcomingEvents[i].title,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        upcomingEvents[i].endDate != null
-                                            ? 'Ends ${_formatShortDate(upcomingEvents[i].endDate!)}'
-                                            : 'No finish date set',
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.black54,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  if (i != upcomingEvents.length - 1)
-                                    const SizedBox(height: 12),
-                                ],
-                              ],
-                            ),
-                    ),
-                  ],
-                ),
-              ),
-            );
+            _lastData = snap.data!;
+            return _buildContent(snap.data!);
           },
         ),
       ),
+    );
+  }
 
-      // -------------------- BOTTOM NAV --------------------
-      // Only show when not embedded in MainShell
-      bottomNavigationBar: widget.embedded
-          ? null
-          : SafeArea(
-              child: Container(
-                color: bfmBlue,
-                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: BottomBarButton(
-                        icon: Icons.insights,
-                        label: "Insights",
-                        onTap: () => _openRoute('/insights'),
-                      ),
-                    ),
-                    Expanded(
-                      child: BottomBarButton(
-                        icon: Icons.account_balance_wallet,
-                        label: "Budget",
-                        onTap: () => _openRoute('/budgets'),
-                      ),
-                    ),
-                    Expanded(
-                      child: BottomBarButton(
-                        icon: Icons.savings_outlined,
-                        label: "Savings",
-                        onTap: () => _openRoute('/savings'),
-                      ),
-                    ),
-                    Expanded(
-                      child: BottomBarButton(
-                        icon: Icons.chat_bubble,
-                        label: "Moni AI",
-                        onTap: () => _openRoute('/chat'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+  Widget _buildContent(DashData data) {
+    return RefreshIndicator(
+      color: BuxlyColors.teal,
+      onRefresh: _forceSync,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildHeader(),
+            const SizedBox(height: 12),
+            _HeroCard(data: data),
+            const SizedBox(height: 16),
+            _AlertsGoalsRow(
+              alerts: data.alerts,
+              goals: data.allGoals,
+              onAlertsPressed: () => _openRoute('/alerts/manage'),
+              onGoalsPressed: () => _openRoute('/goals'),
             ),
+            const SizedBox(height: 16),
+            _RotatingTipCard(),
+            const SizedBox(height: 16),
+            _RecentActivityCard(
+              transactions: data.recent,
+              emojiHelper: _emojiHelper,
+              onViewAll: () => _openRoute('/transaction'),
+            ),
+            if (data.events.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _EventsCard(events: data.events),
+            ],
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Financial Health. Mental Wealth.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic,
+                    color: BuxlyColors.midGrey,
+                    fontFamily: BuxlyTheme.fontFamily,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                SvgPicture.asset(
+                  'assets/images/SVG/BUXLY LOGO_Horizontal_Wordmark_Light Turquoise.svg',
+                  height: 28,
+                  colorFilter: const ColorFilter.mode(
+                    BuxlyColors.teal,
+                    BlendMode.srcIn,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Notifications',
+            icon: const Icon(
+              Icons.notifications_outlined,
+              color: BuxlyColors.darkText,
+            ),
+            onPressed: () {},
+          ),
+          IconButton(
+            tooltip: 'Settings',
+            icon: const Icon(
+              Icons.settings_outlined,
+              color: BuxlyColors.darkText,
+            ),
+            onPressed: _openSettings,
+          ),
+        ],
+      ),
     );
   }
 }
 
-/// Scrollable alerts card for the dashboard.
-/// Cancel-subscription alerts show an inline checkbox to mark as done.
-class _AlertsCard extends StatefulWidget {
-  final List<AlertModel> alerts;
-  final VoidCallback? onAlertsPressed;
-  final VoidCallback? onDataChanged;
+// ---------------------------------------------------------------------------
+// Hero Card
+// ---------------------------------------------------------------------------
 
-  const _AlertsCard({
-    required this.alerts,
-    this.onAlertsPressed,
-    this.onDataChanged,
+class _HeroCard extends StatelessWidget {
+  final DashData data;
+  const _HeroCard({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final isOverspent = data.leftToSpendThisWeek < 0;
+    final income = data.weeklyIncome;
+    final budgetOrSpent = data.spentOnBudgets > data.totalBudgeted
+        ? data.spentOnBudgets
+        : data.totalBudgeted;
+    final weeklyLimit = (income - budgetOrSpent).clamp(0.0, double.infinity);
+    final nonEssentialSpent = data.discretionarySpent;
+    final progress =
+        weeklyLimit > 0 ? (nonEssentialSpent / weeklyLimit).clamp(0.0, 1.0) : 0.0;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: BuxlyColors.heroGradient,
+        borderRadius: BorderRadius.circular(BuxlyRadius.xl),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Safe to spend on non-essentials',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: BuxlyColors.white.withOpacity(0.9),
+                  fontFamily: BuxlyTheme.fontFamily,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: () => _showExplanation(context),
+                child: Icon(
+                  Icons.info_outline,
+                  size: 16,
+                  color: BuxlyColors.white.withOpacity(0.7),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${isOverspent ? '-' : ''}\$${data.leftToSpendThisWeek.abs().toStringAsFixed(0)}',
+            style: const TextStyle(
+              fontSize: 56,
+              fontWeight: FontWeight.w800,
+              color: BuxlyColors.white,
+              fontFamily: BuxlyTheme.fontFamily,
+              height: 1.1,
+              letterSpacing: -2,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _StatChip(
+                label: 'Income',
+                value: '\$${income.toStringAsFixed(0)}',
+                color: BuxlyColors.limeGreen,
+              ),
+              const SizedBox(width: 8),
+              _StatChip(
+                label: 'Budgeted',
+                value: '\$${data.totalBudgeted.toStringAsFixed(0)}',
+                color: BuxlyColors.coralOrange,
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(BuxlyRadius.pill),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 8,
+              color: isOverspent
+                  ? BuxlyColors.coralOrange
+                  : BuxlyColors.white.withOpacity(0.9),
+              backgroundColor: BuxlyColors.white.withOpacity(0.25),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${(progress * 100).toInt()}% of non-essential spend used',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: BuxlyColors.white.withOpacity(0.8),
+                  fontFamily: BuxlyTheme.fontFamily,
+                ),
+              ),
+              Text(
+                'Limit: \$${weeklyLimit.toStringAsFixed(0)}/wk',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: BuxlyColors.white.withOpacity(0.8),
+                  fontFamily: BuxlyTheme.fontFamily,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showExplanation(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(BuxlyRadius.lg),
+        ),
+        title: const Text(
+          'Safe to Spend',
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            fontFamily: BuxlyTheme.fontFamily,
+          ),
+        ),
+        content: const Text(
+          'Your income minus your budgeted essentials minus what you\'ve '
+          'already spent on non-essentials this week.\n\n'
+          'Income − Budget − Non-essential spending\n= Safe to spend',
+          style: TextStyle(
+            fontSize: 14,
+            fontFamily: BuxlyTheme.fontFamily,
+            height: 1.5,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+
+  const _StatChip({
+    required this.label,
+    required this.value,
+    required this.color,
   });
 
   @override
-  State<_AlertsCard> createState() => _AlertsCardState();
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(BuxlyRadius.pill),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '$label: $value',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: BuxlyColors.white,
+              fontFamily: BuxlyTheme.fontFamily,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-class _AlertsCardState extends State<_AlertsCard> {
-  static const Color redOverspent = Color(0xFFE53935);
-  final Set<int> _completingIds = {};
+// ---------------------------------------------------------------------------
+// Alerts & Goals Row
+// ---------------------------------------------------------------------------
 
-  Future<void> _markDone(AlertModel alert) async {
-    if (alert.id == null) return;
-    setState(() => _completingIds.add(alert.id!));
-    await AlertRepository.markCompleted(alert.id!);
-    if (!mounted) return;
-    setState(() => _completingIds.remove(alert.id!));
-    widget.onDataChanged?.call();
+class _AlertsGoalsRow extends StatelessWidget {
+  final List<AlertModel> alerts;
+  final List<GoalModel> goals;
+  final VoidCallback onAlertsPressed;
+  final VoidCallback onGoalsPressed;
+
+  const _AlertsGoalsRow({
+    required this.alerts,
+    required this.goals,
+    required this.onAlertsPressed,
+    required this.onGoalsPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 170,
+      child: Row(
+        children: [
+          Expanded(
+            child: _AlertsCard(alerts: alerts, onPressed: onAlertsPressed),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _GoalsCard(goals: goals, onPressed: onGoalsPressed),
+          ),
+        ],
+      ),
+    );
   }
+}
+
+class _AlertsCard extends StatelessWidget {
+  final List<AlertModel> alerts;
+  final VoidCallback onPressed;
+
+  const _AlertsCard({required this.alerts, required this.onPressed});
 
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
-    final sortedAlerts = List<AlertModel>.from(widget.alerts)
+
+    // Show standard and recurring alerts, exclude cancel-subscription
+    final filtered = alerts
+        .where((a) => a.type != AlertType.cancelSubscription)
+        .toList()
       ..sort((a, b) {
-        // Cancel-subscription alerts first, then by due date
-        if (a.isCancelSubscription != b.isCancelSubscription) {
-          return a.isCancelSubscription ? -1 : 1;
-        }
         if (a.dueDate == null && b.dueDate == null) return 0;
         if (a.dueDate == null) return 1;
         if (b.dueDate == null) return -1;
         return a.dueDate!.compareTo(b.dueDate!);
       });
+    final top2 = filtered.take(2).toList();
 
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Text(
-                'Alerts',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
+    return GestureDetector(
+      onTap: onPressed,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BuxlyTheme.cardDecoration,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'Alerts',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: BuxlyColors.darkText,
+                    fontFamily: BuxlyTheme.fontFamily,
+                  ),
                 ),
-              ),
-              const Spacer(),
-              GestureDetector(
-                onTap: widget.onAlertsPressed,
-                child: const Icon(
-                  Icons.chevron_right,
-                  size: 24,
-                  color: Colors.grey,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: sortedAlerts.isEmpty
-                ? const Center(
-                    child: Text(
-                      'No alerts',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey,
+                const Spacer(),
+                Icon(Icons.chevron_right,
+                    size: 22, color: BuxlyColors.midGrey),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: top2.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No alerts',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: BuxlyColors.midGrey,
+                          fontFamily: BuxlyTheme.fontFamily,
+                        ),
                       ),
-                    ),
-                  )
-                : ListView.separated(
-                    padding: EdgeInsets.zero,
-                    itemCount: sortedAlerts.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (context, index) {
-                      final alert = sortedAlerts[index];
-                      final daysLeft = alert.dueDate != null
-                          ? alert.dueDate!.difference(now).inDays
-                          : null;
-                      final icon = alert.icon ?? '🔔';
-                      final hasAmount = alert.amount != null && alert.amount! > 0;
-                      final isCompleting = _completingIds.contains(alert.id);
+                    )
+                  : Column(
+                      mainAxisAlignment: MainAxisAlignment.start,
+                      children: top2.map((alert) {
+                        final icon = alert.icon ?? '🔔';
+                        final dueLabel = _dueDateLabel(alert.dueDate, now);
+                        final hasAmount =
+                            alert.amount != null && alert.amount! > 0;
 
-                      String daysText = '';
-                      if (daysLeft != null) {
-                        daysText = daysLeft <= 0
-                            ? 'Today'
-                            : daysLeft == 1
-                                ? '1d'
-                                : '${daysLeft}d';
-                      }
-
-                      if (alert.isCancelSubscription) {
-                        return GestureDetector(
-                          onTap: widget.onAlertsPressed,
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
                           child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(icon, style: const TextStyle(fontSize: 14)),
-                              const SizedBox(width: 6),
+                              Text(icon,
+                                  style: const TextStyle(fontSize: 16)),
+                              const SizedBox(width: 8),
                               Expanded(
-                                child: Text(
-                                  alert.title,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    color: Color(0xFFE53935),
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              if (hasAmount) ...[
-                                Text(
-                                  '\$${alert.amount!.toStringAsFixed(0)}',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                              ],
-                              SizedBox(
-                                width: 24,
-                                height: 24,
-                                child: isCompleting
-                                    ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(strokeWidth: 2),
-                                      )
-                                    : IconButton(
-                                        padding: EdgeInsets.zero,
-                                        iconSize: 20,
-                                        icon: const Icon(
-                                          Icons.check_circle_outline,
-                                          color: Color(0xFF4CAF50),
-                                        ),
-                                        onPressed: () => _markDone(alert),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      alert.title,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: alert.isCancelSubscription
+                                            ? BuxlyColors.coralOrange
+                                            : BuxlyColors.darkText,
+                                        fontFamily: BuxlyTheme.fontFamily,
                                       ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    if (dueLabel.isNotEmpty ||
+                                        hasAmount)
+                                      Text(
+                                        [
+                                          if (dueLabel.isNotEmpty) dueLabel,
+                                          if (hasAmount)
+                                            '\$${alert.amount!.toStringAsFixed(0)}',
+                                        ].join(' · '),
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: BuxlyColors.midGrey,
+                                          fontFamily: BuxlyTheme.fontFamily,
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
                             ],
                           ),
                         );
-                      }
+                      }).toList(),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-                      return GestureDetector(
-                        onTap: widget.onAlertsPressed,
-                        child: Row(
+  String _dueDateLabel(DateTime? dueDate, DateTime now) {
+    if (dueDate == null) return '';
+    final diff = dueDate.difference(now).inDays;
+    if (diff < 0) return 'Overdue';
+    if (diff == 0) return 'Today';
+    if (diff == 1) return 'Tomorrow';
+    if (diff <= 7) return '${diff}d left';
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[dueDate.month - 1]} ${dueDate.day}';
+  }
+}
+
+class _GoalsCard extends StatelessWidget {
+  final List<GoalModel> goals;
+  final VoidCallback onPressed;
+
+  const _GoalsCard({required this.goals, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onPressed,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BuxlyTheme.cardDecoration,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'Goals',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: BuxlyColors.darkText,
+                    fontFamily: BuxlyTheme.fontFamily,
+                  ),
+                ),
+                const Spacer(),
+                Icon(Icons.chevron_right,
+                    size: 22, color: BuxlyColors.midGrey),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: goals.isEmpty
+                  ? Center(
+                      child: Text(
+                        'Tap to create a savings goal!',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: BuxlyColors.midGrey,
+                          fontFamily: BuxlyTheme.fontFamily,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  : ListView.separated(
+                      padding: EdgeInsets.zero,
+                      itemCount: goals.length,
+                      separatorBuilder: (_, __) =>
+                          const SizedBox(height: 10),
+                      itemBuilder: (_, index) {
+                        final goal = goals[index];
+                        final progress = goal.progressFraction;
+                        final barColor = _goalColor(index);
+                        final emoji = goalEmoji(goal);
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(icon, style: const TextStyle(fontSize: 14)),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                alert.title,
-                                style: const TextStyle(fontSize: 13),
-                                overflow: TextOverflow.ellipsis,
+                            Row(
+                              children: [
+                                Text(emoji,
+                                    style:
+                                        const TextStyle(fontSize: 14)),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    goal.name.isEmpty
+                                        ? 'Goal'
+                                        : goal.name,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      fontFamily: BuxlyTheme.fontFamily,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            BuxlyProgressBar(
+                              value: progress,
+                              color: barColor,
+                              height: 5,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '\$${goal.savedAmount.toStringAsFixed(0)} / \$${goal.amount.toStringAsFixed(0)}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: BuxlyColors.midGrey,
+                                fontFamily: BuxlyTheme.fontFamily,
                               ),
                             ),
-                            if (hasAmount) ...[
-                              Text(
-                                '\$${alert.amount!.toStringAsFixed(0)}',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                            ],
-                            if (daysText.isNotEmpty)
-                              Text(
-                                daysText,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: (daysLeft ?? 999) <= 1 ? redOverspent : Colors.grey,
-                                  fontWeight: (daysLeft ?? 999) <= 1 ? FontWeight.w600 : FontWeight.normal,
-                                ),
-                              ),
                           ],
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _goalColor(int index) {
+    const colors = [
+      BuxlyColors.teal,
+      BuxlyColors.limeGreen,
+      BuxlyColors.sunshineYellow,
+      BuxlyColors.skyBlue,
+    ];
+    return colors[index % colors.length];
+  }
+
+}
+
+// ---------------------------------------------------------------------------
+// Rotating Tip Card — loads all tips and cycles through every 60s
+// ---------------------------------------------------------------------------
+
+class _RotatingTipCard extends StatefulWidget {
+  const _RotatingTipCard();
+
+  @override
+  State<_RotatingTipCard> createState() => _RotatingTipCardState();
+}
+
+class _RotatingTipCardState extends State<_RotatingTipCard> {
+  List<TipModel> _tips = [];
+  int _currentIndex = 0;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTips();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadTips() async {
+    final allTips = await TipRepository.getAllActive();
+    if (!mounted || allTips.isEmpty) return;
+
+    setState(() {
+      _tips = allTips;
+      _currentIndex = 0;
+    });
+
+    if (_tips.length > 1) {
+      _timer = Timer.periodic(const Duration(seconds: 60), (_) {
+        if (!mounted) return;
+        setState(() {
+          _currentIndex = (_currentIndex + 1) % _tips.length;
+        });
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_tips.isEmpty) return const SizedBox.shrink();
+
+    final tip = _tips[_currentIndex];
+    final body =
+        tip.description?.isNotEmpty == true ? tip.description! : tip.title;
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 400),
+      child: BuxlyTipCard(
+        key: ValueKey(tip.id ?? _currentIndex),
+        title: 'Money tip of the day',
+        body: body,
+        icon: Icons.lightbulb_rounded,
+        iconColor: BuxlyColors.coralOrange,
       ),
     );
   }
 }
 
-/// Scrollable goals card for the dashboard.
-class _GoalsCard extends StatelessWidget {
-  final List<GoalModel> goals;
-  final VoidCallback? onGoalsPressed;
+// ---------------------------------------------------------------------------
+// Recent Activity
+// ---------------------------------------------------------------------------
 
-  const _GoalsCard({
-    required this.goals,
-    this.onGoalsPressed,
+class _RecentActivityCard extends StatelessWidget {
+  final List<TransactionModel> transactions;
+  final CategoryEmojiHelper? emojiHelper;
+  final VoidCallback onViewAll;
+
+  const _RecentActivityCard({
+    required this.transactions,
+    required this.emojiHelper,
+    required this.onViewAll,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+    return GestureDetector(
+      onTap: onViewAll,
+      child: BuxlyCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'Recent Activity',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: BuxlyColors.darkText,
+                    fontFamily: BuxlyTheme.fontFamily,
+                  ),
+                ),
+                const Spacer(),
+                const Icon(
+                  Icons.chevron_right,
+                  color: BuxlyColors.midGrey,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (transactions.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Text(
+                  'No recent activity',
+                  style: TextStyle(
+                    color: BuxlyColors.midGrey,
+                    fontFamily: BuxlyTheme.fontFamily,
+                  ),
+                ),
+              )
+            else
+            ...transactions.map((t) {
+              final isExpense = t.type == 'expense';
+              final amt = isExpense ? -t.amount.abs() : t.amount.abs();
+              final dateLabel = DateUtilsBFM.weekdayLabel(t.date);
+              final emoji = _emojiForTransaction(t);
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: (isExpense
+                                ? BuxlyColors.coralOrange
+                                : BuxlyColors.limeGreen)
+                            .withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(emoji,
+                          style: const TextStyle(fontSize: 18)),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        t.description.isEmpty
+                            ? 'Transaction'
+                            : t.description,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          fontFamily: BuxlyTheme.fontFamily,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '${amt >= 0 ? '+' : '-'}\$${amt.abs().toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: amt >= 0
+                                ? BuxlyColors.limeGreen
+                                : BuxlyColors.darkText,
+                            fontFamily: BuxlyTheme.fontFamily,
+                          ),
+                        ),
+                        Text(
+                          dateLabel,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: BuxlyColors.midGrey,
+                            fontFamily: BuxlyTheme.fontFamily,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
       ),
+    );
+  }
+
+  String _emojiForTransaction(TransactionModel t) {
+    if (t.type == 'income') return '💰';
+    if (emojiHelper == null) return CategoryEmojiHelper.defaultEmoji;
+
+    // Try category name first; fall back to description if category
+    // doesn't yield a specific match.
+    if (t.categoryName != null && t.categoryName!.isNotEmpty) {
+      final result = emojiHelper!.emojiForName(t.categoryName);
+      if (result != CategoryEmojiHelper.defaultEmoji) return result;
+    }
+    return emojiHelper!.emojiForName(t.description);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Events Card
+// ---------------------------------------------------------------------------
+
+class _EventsCard extends StatelessWidget {
+  final List<EventModel> events;
+  const _EventsCard({required this.events});
+
+  @override
+  Widget build(BuildContext context) {
+    return BuxlyCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Text(
-                'Goals',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const Spacer(),
-              GestureDetector(
-                onTap: onGoalsPressed,
-                child: const Icon(
-                  Icons.chevron_right,
-                  size: 24,
-                  color: Colors.grey,
-                ),
-              ),
-            ],
+          const Text(
+            'Upcoming Events',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: BuxlyColors.darkText,
+              fontFamily: BuxlyTheme.fontFamily,
+            ),
           ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: goals.isEmpty
-                ? Center(
-                    child: GestureDetector(
-                      onTap: onGoalsPressed,
-                      child: const Text(
-                        'Tap to create a savings goal!',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey,
+          const SizedBox(height: 12),
+          for (int i = 0; i < events.length; i++) ...[
+            Row(
+              children: [
+                const BuxlyIconContainer(
+                  icon: Icons.event_outlined,
+                  color: BuxlyColors.skyBlue,
+                  size: 36,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        events[i].title,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                          fontFamily: BuxlyTheme.fontFamily,
                         ),
-                        textAlign: TextAlign.center,
                       ),
-                    ),
-                  )
-                : ListView.separated(
-                    padding: EdgeInsets.zero,
-                    itemCount: goals.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) {
-                      final goal = goals[index];
-                      final progress = goal.progressFraction;
-                      final isComplete = goal.isComplete;
-
-                      return GestureDetector(
-                        onTap: onGoalsPressed,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    goal.name.isEmpty ? 'Goal' : goal.name,
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                if (isComplete)
-                                  const Icon(
-                                    Icons.check_circle,
-                                    size: 16,
-                                    color: Colors.green,
-                                  ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            LinearProgressIndicator(
-                              value: progress,
-                              color: bfmBlue,
-                              backgroundColor: Colors.grey.shade300,
-                              minHeight: 6,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '\$${goal.savedAmount.toStringAsFixed(0)} / \$${goal.amount.toStringAsFixed(0)}',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: Colors.black54,
-                              ),
-                            ),
-                          ],
+                      if (events[i].description?.isNotEmpty == true)
+                        Text(
+                          events[i].description!,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: BuxlyColors.midGrey,
+                            fontFamily: BuxlyTheme.fontFamily,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                      );
-                    },
+                    ],
                   ),
-          ),
+                ),
+                if (events[i].endDate != null)
+                  Text(
+                    _shortDate(events[i].endDate!),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: BuxlyColors.midGrey,
+                      fontFamily: BuxlyTheme.fontFamily,
+                    ),
+                  ),
+              ],
+            ),
+            if (i != events.length - 1) const SizedBox(height: 12),
+          ],
         ],
       ),
     );
+  }
+
+  String _shortDate(DateTime date) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[date.month - 1]} ${date.day}';
   }
 }

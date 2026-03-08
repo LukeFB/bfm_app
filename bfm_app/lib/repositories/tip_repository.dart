@@ -51,4 +51,15 @@ class TipRepository {
     if (rows.isEmpty) return null;
     return TipModel.fromMap(rows.first);
   }
+
+  /// Returns all active tips for rotation on the dashboard.
+  static Future<List<TipModel>> getAllActive() async {
+    final db = await AppDatabase.instance.database;
+    final rows = await db.query(
+      'tips',
+      where: 'is_active = 1',
+      orderBy: 'expires_at ASC, updated_at DESC',
+    );
+    return rows.map((r) => TipModel.fromMap(r)).toList();
+  }
 }

@@ -16,6 +16,7 @@ import 'package:bfm_app/services/budget_analysis_service.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
+import 'package:bfm_app/theme/buxly_theme.dart';
 
 class BudgetBuildScreen extends StatefulWidget {
   const BudgetBuildScreen({super.key, this.editMode = false});
@@ -523,27 +524,21 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
           ),
         ),
 
-        // Category cards
-        if (combinedRows.isNotEmpty)
-          Card(
-            margin: EdgeInsets.zero,
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-              side: BorderSide(color: Colors.black.withOpacity(0.08)),
-            ),
-            child: Column(
-              children: [
-                for (var i = 0; i < combinedRows.length; i++) ...[
-                  combinedRows[i].isUncategorized
-                      ? _buildUncategorizedRow(combinedRows[i].suggestion)
-                      : _buildCategoryRow(combinedRows[i].suggestion),
-                  if (i < combinedRows.length - 1) 
-                    Divider(height: 1, color: Colors.black.withOpacity(0.06)),
-                ],
-              ],
-            ),
+        Text(
+          'Hold to edit',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.black.withOpacity(0.35),
           ),
+        ),
+        const SizedBox(height: 8),
+
+        // Category rows
+        for (final row in combinedRows)
+          row.isUncategorized
+              ? _buildUncategorizedRow(row.suggestion)
+              : _buildCategoryRow(row.suggestion),
       ],
     );
   }
@@ -665,17 +660,17 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
   }
 
   BoxDecoration _rowDecoration(bool isSelected) {
-    final scheme = Theme.of(context).colorScheme;
     return BoxDecoration(
-      color: isSelected ? scheme.primary.withOpacity(0.08) : null,
-      border: isSelected
-          ? Border(
-              left: BorderSide(
-                width: 3,
-                color: scheme.primary,
-              ),
-            )
-          : null,
+      color: isSelected
+          ? BuxlyColors.teal.withOpacity(0.08)
+          : Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(
+        color: isSelected
+            ? BuxlyColors.teal.withOpacity(0.4)
+            : Colors.black12,
+        width: isSelected ? 1.5 : 1,
+      ),
     );
   }
 
@@ -916,91 +911,74 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
             : null) ??
         CategoryEmojiHelper.uncategorizedEmoji;
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => _handleUncatToggle(
-        key: key,
-        suggestion: s,
-        checked: !selected,
-      ),
-      onLongPress: () => _editUncategorizedItem(key, s),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        decoration: _rowDecoration(selected),
-        child: Padding(
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _handleUncatToggle(
+          key: key,
+          suggestion: s,
+          checked: !selected,
+        ),
+        onLongPress: () => _editUncategorizedItem(key, s),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: _rowDecoration(selected),
           child: Row(
             children: [
               Text(emoji, style: const TextStyle(fontSize: 28)),
-              const SizedBox(width: 12),
+              const SizedBox(width: 14),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      displayName,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: selected ? Colors.orange.shade700 : Colors.orange.shade600,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(4),
-                            color: selected
-                                ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
-                                : Colors.grey.shade100,
-                          ),
-                          child: Text(
-                            '\$${amount.toStringAsFixed(2)}/wk',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                              color: selected
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Colors.black.withOpacity(0.6),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'suggested',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.black.withOpacity(0.5),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                child: Text(
+                  displayName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              // Selection indicator
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? BuxlyColors.teal.withOpacity(0.1)
+                      : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '\$${amount.toStringAsFixed(0)}/wk',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: selected
+                        ? BuxlyColors.darkText
+                        : Colors.black87,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
               AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                width: 24,
-                height: 24,
+                width: 28,
+                height: 28,
                 decoration: BoxDecoration(
-                  shape: BoxShape.circle,
                   color: selected
-                      ? Theme.of(context).colorScheme.primary
+                      ? BuxlyColors.teal
                       : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
                   border: Border.all(
                     width: 2,
                     color: selected
-                        ? Theme.of(context).colorScheme.primary
+                        ? BuxlyColors.teal
                         : Colors.black26,
                   ),
                 ),
                 child: selected
-                    ? const Icon(Icons.check, size: 16, color: Colors.white)
+                    ? const Icon(Icons.check, size: 18, color: Colors.white)
                     : null,
               ),
             ],
@@ -1016,89 +994,70 @@ class _BudgetBuildScreenState extends State<BudgetBuildScreen> {
     final ctrl = _amountCtrls[s.categoryId];
     final amount = ctrl != null ? _parseAmount(ctrl.text) : s.weeklySuggested;
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => setState(() => _selected[s.categoryId] = !selected),
-      onLongPress: () => _editCategoryAmount(s),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        decoration: _rowDecoration(selected),
-        child: Padding(
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _selected[s.categoryId] = !selected),
+        onLongPress: () => _editCategoryAmount(s),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: _rowDecoration(selected),
           child: Row(
             children: [
               Text(emoji, style: const TextStyle(fontSize: 28)),
-              const SizedBox(width: 12),
+              const SizedBox(width: 14),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      s.categoryName,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: selected ? Colors.black : Colors.black87,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(4),
-                            color: selected
-                                ? Theme.of(context).colorScheme.primary.withOpacity(0.1)
-                                : Colors.grey.shade100,
-                          ),
-                          child: Text(
-                            '\$${amount.toStringAsFixed(2)}/wk',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                              color: selected
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Colors.black.withOpacity(0.6),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'suggested',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.black.withOpacity(0.5),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                child: Text(
+                  s.categoryName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              // Selection indicator
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? BuxlyColors.teal.withOpacity(0.1)
+                      : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '\$${amount.toStringAsFixed(0)}/wk',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: selected
+                        ? BuxlyColors.darkText
+                        : Colors.black87,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
               AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                width: 24,
-                height: 24,
+                width: 28,
+                height: 28,
                 decoration: BoxDecoration(
-                  shape: BoxShape.circle,
                   color: selected
-                      ? Theme.of(context).colorScheme.primary
+                      ? BuxlyColors.teal
                       : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
                   border: Border.all(
                     width: 2,
                     color: selected
-                        ? Theme.of(context).colorScheme.primary
+                        ? BuxlyColors.teal
                         : Colors.black26,
                   ),
                 ),
                 child: selected
-                    ? const Icon(Icons.check, size: 16, color: Colors.white)
+                    ? const Icon(Icons.check, size: 18, color: Colors.white)
                     : null,
               ),
             ],

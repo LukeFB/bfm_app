@@ -16,14 +16,15 @@ class TipModel {
   final int? id;
   final int? backendId;
   final String title;
+  final String? description;
   final DateTime? expiresAt;
   final DateTime? updatedAt;
 
-  /// Immutable tip with optional backend link + timestamps.
   const TipModel({
     this.id,
     this.backendId,
     required this.title,
+    this.description,
     this.expiresAt,
     this.updatedAt,
   });
@@ -43,17 +44,17 @@ class TipModel {
       id: data['id'] as int?,
       backendId: data['backend_id'] as int?,
       title: (data['title'] ?? '') as String,
+      description: data['description'] as String?,
       expiresAt: parse(data['expires_at']),
       updatedAt: parse(data['updated_at']),
     );
   }
 
-  /// Serialises the tip into a DB map, filling optional CMS fields with
-  /// defaults the dashboard expects today.
   Map<String, dynamic> toMap({bool includeId = false}) {
     final map = <String, dynamic>{
       'backend_id': backendId,
       'title': title,
+      'description': description,
       'is_active': 1,
       'expires_at': expiresAt?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),

@@ -8,6 +8,7 @@ import 'package:bfm_app/services/budget_analysis_service.dart';
 import 'package:bfm_app/services/alert_notification_service.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
 import 'package:bfm_app/widgets/manual_alert_sheet.dart';
+import 'package:bfm_app/widgets/swipe_back_wrapper.dart';
 
 /// Review recurring expenses after finishing the budget setup flow.
 class BudgetRecurringScreen extends StatefulWidget {
@@ -150,12 +151,13 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
   @override
   Widget build(BuildContext context) {
     final onboarding = _isOnboarding;
-    return WillPopScope(
-      onWillPop: () async {
-        await _saveAlerts(showToast: false);
-        return true;
-      },
-      child: Scaffold(
+    return SwipeBackWrapper(
+      child: PopScope(
+        canPop: true,
+        onPopInvokedWithResult: (didPop, _) async {
+          if (didPop) await _saveAlerts(showToast: false);
+        },
+        child: Scaffold(
         appBar: AppBar(
           automaticallyImplyLeading: !onboarding,
           title: const Text('Alerts'),
@@ -194,6 +196,7 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
                   const SizedBox(height: 32),
                 ],
               ),
+        ),
       ),
     );
   }

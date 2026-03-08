@@ -679,84 +679,144 @@ class DashboardService {
         .toSet();
     final recurringTransactions = await RecurringRepository.getByIds(recurringIds);
     final recurringById = <int, String>{};
-    final recurringDescById = <int, String>{}; // For display names
+    final recurringDescById = <int, String>{};
+    final recurringCategoryById = <int, int>{};
     for (final rt in recurringTransactions) {
       if (rt.id != null && rt.description != null) {
         recurringById[rt.id!] = rt.description!.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
         recurringDescById[rt.id!] = rt.description!;
       }
+      if (rt.id != null) {
+        recurringCategoryById[rt.id!] = rt.categoryId;
+      }
     }
 
     // Get category names
-    final categoryIds = budgets
-        .where((b) => b.categoryId != null)
-        .map((b) => b.categoryId!)
-        .toSet();
+    final categoryIds = <int>{
+      ...budgets.where((b) => b.categoryId != null).map((b) => b.categoryId!),
+      ...recurringCategoryById.values,
+    };
     final categoryNames = await CategoryRepository.getNamesByIds(categoryIds);
 
     // Load emoji helper
     final emojiHelper = await CategoryEmojiHelper.ensureLoaded();
 
-    // Build tracking items
-    final items = <BudgetTrackingItem>[];
-    final usedGroupKeys = <String>{};
+    // Identify uncategorized category IDs
+    final uncatCatIds = <int>{};
+    for (final e in categoryNames.entries) {
+      final l = e.value.toLowerCase();
+      if (l == 'uncategorized' || l == 'uncategorised') uncatCatIds.add(e.key);
+    }
+
+    final groupLabels = <String, String>{};
+    final groupEmojiSources = <String, String>{};
+    final groupLimits = <String, double>{};
+    final groupSpent = <String, double>{};
+    final groupOrder = <String>[];
+    final uncatKeyToGroupKey = <String, String>{};
 
     for (final budget in budgets) {
-      // Skip budgets with zero limit
       if (budget.weeklyLimit <= 0) continue;
 
       String? groupKey;
       String label = '';
+      String emojiSource = '';
       double spent = 0.0;
+      bool mergeOnly = false;
 
       if (budget.categoryId != null) {
         final catName = categoryNames[budget.categoryId];
         final nameLower = catName?.toLowerCase() ?? '';
         
-        // Handle "Uncategorized" category with recurring transaction
         if (nameLower == 'uncategorized' || nameLower == 'uncategorised') {
           if (budget.recurringTransactionId != null) {
             final recurringKey = recurringById[budget.recurringTransactionId!];
             if (recurringKey != null && recurringKey.isNotEmpty) {
-              groupKey = 'rec:${budget.recurringTransactionId}';
-              label = recurringDescById[budget.recurringTransactionId!] ?? 'Subscription';
-              spent = spendByUncategorizedKey[recurringKey]?.abs() ?? 0.0;
+              final existingGk = uncatKeyToGroupKey[recurringKey];
+              if (existingGk != null && groupLabels.containsKey(existingGk)) {
+                groupKey = existingGk;
+                mergeOnly = true;
+              } else {
+                groupKey = 'rec:${budget.recurringTransactionId}';
+                label = budget.label ?? recurringDescById[budget.recurringTransactionId!] ?? 'Subscription';
+                emojiSource = catName ?? label;
+                spent = spendByUncategorizedKey[recurringKey]?.abs() ?? 0.0;
+                uncatKeyToGroupKey[recurringKey] = groupKey;
+              }
             }
           }
-          // Skip non-recurring uncategorized category budgets
         } else {
           groupKey = 'cat:${budget.categoryId}';
           label = catName ?? 'Category';
+          emojiSource = label;
           spent = spendByCategory[budget.categoryId]?.abs() ?? 0.0;
         }
       } else if (budget.goalId != null) {
         groupKey = 'goal:${budget.goalId}';
         label = budget.label ?? 'Savings';
+        emojiSource = label;
         spent = goalSpendMap[budget.goalId!] ?? 0.0;
       } else if (budget.recurringTransactionId != null) {
         final recurringKey = recurringById[budget.recurringTransactionId!];
         if (recurringKey != null && recurringKey.isNotEmpty) {
-          groupKey = 'rec:${budget.recurringTransactionId}';
-          label = recurringDescById[budget.recurringTransactionId!] ?? 'Subscription';
-          spent = spendByUncategorizedKey[recurringKey]?.abs() ?? 0.0;
+          final recCatId = budget.categoryId ?? recurringCategoryById[budget.recurringTransactionId!];
+          if (recCatId != null && !uncatCatIds.contains(recCatId) &&
+              groupLabels.containsKey('cat:$recCatId')) {
+            groupKey = 'cat:$recCatId';
+            mergeOnly = true;
+          } else {
+            final existingGk = uncatKeyToGroupKey[recurringKey];
+            if (existingGk != null && groupLabels.containsKey(existingGk)) {
+              groupKey = existingGk;
+              mergeOnly = true;
+            } else {
+              groupKey = 'rec:${budget.recurringTransactionId}';
+              label = budget.label ?? recurringDescById[budget.recurringTransactionId!] ?? 'Subscription';
+              emojiSource = (recCatId != null ? categoryNames[recCatId] : null) ?? label;
+              spent = spendByUncategorizedKey[recurringKey]?.abs() ?? 0.0;
+              uncatKeyToGroupKey[recurringKey] = groupKey;
+            }
+          }
         }
       } else if (budget.uncategorizedKey != null && budget.uncategorizedKey!.isNotEmpty) {
-        groupKey = 'key:${budget.uncategorizedKey}';
-        label = budget.label ?? budget.uncategorizedKey!;
-        spent = spendByUncategorizedKey[budget.uncategorizedKey]?.abs() ?? 0.0;
+        final uk = budget.uncategorizedKey!;
+        final existingGk = uncatKeyToGroupKey[uk];
+        if (existingGk != null && groupLabels.containsKey(existingGk)) {
+          groupKey = existingGk;
+          mergeOnly = true;
+        } else {
+          groupKey = 'key:$uk';
+          label = budget.label ?? uk;
+          emojiSource = label;
+          spent = spendByUncategorizedKey[uk]?.abs() ?? 0.0;
+          uncatKeyToGroupKey[uk] = groupKey;
+        }
       }
 
-      // Only add each group once
-      if (groupKey != null && !usedGroupKeys.contains(groupKey)) {
-        usedGroupKeys.add(groupKey);
-        final emoji = emojiHelper.emojiForName(label);
-        items.add(BudgetTrackingItem(
-          label: label,
-          emoji: emoji,
-          budgetLimit: budget.weeklyLimit,
-          spent: spent,
-        ));
+      if (groupKey == null) continue;
+
+      if (mergeOnly) {
+        groupLimits[groupKey] = (groupLimits[groupKey] ?? 0) + budget.weeklyLimit;
+      } else if (groupLabels.containsKey(groupKey)) {
+        groupLimits[groupKey] = (groupLimits[groupKey] ?? 0) + budget.weeklyLimit;
+      } else {
+        groupLabels[groupKey] = label;
+        groupEmojiSources[groupKey] = emojiSource;
+        groupLimits[groupKey] = budget.weeklyLimit;
+        groupSpent[groupKey] = spent;
+        groupOrder.add(groupKey);
       }
+    }
+
+    final items = <BudgetTrackingItem>[];
+    for (final key in groupOrder) {
+      final emoji = emojiHelper.emojiForName(groupEmojiSources[key] ?? groupLabels[key]!);
+      items.add(BudgetTrackingItem(
+        label: groupLabels[key]!,
+        emoji: emoji,
+        budgetLimit: groupLimits[key] ?? 0,
+        spent: groupSpent[key] ?? 0,
+      ));
     }
 
     // Sort by budget limit descending

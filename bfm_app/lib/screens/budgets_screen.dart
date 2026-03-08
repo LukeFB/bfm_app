@@ -24,8 +24,11 @@ import 'package:bfm_app/services/dashboard_service.dart';
 import 'package:bfm_app/services/manual_budget_store.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
+import 'package:bfm_app/services/budget_buffer_refresh.dart';
+import 'package:bfm_app/services/budget_buffer_store.dart';
+import 'package:bfm_app/theme/buxly_theme.dart';
 import 'package:bfm_app/widgets/help_icon_tooltip.dart';
-import 'package:bfm_app/widgets/budget_tracking_card.dart';
+import 'package:bfm_app/widgets/budget_buffer_card.dart';
 
 const Color bfmBlue = Color(0xFF005494);
 const Color bfmOrange = Color(0xFFFF6934);
@@ -49,10 +52,11 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
   
   // Selection and amount tracking for subscriptions
   final Set<int> _selectedRecurringIds = {};
-  final Map<int, double> _recurringCurrentAmounts = {}; // Current working amounts
-  final Map<int, bool> _recurringIsNew = {}; // Track if item is truly new (never seen)
-  final Map<int, bool> _recurringShowAlert = {}; // Show orange alert indicator
-  final Map<int, bool> _recurringHasSuggestion = {}; // Show suggested amount text
+  final Map<int, double> _recurringCurrentAmounts = {};
+  final Map<int, String> _recurringNameOverrides = {};
+  final Map<int, bool> _recurringIsNew = {};
+  final Map<int, bool> _recurringShowAlert = {};
+  final Map<int, bool> _recurringHasSuggestion = {};
   
   // Selection and amount tracking for categories
   final Map<int?, bool> _selectedCategories = {};
@@ -82,19 +86,27 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
   Map<String, double> _seenUncatAmounts = {};
   
   CategoryEmojiHelper? _emojiHelper;
+  List<BufferEntry> _bufferEntries = [];
 
   static const double _kWeeksPerMonth = 4.345;
   static const double _kSubscriptionTolerance = 0.0; // 0% - any change triggers suggestion
   static const double _kBudgetTolerance = 0.20; // 20% tolerance for budgets
 
+  VoidCallback? _bufferRefreshListener;
+
   @override
   void initState() {
     super.initState();
     _load();
+    _bufferRefreshListener = () => _load();
+    budgetBufferRefreshNotifier.addListener(_bufferRefreshListener!);
   }
 
   @override
   void dispose() {
+    if (_bufferRefreshListener != null) {
+      budgetBufferRefreshNotifier.removeListener(_bufferRefreshListener!);
+    }
     // Save changes and mark all items as seen when leaving the screen
     _saveChanges(showSnackbar: false);
     super.dispose();
@@ -211,7 +223,9 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       if (existingBudget != null) {
         _selectedRecurringIds.add(rid);
         _recurringCurrentAmounts[rid] = existingBudget.weeklyLimit;
-        // Show suggestion if saved differs from detected (0% tolerance for subscriptions)
+        if (existingBudget.label != null && existingBudget.label!.trim().isNotEmpty) {
+          _recurringNameOverrides[rid] = existingBudget.label!;
+        }
         hasSuggestion = _hasSignificantChange(existingBudget.weeklyLimit, detectedAmount, tolerance: _kSubscriptionTolerance);
         // Show alert only if detected differs from what user acknowledged
         if (seenAmount != null) {
@@ -341,6 +355,32 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       ]);
     }
 
+    final bufferBalances = await BudgetBufferStore.getAll();
+
+    // Build buffer entries for every active budget (show even if $0)
+    final bufferEntries = <BufferEntry>[];
+    final usedLabels = <String>{};
+    for (final item in trackingItems) {
+      final balance = bufferBalances[item.label] ?? 0.0;
+      bufferEntries.add(BufferEntry(
+        label: item.label,
+        emoji: item.emoji,
+        buffered: balance,
+      ));
+      usedLabels.add(item.label);
+    }
+    // Include stored buffers that aren't in current tracking items
+    for (final entry in bufferBalances.entries) {
+      if (!usedLabels.contains(entry.key) && entry.value > 0) {
+        bufferEntries.add(BufferEntry(
+          label: entry.key,
+          emoji: emojiHelper.emojiForName(entry.key),
+          buffered: entry.value,
+        ));
+      }
+    }
+    bufferEntries.sort((a, b) => b.buffered.compareTo(a.buffered));
+
     if (!mounted) return;
     setState(() {
       _data = _BudgetsData(
@@ -355,6 +395,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
         trackingItems: trackingItems,
       );
       _emojiHelper = emojiHelper;
+      _bufferEntries = bufferEntries;
       _loading = false;
     });
   }
@@ -495,9 +536,11 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       );
       if (sub?.recurringId == null) continue;
       
+      final customName = _recurringNameOverrides[rid];
       final m = BudgetModel(
         categoryId: sub!.categoryId,
         recurringTransactionId: rid,
+        label: customName,
         weeklyLimit: weeklyLimit,
         periodStart: periodStart,
       );
@@ -944,14 +987,16 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
   }
 
   BoxDecoration _rowDecoration(bool isSelected) {
-    final scheme = Theme.of(context).colorScheme;
     return BoxDecoration(
       color: isSelected
-          ? scheme.primary.withOpacity(0.08)
-          : scheme.surfaceContainerHighest.withOpacity(0.2),
-      borderRadius: BorderRadius.circular(12),
+          ? BuxlyColors.teal.withOpacity(0.08)
+          : Colors.white,
+      borderRadius: BorderRadius.circular(16),
       border: Border.all(
-        color: isSelected ? scheme.primary.withOpacity(0.35) : Colors.black12,
+        color: isSelected
+            ? BuxlyColors.teal.withOpacity(0.4)
+            : Colors.black12,
+        width: isSelected ? 1.5 : 1,
       ),
     );
   }
@@ -1022,21 +1067,29 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
   Future<void> _editRecurringAmount(_SubscriptionItem item) async {
     final rid = item.recurringId;
     if (rid == null) return;
-    
+
     final currentAmount = _recurringCurrentAmounts[rid] ?? item.weeklyAmount;
-    final updated = await _showAmountEditor(
-      title: item.name,
-      initialValue: currentAmount.toStringAsFixed(2),
-      helperText: 'Set the weekly limit for this subscription.',
+    final currentName = _recurringNameOverrides[rid] ?? item.transactionName ?? item.name;
+    final result = await _showSubscriptionEditor(
+      initialName: currentName,
+      initialAmount: currentAmount.toStringAsFixed(2),
+      helperText: item.frequency == 'monthly'
+          ? 'Original: \$${item.amount.toStringAsFixed(2)}/month'
+          : 'Original: \$${item.amount.toStringAsFixed(2)}/week',
     );
-    if (updated == null) return;
-    final newAmount = double.tryParse(updated) ?? currentAmount;
-    
-    // Mark as seen with the new amount and clear alerts
+    if (result == null) return;
+    final newAmount = double.tryParse(result.amount) ?? currentAmount;
+
     await _dismissSubscriptionAlert(rid, item.weeklyAmount);
-    
+
     setState(() {
       _recurringCurrentAmounts[rid] = newAmount;
+      final defaultName = item.transactionName ?? item.name;
+      if (result.name.isNotEmpty && result.name != defaultName) {
+        _recurringNameOverrides[rid] = result.name;
+      } else {
+        _recurringNameOverrides.remove(rid);
+      }
     });
   }
 
@@ -1151,6 +1204,93 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       },
     );
     WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
+    return result;
+  }
+
+  Future<_SubscriptionEditResult?> _showSubscriptionEditor({
+    required String initialName,
+    required String initialAmount,
+    String? helperText,
+  }) async {
+    final nameCtrl = TextEditingController(text: initialName);
+    final amountCtrl = TextEditingController(text: initialAmount);
+    nameCtrl.selection = TextSelection(baseOffset: 0, extentOffset: nameCtrl.text.length);
+    final result = await showModalBottomSheet<_SubscriptionEditResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 20, right: 20, top: 16,
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.black26,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text('Edit recurring payment',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+              if (helperText != null) ...[
+                const SizedBox(height: 4),
+                Text(helperText, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+              ],
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameCtrl,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: InputDecoration(
+                  labelText: 'Name',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: amountCtrl,
+                keyboardType: const TextInputType.numberWithOptions(signed: false, decimal: true),
+                decoration: InputDecoration(
+                  labelText: 'Weekly limit',
+                  prefixText: '\$',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(onPressed: () => Navigator.pop(sheetContext), child: const Text('Cancel')),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(
+                      sheetContext,
+                      _SubscriptionEditResult(
+                        name: nameCtrl.text.trim(),
+                        amount: amountCtrl.text.trim(),
+                      ),
+                    ),
+                    child: const Text('Save'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      nameCtrl.dispose();
+      amountCtrl.dispose();
+    });
     return result;
   }
 
@@ -1283,7 +1423,17 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                               padding: EdgeInsets.all(16),
                               child: Text('No subscriptions detected', style: TextStyle(color: Colors.black54)),
                             )]
-                          : _data!.subscriptions.map((s) => _buildSubscriptionRow(s)).toList(),
+                          : [
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8, bottom: 6),
+                                child: Text(
+                                  'Hold to edit',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(fontSize: 12, color: Colors.black.withOpacity(0.35)),
+                                ),
+                              ),
+                              ..._data!.subscriptions.map((s) => _buildSubscriptionRow(s)),
+                            ],
                     ),
                     const SizedBox(height: 12),
                     _buildDropdownCard(
@@ -1306,7 +1456,15 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                           'Suggested amounts are calculated from your average weekly expenditure in each category.',
                       headerAction: _buildCreateBudgetButton(),
                       children: [
-                        // Show manual budgets at the top
+                        if (_data!.categoryBudgets.isNotEmpty || _data!.uncategorizedBudgets.isNotEmpty || _manualBudgets.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8, bottom: 6),
+                            child: Text(
+                              'Hold to edit',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontSize: 12, color: Colors.black.withOpacity(0.35)),
+                            ),
+                          ),
                         for (int i = 0; i < _manualBudgets.length; i++)
                           _buildManualBudgetRow(_manualBudgets[i], i),
                         if (_data!.categoryBudgets.isEmpty && _data!.uncategorizedBudgets.isEmpty && _manualBudgets.isEmpty)
@@ -1318,9 +1476,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                       ],
                     ),
                     const SizedBox(height: 24),
-                    // Budget tracking card - shows spending progress per budget
-                    if (_data!.trackingItems.isNotEmpty)
-                      BudgetTrackingCard(items: _data!.trackingItems),
+                    BudgetBufferCard(entries: _bufferEntries),
                     const SizedBox(height: 24),
                   ],
                 ),
@@ -1491,6 +1647,14 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     }).toList();
   }
 
+  String _subscriptionDisplayName(_SubscriptionItem item) {
+    final rid = item.recurringId;
+    if (rid != null && _recurringNameOverrides.containsKey(rid)) {
+      return _recurringNameOverrides[rid]!;
+    }
+    return item.transactionName ?? item.name;
+  }
+
   Widget _buildSubscriptionRow(_SubscriptionItem item) {
     final rid = item.recurringId;
     if (rid == null) return const SizedBox.shrink();
@@ -1502,33 +1666,42 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     final hasSuggestion = _recurringHasSuggestion[rid] == true;
     final detectedAmount = item.weeklyAmount;
     
-    final paymentLabel = item.frequency == 'monthly'
-        ? 'Monthly: \$${item.amount.toStringAsFixed(2)}'
-        : 'Weekly: \$${item.amount.toStringAsFixed(2)}';
+    final displayName = _subscriptionDisplayName(item);
     final emoji = _getEmoji(item.name);
 
+    final isMonthly = item.frequency == 'monthly';
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _handleRecurringToggle(rid, !isSelected),
         onLongPress: () => _editRecurringAmount(item),
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
           decoration: _rowDecoration(isSelected),
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(emoji, style: const TextStyle(fontSize: 24)),
-              const SizedBox(width: 12),
+              Text(emoji, style: const TextStyle(fontSize: 28)),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Row(
                       children: [
                         Expanded(
-                          child: Text(item.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                          child: Text(
+                            displayName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                         _buildChangeIndicator(
                           isNew: isNew,
@@ -1537,35 +1710,92 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                         ),
                       ],
                     ),
-                    if (item.transactionName != null && item.transactionName!.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(item.transactionName!, style: const TextStyle(fontSize: 12, color: Colors.black54)),
-                      ),
-                    const SizedBox(height: 4),
-                    Text(paymentLabel, style: const TextStyle(fontSize: 12)),
-                    Text(
-                      'Weekly limit: \$${currentAmount.toStringAsFixed(2)}',
-                      style: const TextStyle(fontSize: 12, color: Colors.black54),
-                    ),
                     if (hasSuggestion)
-                      GestureDetector(
-                        onTap: () => _applySuggestedSubscription(rid, detectedAmount),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: bfmOrange.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: bfmOrange.withOpacity(0.3)),
-                          ),
-                          child: Text(
-                            'Use \$${detectedAmount.toStringAsFixed(0)}/wk',
-                            style: TextStyle(fontSize: 11, color: bfmOrange, fontWeight: FontWeight.w600),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: GestureDetector(
+                          onTap: () => _applySuggestedSubscription(rid, detectedAmount),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: bfmOrange.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: bfmOrange.withOpacity(0.3)),
+                            ),
+                            child: Text(
+                              'Use \$${detectedAmount.toStringAsFixed(0)}/wk',
+                              style: TextStyle(fontSize: 11, color: bfmOrange, fontWeight: FontWeight.w600),
+                            ),
                           ),
                         ),
                       ),
                   ],
                 ),
+              ),
+              const SizedBox(width: 8),
+              if (isMonthly) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? BuxlyColors.teal.withOpacity(0.1)
+                        : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '\$${item.amount.toStringAsFixed(0)}/mo',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isSelected
+                          ? BuxlyColors.darkText.withOpacity(0.6)
+                          : Colors.black.withOpacity(0.5),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+              ],
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? BuxlyColors.teal.withOpacity(0.1)
+                      : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '\$${currentAmount.toStringAsFixed(0)}/wk',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: isSelected
+                        ? BuxlyColors.darkText
+                        : Colors.black87,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? BuxlyColors.teal
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    width: 2,
+                    color: isSelected
+                        ? BuxlyColors.teal
+                        : Colors.black26,
+                  ),
+                ),
+                child: isSelected
+                    ? const Icon(Icons.check, size: 18, color: Colors.white)
+                    : null,
               ),
             ],
           ),
@@ -1588,27 +1818,36 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     final emoji = _getEmoji(item.name);
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _handleCategoryToggle(catId, !isSelected),
         onLongPress: () => _editCategoryAmount(item),
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
           decoration: _rowDecoration(isSelected),
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(emoji, style: const TextStyle(fontSize: 24)),
-              const SizedBox(width: 12),
+              Text(emoji, style: const TextStyle(fontSize: 28)),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Row(
                       children: [
                         Expanded(
-                          child: Text(item.name, style: const TextStyle(fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
+                          child: Text(
+                            item.name,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                         _buildChangeIndicator(
                           isNew: isNew,
@@ -1617,29 +1856,69 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Weekly limit: \$${currentAmount.toStringAsFixed(2)}',
-                      style: const TextStyle(fontSize: 12, color: Colors.black54),
-                    ),
                     if (hasSuggestion)
-                      GestureDetector(
-                        onTap: () => _applySuggestedCategory(catId, detectedAmount),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: bfmOrange.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: bfmOrange.withOpacity(0.3)),
-                          ),
-                          child: Text(
-                            'Use \$${detectedAmount.toStringAsFixed(0)}/wk',
-                            style: TextStyle(fontSize: 11, color: bfmOrange, fontWeight: FontWeight.w600),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: GestureDetector(
+                          onTap: () => _applySuggestedCategory(catId, detectedAmount),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: bfmOrange.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: bfmOrange.withOpacity(0.3)),
+                            ),
+                            child: Text(
+                              'Use \$${detectedAmount.toStringAsFixed(0)}/wk',
+                              style: TextStyle(fontSize: 11, color: bfmOrange, fontWeight: FontWeight.w600),
+                            ),
                           ),
                         ),
                       ),
                   ],
                 ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? BuxlyColors.teal.withOpacity(0.1)
+                      : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '\$${currentAmount.toStringAsFixed(0)}/wk',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: isSelected
+                        ? BuxlyColors.darkText
+                        : Colors.black87,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? BuxlyColors.teal
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    width: 2,
+                    color: isSelected
+                        ? BuxlyColors.teal
+                        : Colors.black26,
+                  ),
+                ),
+                child: isSelected
+                    ? const Icon(Icons.check, size: 18, color: Colors.white)
+                    : null,
               ),
             ],
           ),
@@ -1661,29 +1940,34 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     final emoji = _getEmoji(displayName);
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _handleUncatToggle(key, !isSelected),
         onLongPress: () => _editUncatItem(item),
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
           decoration: _rowDecoration(isSelected),
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(emoji, style: const TextStyle(fontSize: 24)),
-              const SizedBox(width: 12),
+              Text(emoji, style: const TextStyle(fontSize: 28)),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Row(
                       children: [
                         Expanded(
                           child: Text(
                             displayName,
-                            style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.orange),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                              color: Colors.orange,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -1695,29 +1979,69 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Weekly limit: \$${currentAmount.toStringAsFixed(2)}',
-                      style: const TextStyle(fontSize: 12, color: Colors.black54),
-                    ),
                     if (hasSuggestion)
-                      GestureDetector(
-                        onTap: () => _applySuggestedUncat(key, detectedAmount),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: bfmOrange.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: bfmOrange.withOpacity(0.3)),
-                          ),
-                          child: Text(
-                            'Use \$${detectedAmount.toStringAsFixed(0)}/wk',
-                            style: TextStyle(fontSize: 11, color: bfmOrange, fontWeight: FontWeight.w600),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: GestureDetector(
+                          onTap: () => _applySuggestedUncat(key, detectedAmount),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: bfmOrange.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: bfmOrange.withOpacity(0.3)),
+                            ),
+                            child: Text(
+                              'Use \$${detectedAmount.toStringAsFixed(0)}/wk',
+                              style: TextStyle(fontSize: 11, color: bfmOrange, fontWeight: FontWeight.w600),
+                            ),
                           ),
                         ),
                       ),
                   ],
                 ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? BuxlyColors.teal.withOpacity(0.1)
+                      : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '\$${currentAmount.toStringAsFixed(0)}/wk',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: isSelected
+                        ? BuxlyColors.darkText
+                        : Colors.black87,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? BuxlyColors.teal
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    width: 2,
+                    color: isSelected
+                        ? BuxlyColors.teal
+                        : Colors.black26,
+                  ),
+                ),
+                child: isSelected
+                    ? const Icon(Icons.check, size: 18, color: Colors.white)
+                    : null,
               ),
             ],
           ),
@@ -1777,14 +2101,14 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     final isSelected = _selectedManualBudgetIndices.contains(index);
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _handleManualBudgetToggle(index),
         onLongPress: () => _editManualBudget(item),
         child: Container(
           decoration: _rowDecoration(isSelected),
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -1916,6 +2240,12 @@ class _UncatEditResult {
   final String name;
   final String amount;
   const _UncatEditResult({required this.name, required this.amount});
+}
+
+class _SubscriptionEditResult {
+  final String name;
+  final String amount;
+  const _SubscriptionEditResult({required this.name, required this.amount});
 }
 
 class _ManualBudgetItem {

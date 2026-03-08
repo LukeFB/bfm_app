@@ -20,10 +20,9 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:bubble/bubble.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:bfm_app/screens/dashboard_screen.dart';
+import 'package:bfm_app/theme/buxly_theme.dart';
 
 import 'package:bfm_app/models/alert_model.dart';
 import 'package:bfm_app/models/budget_model.dart';
@@ -1109,7 +1108,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         .toList();
   }
 
-  /// Renders chat history, the message composer, and clear/send controls.
+  /// Sends a quick suggestion chip message.
+  void _sendQuickMessage(String text) {
+    _controller.text = text;
+    _sendMessage();
+  }
+
   @override
   Widget build(BuildContext context) {
     final lastAssistantIndex =
@@ -1122,137 +1126,377 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final inlineActions = (hasGoal && linkedAlert != null)
         ? _pendingActions.where((action) => action.type != ChatActionType.alert).toList()
         : _pendingActions;
+    final canSend = _chatMode == ChatMode.backend || _hasApiKey;
+
     return Scaffold(
+      backgroundColor: BuxlyColors.offWhite,
       body: SafeArea(
         child: Column(
-        children: [
-          Expanded(
-            child: ListView.separated(
-              controller: _scroll, // Added: keep a handle for auto-scroll.
-              padding: const EdgeInsets.all(16),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                final msg = _messages[index];
-                final isUser = msg.role == ChatRole.user;
-                final showInlineActions = !isUser &&
-                    index == lastAssistantIndex &&
-                    (inlineActions.isNotEmpty || _actionLoading);
-                return Column(
-                  crossAxisAlignment:
-                      isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                  children: [
-                    Align(
-                      alignment:
-                          isUser ? Alignment.centerRight : Alignment.centerLeft,
-                      child: Bubble(
-                        margin: const BubbleEdges.only(top: 10),
-                        nip: isUser
-                            ? BubbleNip.rightBottom
-                            : BubbleNip.leftBottom, // tail position
-                        color: isUser ? Colors.blue[200]! : bfmBeige,
-                        child: MarkdownBody(
-                          data: msg.content,
-                          styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-                            p: const TextStyle(fontSize: 14),
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: BuxlyColors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: BuxlyColors.darkText.withOpacity(0.04),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  BuxlyIconContainer(
+                    icon: Icons.smart_toy_rounded,
+                    color: BuxlyColors.teal,
+                    size: 40,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Buxly AI',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: BuxlyColors.darkText,
+                            fontFamily: BuxlyTheme.fontFamily,
                           ),
                         ),
-                      ),
-                    ),
-                    if (showInlineActions)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: _InlineActionStrip(
-                          actions: inlineActions,
-                          loading: _actionLoading,
-                          saving: _savingAction,
-                          onCreate: _handleActionTap,
-                          onDismiss: _dismissLinkedActions,
-                          linkedAlert: linkedAlert,
+                        Row(
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: const BoxDecoration(
+                                color: BuxlyColors.limeGreen,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Online · Your financial coach',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: BuxlyColors.midGrey,
+                                fontFamily: BuxlyTheme.fontFamily,
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                  ],
-                );
-              },
-              separatorBuilder: (context, index) =>
-                  const SizedBox(height: 4), // spacing between bubbles
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: 'Clear chat',
-                  icon: const Icon(Icons.delete_outline, size: 20),
-                  onPressed: _sending ? null : _clearChat,
-                ),
-                if (kDevMode)
-                  GestureDetector(
-                    onTap: _sending
-                        ? null
-                        : () => setState(() {
-                              _chatMode = _chatMode == ChatMode.local
-                                  ? ChatMode.backend
-                                  : ChatMode.local;
-                            }),
-                    child: Chip(
-                      visualDensity: VisualDensity.compact,
-                      label: Text(
-                        _chatMode == ChatMode.local ? 'Local' : 'Backend',
-                        style: const TextStyle(fontSize: 10),
-                      ),
-                      avatar: Icon(
-                        _chatMode == ChatMode.local ? Icons.computer : Icons.cloud,
-                        size: 14,
-                      ),
+                      ],
                     ),
                   ),
-                Expanded(
-                  child: AnimatedBuilder(
-                    animation: _hintFadeAnimation,
-                    builder: (context, child) {
-                      final canSend = _chatMode == ChatMode.backend || _hasApiKey;
-                      final hintText = canSend
-                          ? _exampleQuestions[_hintIndex].replaceAll('"', '')
-                          : "Type a message... (Add API key in Settings)";
-                      return TextField(
-                        controller: _controller,
-                        // allow Enter to send. TODO: not working
-                        onSubmitted: (_) {
-                          if (canSend && !_sending) _sendMessage();
-                        },
-                        decoration: InputDecoration(
-                          hintText: hintText,
-                          hintStyle: TextStyle(
-                            color: Colors.grey.shade500.withOpacity(
-                              _hasApiKey ? _hintFadeAnimation.value : 1.0,
+                  IconButton(
+                    tooltip: 'Clear chat',
+                    icon: const Icon(Icons.delete_outline,
+                        color: BuxlyColors.midGrey),
+                    onPressed: _sending ? null : _clearChat,
+                  ),
+                  if (kDevMode)
+                    GestureDetector(
+                      onTap: _sending
+                          ? null
+                          : () => setState(() {
+                                _chatMode = _chatMode == ChatMode.local
+                                    ? ChatMode.backend
+                                    : ChatMode.local;
+                              }),
+                      child: Icon(
+                        _chatMode == ChatMode.local
+                            ? Icons.computer
+                            : Icons.cloud,
+                        size: 20,
+                        color: BuxlyColors.midGrey,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+
+            // Messages
+            Expanded(
+              child: ListView.separated(
+                controller: _scroll,
+                padding: const EdgeInsets.all(16),
+                itemCount: _messages.length,
+                itemBuilder: (context, index) {
+                  final msg = _messages[index];
+                  final isUser = msg.role == ChatRole.user;
+                  final showInlineActions = !isUser &&
+                      index == lastAssistantIndex &&
+                      (inlineActions.isNotEmpty || _actionLoading);
+
+                  return Column(
+                    crossAxisAlignment: isUser
+                        ? CrossAxisAlignment.end
+                        : CrossAxisAlignment.start,
+                    children: [
+                      if (!isUser)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Row(
+                            children: [
+                              BuxlyIconContainer(
+                                icon: Icons.smart_toy_rounded,
+                                color: BuxlyColors.teal,
+                                size: 24,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Buxly',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: BuxlyColors.midGrey,
+                                  fontFamily: BuxlyTheme.fontFamily,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      Align(
+                        alignment: isUser
+                            ? Alignment.centerRight
+                            : Alignment.centerLeft,
+                        child: Container(
+                          constraints: BoxConstraints(
+                            maxWidth: MediaQuery.of(context).size.width * 0.78,
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isUser
+                                ? BuxlyColors.teal
+                                : BuxlyColors.white,
+                            borderRadius: BorderRadius.only(
+                              topLeft: const Radius.circular(18),
+                              topRight: const Radius.circular(18),
+                              bottomLeft: Radius.circular(isUser ? 18 : 4),
+                              bottomRight: Radius.circular(isUser ? 4 : 18),
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: BuxlyColors.darkText.withOpacity(0.04),
+                                blurRadius: 6,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: MarkdownBody(
+                            data: msg.content,
+                            styleSheet: MarkdownStyleSheet.fromTheme(
+                                    Theme.of(context))
+                                .copyWith(
+                              p: TextStyle(
+                                fontSize: 14,
+                                color: isUser
+                                    ? BuxlyColors.white
+                                    : BuxlyColors.darkText,
+                                fontFamily: BuxlyTheme.fontFamily,
+                                height: 1.4,
+                              ),
                             ),
                           ),
-                          border: const OutlineInputBorder(),
                         ),
-                      );
-                    },
-                  ),
-                ),
-                IconButton(
-                  icon: _sending
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.send),
-                  onPressed: ((_chatMode == ChatMode.backend || _hasApiKey) && !_sending)
-                      ? _sendMessage
-                      : null,
-                ),
-              ],
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          _formatTime(msg.timestamp),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: BuxlyColors.midGrey,
+                            fontFamily: BuxlyTheme.fontFamily,
+                          ),
+                        ),
+                      ),
+                      if (showInlineActions)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: _InlineActionStrip(
+                            actions: inlineActions,
+                            loading: _actionLoading,
+                            saving: _savingAction,
+                            onCreate: _handleActionTap,
+                            onDismiss: _dismissLinkedActions,
+                            linkedAlert: linkedAlert,
+                          ),
+                        ),
+                    ],
+                  );
+                },
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+              ),
             ),
-          ),
-        ],
+
+            // Suggestion chips
+            if (!_sending && _messages.length <= 3)
+              SizedBox(
+                height: 40,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  children: [
+                    'Show my budget',
+                    'Spending insights',
+                    'Set a goal',
+                    'Create a reminder',
+                  ]
+                      .map((text) => Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: GestureDetector(
+                              onTap: () => _sendQuickMessage(text),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: BuxlyColors.white,
+                                  borderRadius: BorderRadius.circular(
+                                      BuxlyRadius.pill),
+                                  border: Border.all(
+                                      color: BuxlyColors.teal.withOpacity(0.4)),
+                                ),
+                                child: Text(
+                                  text,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: BuxlyColors.teal,
+                                    fontFamily: BuxlyTheme.fontFamily,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ))
+                      .toList(),
+                ),
+              ),
+
+            // Input bar
+            Container(
+              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+              decoration: BoxDecoration(
+                color: BuxlyColors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: BuxlyColors.darkText.withOpacity(0.04),
+                    blurRadius: 8,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: AnimatedBuilder(
+                      animation: _hintFadeAnimation,
+                      builder: (context, child) {
+                        final hintText = canSend
+                            ? _exampleQuestions[_hintIndex]
+                                .replaceAll('"', '')
+                            : 'Add API key in Settings';
+                        return TextField(
+                          controller: _controller,
+                          onSubmitted: (_) {
+                            if (canSend && !_sending) _sendMessage();
+                          },
+                          style: const TextStyle(
+                            fontFamily: BuxlyTheme.fontFamily,
+                            fontSize: 15,
+                          ),
+                          decoration: InputDecoration(
+                            hintText: 'Ask Buxly anything...',
+                            hintStyle: TextStyle(
+                              color: BuxlyColors.midGrey.withOpacity(
+                                _hasApiKey
+                                    ? _hintFadeAnimation.value
+                                    : 1.0,
+                              ),
+                              fontFamily: BuxlyTheme.fontFamily,
+                            ),
+                            filled: true,
+                            fillColor: BuxlyColors.offWhite,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius:
+                                  BorderRadius.circular(BuxlyRadius.pill),
+                              borderSide: BorderSide.none,
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius:
+                                  BorderRadius.circular(BuxlyRadius.pill),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius:
+                                  BorderRadius.circular(BuxlyRadius.pill),
+                              borderSide: const BorderSide(
+                                color: BuxlyColors.teal,
+                                width: 1.5,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: (canSend && !_sending)
+                          ? BuxlyColors.teal
+                          : BuxlyColors.disabled,
+                      shape: BoxShape.circle,
+                    ),
+                    child: IconButton(
+                      icon: _sending
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: BuxlyColors.white,
+                              ),
+                            )
+                          : const Icon(
+                              Icons.send_rounded,
+                              color: BuxlyColors.white,
+                              size: 20,
+                            ),
+                      onPressed:
+                          (canSend && !_sending) ? _sendMessage : null,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
-    ),
     );
+  }
+
+  String _formatTime(DateTime? timestamp) {
+    if (timestamp == null) return '';
+    final h = timestamp.hour;
+    final m = timestamp.minute.toString().padLeft(2, '0');
+    final period = h >= 12 ? 'PM' : 'AM';
+    final hour = h > 12 ? h - 12 : (h == 0 ? 12 : h);
+    return '$hour:$m $period';
   }
 }
 
@@ -1768,7 +2012,7 @@ class _InlineActionBubble extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(BuxlyRadius.pill),
         onTap: saving
             ? null
             : () => onCreate(
@@ -1781,17 +2025,20 @@ class _InlineActionBubble extends StatelessWidget {
                   action,
                   linkedAlert: _linkedAlertFor(action),
                 ),
-        child: DecoratedBox(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: Colors.grey.shade100,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.grey.shade300),
+            color: BuxlyColors.teal.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(BuxlyRadius.pill),
+            border: Border.all(color: BuxlyColors.teal.withOpacity(0.3)),
           ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            child: Text(
-              label,
-              style: const TextStyle(fontSize: 12),
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: BuxlyColors.teal,
+              fontFamily: BuxlyTheme.fontFamily,
             ),
           ),
         ),

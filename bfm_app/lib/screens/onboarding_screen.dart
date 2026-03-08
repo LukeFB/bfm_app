@@ -17,6 +17,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -32,6 +33,7 @@ import 'package:bfm_app/services/bank_service.dart';
 import 'package:bfm_app/services/income_settings_store.dart';
 import 'package:bfm_app/services/onboarding_store.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
+import 'package:bfm_app/theme/buxly_theme.dart';
 
 /// How the user connects their bank during onboarding.
 enum _AkahuConnectMode { webflow, manualTokens }
@@ -101,11 +103,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   bool _backendAuthed = false;
   bool _backendAuthLoading = false;
   String? _backendAuthError;
-  bool _isLoginMode = false;
   final _authPasswordCtrl = TextEditingController();
   final _authConfirmPasswordCtrl = TextEditingController();
 
   int _currentPage = 0;
+  int _minPage = 0;
   bool _saving = false;
   bool _bankConnecting = false;
   bool _bankConnected = false;
@@ -158,6 +160,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   ];
 
   bool _replaySyncing = false;
+  bool _showWelcome = true;
+  bool _welcomeLoading = false;
+  String? _welcomeError;
+  final _loginFormKey = GlobalKey<FormState>();
   
 
   @override
@@ -175,11 +181,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _fadeController.forward();
 
     if (widget.replayMode) {
+      _showWelcome = false;
       _backendAuthed = true;
       _bankConnected = true;
       _replaySyncTransactions();
     } else if (widget.startPage != null) {
+      _showWelcome = false;
       _backendAuthed = true;
+      _minPage = widget.startPage!;
       if (widget.startPage! > _akahuConnectIndex) {
         _bankConnected = true;
         _startBackgroundSync();
@@ -253,23 +262,27 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   @override
   Widget build(BuildContext context) {
     if (widget.replayMode) return _buildReplayMode(context);
+    if (_showWelcome) return _buildWelcomeScreen();
 
     final isProcessing = _saving || _bankConnecting || _verifyingConnection || _backendAuthLoading;
-    final showBackButton = _currentPage > 0 && !isProcessing;
+    final canGoToWelcome = _currentPage == 0 && _minPage == 0 && widget.startPage == null;
+    final showBackButton = (_currentPage > _minPage || canGoToWelcome) && !isProcessing;
 
     return Scaffold(
       body: SafeArea(
         child: Column(
           children: [
-            _OnboardingProgress(
-              currentPage: _currentPage,
-              totalPages: _totalPages,
-            ),
+            _buildOnboardingHeader(showBackButton, isProcessing),
+            _OnboardingProgress(currentPage: _currentPage, minPage: _minPage),
             Expanded(
               child: PageView(
                 controller: _pageController,
                 physics: const ClampingScrollPhysics(),
                 onPageChanged: (index) {
+                  if (index < _minPage) {
+                    _pageController.jumpToPage(_minPage);
+                    return;
+                  }
                   setState(() {
                     _currentPage = index;
                     _backendAuthError = null;
@@ -289,7 +302,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 ],
               ),
             ),
-            _buildNavigation(showBackButton, isProcessing),
+            _buildNavigation(isProcessing),
             if (isProcessing) const LinearProgressIndicator(minHeight: 2),
           ],
         ),
@@ -305,10 +318,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       body: SafeArea(
         child: Column(
           children: [
-            _OnboardingProgress(
-              currentPage: _currentPage,
-              totalPages: _replayPageCount,
-            ),
+            _OnboardingProgress(currentPage: _currentPage + 5, minPage: 5),
             if (_replaySyncing) ...[
               const Expanded(
                 child: Center(
@@ -389,10 +399,463 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   // ---------------------------------------------------------------------------
+  // Welcome Screen
+  // ---------------------------------------------------------------------------
+
+  Widget _buildWelcomeScreen() {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF5BBFBF), Color(0xFF72CBCB), Color(0xFF88D4E4)],
+          ),
+        ),
+        child: Column(
+          children: [
+            Expanded(
+              child: SafeArea(
+                bottom: false,
+                child: _buildWelcomeHero(),
+              ),
+            ),
+            _buildWelcomeBottomCard(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWelcomeHero() {
+    return Stack(
+      children: [
+        Positioned(
+          top: -60,
+          right: -40,
+          child: Container(
+            width: 200,
+            height: 200,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white.withOpacity(0.08),
+            ),
+          ),
+        ),
+        Positioned(
+          bottom: 40,
+          left: -50,
+          child: Container(
+            width: 120,
+            height: 120,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white.withOpacity(0.05),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(28, 16, 28, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SvgPicture.asset(
+                'assets/images/SVG/BUXLY LOGO_Horizontal_Wordmark_Ash White.svg',
+                height: 36,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Financial Health. Mental Wealth.',
+                style: TextStyle(
+                  fontFamily: BuxlyTheme.fontFamily,
+                  fontSize: 15,
+                  fontStyle: FontStyle.italic,
+                  color: Colors.white.withOpacity(0.9),
+                ),
+              ),
+              const Spacer(),
+              _buildWelcomeFeatureRow('💚', 'Track your spending'),
+              const SizedBox(height: 14),
+              _buildWelcomeFeatureRow('🎯', 'Set savings goals'),
+              const SizedBox(height: 14),
+              _buildWelcomeFeatureRow('🤖', 'AI-powered coaching'),
+              const Spacer(),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(BuxlyRadius.pill),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.auto_awesome,
+                        size: 16, color: Colors.white.withOpacity(0.9)),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Made for New Zealanders 🥝',
+                      style: TextStyle(
+                        fontFamily: BuxlyTheme.fontFamily,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white.withOpacity(0.9),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWelcomeFeatureRow(String emoji, String text) {
+    return Row(
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          alignment: Alignment.center,
+          child: Text(emoji, style: const TextStyle(fontSize: 20)),
+        ),
+        const SizedBox(width: 14),
+        Text(
+          text,
+          style: const TextStyle(
+            fontFamily: BuxlyTheme.fontFamily,
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: Colors.white,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWelcomeBottomCard() {
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 32, 24, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _welcomeLoading ? null : _showWelcomeLoginSheet,
+                  child: _welcomeLoading
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('Get Started'),
+                            SizedBox(width: 8),
+                            Icon(Icons.arrow_forward, size: 20),
+                          ],
+                        ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: _welcomeLoading
+                      ? null
+                      : () => setState(() => _showWelcome = false),
+                  child: const Text('New here? Start onboarding'),
+                ),
+              ),
+              if (_welcomeError != null) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: BuxlyColors.hotPink.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(BuxlyRadius.md),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline,
+                          color: BuxlyColors.hotPink, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _welcomeError!,
+                          style: const TextStyle(
+                            color: BuxlyColors.hotPink,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showWelcomeLoginSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Padding(
+          padding:
+              EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Sign in',
+                  style: Theme.of(ctx).textTheme.headlineLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Enter your email and password to continue.',
+                  style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(
+                        color: Colors.black54,
+                      ),
+                ),
+                const SizedBox(height: 20),
+                Form(
+                  key: _loginFormKey,
+                  child: Column(
+                    children: [
+                      TextFormField(
+                        controller: _emailCtrl,
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'Email',
+                          hintText: 'your@email.co.nz',
+                        ),
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) {
+                            return 'Email is required';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _authPasswordCtrl,
+                        obscureText: true,
+                        textInputAction: TextInputAction.done,
+                        onFieldSubmitted: (_) {
+                          if (_loginFormKey.currentState!.validate()) {
+                            Navigator.pop(ctx);
+                            _handleWelcomeLogin();
+                          }
+                        },
+                        decoration: const InputDecoration(
+                          labelText: 'Password',
+                        ),
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) {
+                            return 'Password is required';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: () {
+                            if (_loginFormKey.currentState!.validate()) {
+                              Navigator.pop(ctx);
+                              _handleWelcomeLogin();
+                            }
+                          },
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('Sign in'),
+                              SizedBox(width: 8),
+                              Icon(Icons.arrow_forward, size: 20),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _handleWelcomeLogin() async {
+    final email = _emailCtrl.text.trim();
+    final password = _authPasswordCtrl.text.trim();
+    if (email.isEmpty || password.isEmpty) {
+      setState(() => _welcomeError = 'Email and password are required.');
+      return;
+    }
+
+    setState(() {
+      _welcomeLoading = true;
+      _welcomeError = null;
+    });
+
+    try {
+      final container = ProviderScope.containerOf(context);
+      final authApi = container.read(authApiProvider);
+      final tokenStore = container.read(tokenStoreProvider);
+
+      await tokenStore.clear();
+
+      final token = await authApi.login(email: email, password: password);
+      await tokenStore.setToken(token);
+      await CredentialStore().save(email: email, password: password);
+
+      if (!mounted) return;
+
+      setState(() {
+        _backendAuthed = true;
+        _welcomeLoading = false;
+      });
+
+      final alreadyOnboarded = await OnboardingStore().isComplete();
+      if (alreadyOnboarded && mounted) {
+        Navigator.pushReplacementNamed(context, '/dashboard');
+        return;
+      }
+
+      final akahuCtrl = container.read(akahuControllerProvider.notifier);
+      final connected = await akahuCtrl.verifyConnected();
+
+      if (!mounted) return;
+
+      if (connected) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('bank_connected', true);
+        await prefs.remove('last_sync_at');
+
+        _startBackgroundSync();
+
+        setState(() {
+          _bankConnected = true;
+          _showWelcome = false;
+          _minPage = _recurringExplainIndex;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _pageController.jumpToPage(_recurringExplainIndex);
+        });
+      } else {
+        setState(() {
+          _showWelcome = false;
+          _minPage = _akahuConnectIndex;
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _pageController.jumpToPage(_akahuConnectIndex);
+        });
+      }
+    } catch (err) {
+      if (!mounted) return;
+      setState(() {
+        _welcomeLoading = false;
+        _welcomeError = _friendlyAuthError(err);
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Header
+  // ---------------------------------------------------------------------------
+
+  Widget _buildOnboardingHeader(bool showBackButton, bool isProcessing) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 8, 4, 0),
+      child: Row(
+        children: [
+          if (showBackButton)
+            IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: isProcessing
+                  ? null
+                  : () {
+                      if (_currentPage == 0 && _minPage == 0) {
+                        setState(() => _showWelcome = true);
+                      } else {
+                        _pageController.previousPage(
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                        );
+                      }
+                    },
+            )
+          else
+            const SizedBox(width: 48),
+          Expanded(
+            child: Center(
+              child: SvgPicture.asset(
+                'assets/images/SVG/BUXLY LOGO_Horizontal_Wordmark_Black.svg',
+                height: 28,
+              ),
+            ),
+          ),
+          const SizedBox(width: 48),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // Navigation
   // ---------------------------------------------------------------------------
 
-  Widget _buildNavigation(bool showBackButton, bool isProcessing) {
+  Widget _buildNavigation(bool isProcessing) {
     final isRegistration = _currentPage == _registrationIndex;
     final isAkahuConnect = _currentPage == _akahuConnectIndex;
     final isFinalPage = _currentPage == _budgetExplainIndex;
@@ -403,11 +866,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
     if (isRegistration) {
       if (_backendAuthLoading) {
-        nextLabel = _isLoginMode ? 'Signing in…' : 'Creating account…';
+        nextLabel = 'Creating account…';
         nextIcon = Icons.hourglass_empty;
       } else {
-        nextLabel = _isLoginMode ? 'Sign in' : 'Continue';
-        nextIcon = _isLoginMode ? Icons.login : Icons.arrow_forward;
+        nextLabel = 'Continue';
+        nextIcon = Icons.arrow_forward;
       }
     } else if (isAkahuConnect) {
       if (_bankConnected) {
@@ -430,41 +893,37 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          if (showBackButton)
-            TextButton.icon(
-              icon: const Icon(Icons.arrow_back, size: 18),
-              label: const Text('Back'),
-              onPressed: () => _pageController.previousPage(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
-              ),
-            )
-          else
-            const SizedBox(width: 80),
-          const Spacer(),
-          if (isReferrerPage)
+          if (isReferrerPage || (isAkahuConnect && !_bankConnected))
             Padding(
-              padding: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.only(bottom: 8),
               child: TextButton(
                 onPressed: isProcessing ? null : _goToNextPage,
                 child: const Text('Skip'),
               ),
             ),
-          if (isAkahuConnect && !_bankConnected)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: TextButton(
-                onPressed: isProcessing ? null : _goToNextPage,
-                child: const Text('Skip'),
-              ),
-            ),
-          Flexible(
-            child: FilledButton.icon(
-              icon: Icon(nextIcon, size: 18),
-              label: Text(nextLabel, overflow: TextOverflow.ellipsis),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
               onPressed: isProcessing ? null : _handleNext,
+              child: isProcessing
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                    )
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(nextLabel),
+                        const SizedBox(width: 8),
+                        Icon(nextIcon, size: 20),
+                      ],
+                    ),
             ),
           ),
         ],
@@ -474,17 +933,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
   void _handleNext() {
     if (_currentPage == _registrationIndex) {
-      if (!_isLoginMode) {
-        if (!_formKey.currentState!.validate()) return;
-      } else {
-        // In login mode, only validate email + password
-        final email = _emailCtrl.text.trim();
-        final pass = _authPasswordCtrl.text.trim();
-        if (email.isEmpty || pass.isEmpty) {
-          setState(() => _backendAuthError = 'Email and password are required.');
-          return;
-        }
-      }
+      if (!_formKey.currentState!.validate()) return;
       _handleRegistration();
       return;
     }
@@ -503,80 +952,16 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _goToNextPage();
   }
 
-  /// Handles the Continue/Sign in tap on the registration page.
+  /// Handles the Continue tap on the registration page.
   Future<void> _handleRegistration() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    if (_backendAuthed && !_isLoginMode) {
+    if (_backendAuthed) {
       _goToNextPage();
       return;
     }
-
-    if (_isLoginMode) {
-      await _handleLogin();
-    } else {
-      await _handleBackendAuth();
-      if (_backendAuthed && mounted) {
-        _goToNextPage();
-      }
-    }
-  }
-
-  /// Login flow: authenticate → verify Akahu connection → navigate immediately.
-  /// Sync runs in the background while the user reads the explain pages.
-  Future<void> _handleLogin() async {
-    final email = _emailCtrl.text.trim();
-    final password = _authPasswordCtrl.text.trim();
-    if (email.isEmpty || password.isEmpty) {
-      setState(() => _backendAuthError = 'Email and password are required.');
-      return;
-    }
-
-    setState(() {
-      _backendAuthLoading = true;
-      _backendAuthError = null;
-    });
-
-    try {
-      final container = ProviderScope.containerOf(context);
-      final authApi = container.read(authApiProvider);
-      final tokenStore = container.read(tokenStoreProvider);
-
-      await tokenStore.clear();
-
-      final token = await authApi.login(email: email, password: password);
-      await tokenStore.setToken(token);
-      await CredentialStore().save(email: email, password: password);
-
-      if (!mounted) return;
-      setState(() {
-        _backendAuthed = true;
-        _backendAuthLoading = false;
-      });
-
-      final akahuCtrl = container.read(akahuControllerProvider.notifier);
-      final connected = await akahuCtrl.verifyConnected();
-
-      if (!mounted) return;
-
-      if (connected) {
-        setState(() => _bankConnected = true);
-
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('bank_connected', true);
-        await prefs.remove('last_sync_at');
-
-        _startBackgroundSync();
-
-        _pageController.jumpToPage(_recurringExplainIndex);
-      } else {
-        _pageController.jumpToPage(_akahuConnectIndex);
-      }
-    } catch (err) {
-      if (!mounted) return;
-      setState(() {
-        _backendAuthLoading = false;
-        _backendAuthError = _friendlyAuthError(err);
-      });
+    await _handleBackendAuth();
+    if (_backendAuthed && mounted) {
+      _goToNextPage();
     }
   }
 
@@ -601,121 +986,152 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                _isLoginMode ? 'Sign in' : 'Create your account',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+              const Text(
+                '👋 Welcome to Buxly',
+                style: TextStyle(
+                  fontFamily: BuxlyTheme.fontFamily,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: BuxlyColors.teal,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Create your account',
+                style: TextStyle(
+                  fontFamily: BuxlyTheme.fontFamily,
+                  fontSize: 28,
+                  fontWeight: FontWeight.w800,
+                  color: BuxlyColors.darkText,
+                ),
               ),
               const SizedBox(height: 8),
               Text(
-                _isLoginMode
-                    ? 'Sign in with your existing account.'
-                    : 'We need a few details to set up your profile.',
+                "Let's get to know you. This helps us personalise your financial journey.",
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: Colors.black54,
+                      height: 1.4,
                     ),
               ),
-              const SizedBox(height: 20),
-              if (!_isLoginMode) ...[
-                Row(
-                  children: [
-                    Expanded(
-                      child: _StyledFormField(
-                        controller: _firstNameCtrl,
-                        label: 'First name',
-                        validator: _requiredValidator('First name is required'),
-                        textInputAction: TextInputAction.next,
-                      ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: _StyledFormField(
+                      controller: _firstNameCtrl,
+                      label: 'First name',
+                      validator: _requiredValidator('First name is required'),
+                      textInputAction: TextInputAction.next,
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _StyledFormField(
-                        controller: _lastNameCtrl,
-                        label: 'Last name',
-                        validator: _requiredValidator('Last name is required'),
-                        textInputAction: TextInputAction.next,
-                      ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _StyledFormField(
+                      controller: _lastNameCtrl,
+                      label: 'Last name',
+                      validator: _requiredValidator('Last name is required'),
+                      textInputAction: TextInputAction.next,
                     ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-              ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
               _StyledFormField(
                 controller: _emailCtrl,
                 label: 'Email address',
+                hint: 'aroha@example.co.nz',
                 keyboardType: TextInputType.emailAddress,
                 validator: _emailValidator,
                 textInputAction: TextInputAction.next,
               ),
-              if (!_isLoginMode) ...[
-                const SizedBox(height: 16),
-                _StyledFormField(
-                  controller: _phoneCtrl,
-                  label: 'Phone number',
-                  hint: 'Optional',
-                  keyboardType: TextInputType.phone,
-                  textInputAction: TextInputAction.next,
+              const SizedBox(height: 16),
+              _StyledFormField(
+                controller: _phoneCtrl,
+                label: 'Phone number',
+                hint: '+64 21 123 4567',
+                keyboardType: TextInputType.phone,
+                textInputAction: TextInputAction.next,
+                helperText: "We'll only use this to verify your account",
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _dobCtrl,
+                readOnly: true,
+                onTap: _pickDateOfBirth,
+                decoration: InputDecoration(
+                  labelText: 'Date of birth',
+                  hintText: 'dd/mm/yyyy',
+                  suffixIcon: const Icon(Icons.calendar_today_outlined),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  filled: true,
+                  fillColor: Colors.white,
                 ),
-                const SizedBox(height: 16),
-                _DobPickerField(
-                  value: _selectedDob,
-                  displayText: _dobCtrl.text,
-                  onTap: _pickDateOfBirth,
-                ),
-              ],
+              ),
               const SizedBox(height: 16),
               _StyledFormField(
                 controller: _authPasswordCtrl,
                 label: 'Password',
-                hint: _isLoginMode ? '' : 'Min 8 characters',
+                hint: 'Min 8 characters',
                 obscureText: true,
                 validator: (v) {
                   if (v == null || v.trim().isEmpty) {
                     return 'Password is required';
                   }
-                  if (!_isLoginMode && v.trim().length < 8) {
+                  if (v.trim().length < 8) {
                     return 'Password must be at least 8 characters';
                   }
                   return null;
                 },
-                textInputAction: _isLoginMode ? TextInputAction.done : TextInputAction.next,
+                textInputAction: TextInputAction.next,
               ),
-              if (!_isLoginMode) ...[
-                const SizedBox(height: 16),
-                _StyledFormField(
-                  controller: _authConfirmPasswordCtrl,
-                  label: 'Confirm password',
-                  obscureText: true,
-                  validator: (v) {
-                    if (v != _authPasswordCtrl.text) {
-                      return 'Passwords do not match';
-                    }
-                    return null;
-                  },
-                  textInputAction: TextInputAction.done,
-                ),
-              ],
+              const SizedBox(height: 16),
+              _StyledFormField(
+                controller: _authConfirmPasswordCtrl,
+                label: 'Confirm password',
+                obscureText: true,
+                validator: (v) {
+                  if (v != _authPasswordCtrl.text) {
+                    return 'Passwords do not match';
+                  }
+                  return null;
+                },
+                textInputAction: TextInputAction.done,
+              ),
               if (_backendAuthError != null) ...[
                 const SizedBox(height: 16),
                 _ErrorBanner(message: _backendAuthError!),
               ],
               const SizedBox(height: 20),
+              const _PrivacyNotice(),
+              const SizedBox(height: 16),
               Center(
-                child: TextButton(
-                  onPressed: _backendAuthLoading
-                      ? null
-                      : () {
-                          setState(() {
-                            _isLoginMode = !_isLoginMode;
-                            _backendAuthError = null;
-                          });
-                        },
-                  child: Text(
-                    _isLoginMode
-                        ? "Don't have an account? Register"
-                        : 'Already have an account? Sign in',
+                child: Text.rich(
+                  TextSpan(
+                    text: 'By continuing, you agree to our ',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.black54,
+                        ),
+                    children: const [
+                      TextSpan(
+                        text: 'Terms of Service',
+                        style: TextStyle(
+                          decoration: TextDecoration.underline,
+                          color: BuxlyColors.darkText,
+                        ),
+                      ),
+                      TextSpan(text: ' and '),
+                      TextSpan(
+                        text: 'Privacy Policy',
+                        style: TextStyle(
+                          decoration: TextDecoration.underline,
+                          color: BuxlyColors.darkText,
+                        ),
+                      ),
+                    ],
                   ),
+                  textAlign: TextAlign.center,
                 ),
               ),
             ],
@@ -1850,30 +2266,36 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
 class _OnboardingProgress extends StatelessWidget {
   final int currentPage;
+  final int minPage;
   final int totalPages;
 
   const _OnboardingProgress({
     required this.currentPage,
-    required this.totalPages,
+    this.minPage = 0,
+    this.totalPages = 8,
   });
 
   @override
   Widget build(BuildContext context) {
+    final segmentCount = totalPages - minPage;
+    if (segmentCount <= 0) return const SizedBox.shrink();
+    final activeIndex = (currentPage - minPage).clamp(0, segmentCount - 1);
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
       child: Row(
-        children: List.generate(totalPages, (index) {
-          final isActive = index <= currentPage;
+        children: List.generate(segmentCount, (index) {
+          final isActive = index <= activeIndex;
           return Expanded(
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 250),
-              height: 4,
-              margin: EdgeInsets.only(right: index < totalPages - 1 ? 4 : 0),
+              height: 5,
+              margin: EdgeInsets.only(right: index < segmentCount - 1 ? 4 : 0),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(2),
+                borderRadius: BorderRadius.circular(3),
                 color: isActive
-                    ? Theme.of(context).colorScheme.primary
-                    : Colors.black12,
+                    ? BuxlyColors.teal
+                    : BuxlyColors.disabled.withOpacity(0.4),
               ),
             ),
           );
@@ -1953,7 +2375,7 @@ class _StyledTextField extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
         ),
         filled: true,
-        fillColor: Colors.grey.shade50,
+        fillColor: Colors.white,
       ),
     );
   }
@@ -1963,6 +2385,7 @@ class _StyledFormField extends StatelessWidget {
   final TextEditingController controller;
   final String label;
   final String? hint;
+  final String? helperText;
   final TextInputType? keyboardType;
   final String? Function(String?)? validator;
   final TextInputAction? textInputAction;
@@ -1973,6 +2396,7 @@ class _StyledFormField extends StatelessWidget {
     required this.controller,
     required this.label,
     this.hint,
+    this.helperText,
     this.keyboardType,
     this.validator,
     this.textInputAction,
@@ -1991,12 +2415,13 @@ class _StyledFormField extends StatelessWidget {
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
+        helperText: helperText,
         suffixIcon: suffixIcon,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
         ),
         filled: true,
-        fillColor: Colors.grey.shade50,
+        fillColor: Colors.white,
       ),
     );
   }
@@ -2051,88 +2476,6 @@ class _SelectionTile extends StatelessWidget {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DobPickerField extends StatelessWidget {
-  final DateTime? value;
-  final String displayText;
-  final VoidCallback onTap;
-
-  const _DobPickerField({
-    required this.value,
-    required this.displayText,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final hasValue = value != null;
-    final primary = Theme.of(context).colorScheme.primary;
-
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: hasValue ? primary.withOpacity(0.06) : Colors.grey.shade50,
-          border: Border.all(
-            color: hasValue ? primary.withOpacity(0.4) : Colors.grey.shade300,
-            width: hasValue ? 1.5 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: hasValue
-                    ? primary.withOpacity(0.12)
-                    : Colors.grey.shade200,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(
-                Icons.cake_outlined,
-                size: 20,
-                color: hasValue ? primary : Colors.grey.shade500,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Date of birth',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                      color: hasValue ? primary : Colors.grey.shade600,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    hasValue ? displayText : 'Tap to select your birthday',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: hasValue ? FontWeight.w600 : FontWeight.w400,
-                      color: hasValue ? Colors.black87 : Colors.grey.shade500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              Icons.expand_more_rounded,
-              color: hasValue ? primary : Colors.grey.shade400,
-            ),
-          ],
         ),
       ),
     );
@@ -2268,6 +2611,40 @@ class _SuccessBanner extends StatelessWidget {
             child: Text(
               message,
               style: TextStyle(color: Colors.green.shade800),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PrivacyNotice extends StatelessWidget {
+  const _PrivacyNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: const Color(0xFFFFF9E6),
+        border: Border.all(color: const Color(0xFFFFE082)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('🔒', style: TextStyle(fontSize: 20)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Your data is encrypted and never shared. We take your privacy seriously.',
+              style: TextStyle(
+                fontFamily: BuxlyTheme.fontFamily,
+                fontSize: 13,
+                color: Colors.black.withOpacity(0.7),
+                height: 1.4,
+              ),
             ),
           ),
         ],

@@ -22,6 +22,7 @@ import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/transaction_model.dart';
 import 'package:bfm_app/widgets/help_icon_tooltip.dart';
+import 'package:bfm_app/widgets/swipe_back_wrapper.dart';
 
 /// Stateful wrapper because the screen owns dialog controllers and refreshes
 /// its own Future each time a CRUD action completes.
@@ -76,9 +77,10 @@ class _GoalsScreenState extends State<GoalsScreen> {
   /// - Lazy list of goals that shows progress, CTA buttons, and popup menu.
   /// - FAB for adding new goals.
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("My Goals")),
-      body: FutureBuilder<_GoalsData>(
+    return SwipeBackWrapper(
+      child: Scaffold(
+        appBar: AppBar(title: const Text("My Goals")),
+        body: FutureBuilder<_GoalsData>(
         future: _goalsFuture,
         builder: (context, snapshot) {
           if (!snapshot.hasData) {
@@ -169,6 +171,7 @@ class _GoalsScreenState extends State<GoalsScreen> {
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showAddGoalDialog(),
         child: const Icon(Icons.add),
+      ),
       ),
     );
   }

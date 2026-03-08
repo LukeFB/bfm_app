@@ -21,6 +21,7 @@
 //   - Keep this lean; heavy logic belongs in services or the database layer.
 // ---------------------------------------------------------------------------
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -35,6 +36,12 @@ import 'package:flutter/foundation.dart';
 /// finally calls `runApp`. Keep async work before `runApp` to avoid blank frames.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+
   if ([ // Enable sqflite ffi for desktop dev 
     TargetPlatform.windows,
     TargetPlatform.linux,
