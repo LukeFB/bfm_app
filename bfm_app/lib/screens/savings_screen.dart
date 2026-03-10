@@ -2,17 +2,23 @@ import 'dart:math';
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:bfm_app/models/account_model.dart';
+import 'package:bfm_app/utils/format_helpers.dart';
+import 'package:bfm_app/widgets/buxly_header.dart';
 import 'package:bfm_app/models/asset_model.dart';
 import 'package:bfm_app/repositories/asset_repository.dart';
 import 'package:bfm_app/repositories/account_repository.dart';
 import 'package:bfm_app/services/app_savings_store.dart';
 import 'package:bfm_app/services/budget_buffer_store.dart';
+import 'package:bfm_app/services/buxly_buffer_budget_store.dart';
+import 'package:bfm_app/services/dashboard_service.dart';
 import 'package:bfm_app/services/savings_service.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
+import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
+import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/models/goal_model.dart';
+import 'package:bfm_app/widgets/help_icon_tooltip.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bfm_app/theme/buxly_theme.dart';
 
@@ -36,6 +42,8 @@ class _SavingsScreenState extends State<SavingsScreen> {
   DateTime? _appStartDate;
   SavingsData? _cachedData;
   final ScrollController _scrollController = ScrollController();
+  int? _bufferBudgetWeeks;
+  double _bufferBudgetTargetWeekly = 0;
 
   double get _totalIncome {
     final ts = _cachedData?.profitLossTimeSeries;
@@ -97,12 +105,60 @@ class _SavingsScreenState extends State<SavingsScreen> {
     final goals = await GoalRepository.getSavingsGoals();
     final data = await SavingsService.loadSavingsData(
         timeFrame: _selectedTimeFrame);
+
+    // --- Buffer budget computation ---
+    final weeklyIncome = await DashboardService.weeklyIncomeLastWeek();
+    final totalBudgets = await BudgetRepository.getTotalWeeklyBudget();
+    final goalBudgets = await BudgetRepository.getGoalWeeklyBudgetTotal();
+    final existingBufferBudget = await BuxlyBufferBudgetStore.getExisting();
+    final currentBufferWeekly = existingBufferBudget?.weeklyLimit ?? 0.0;
+
+    // Unbudgeted recurring expenses
+    final allRecurring = await RecurringRepository.getAll();
+    final allBudgets = await BudgetRepository.getAll();
+    final budgetedRecurringIds = allBudgets
+        .where((b) => b.recurringTransactionId != null)
+        .map((b) => b.recurringTransactionId!)
+        .toSet();
+    double unbudgetedRecurringWeekly = 0;
+    for (final r in allRecurring) {
+      if (r.transactionType.toLowerCase() != 'expense') continue;
+      if (r.id != null && budgetedRecurringIds.contains(r.id!)) continue;
+      final freq = r.frequency.toLowerCase();
+      if (freq != 'weekly' && freq != 'monthly') continue;
+      unbudgetedRecurringWeekly +=
+          freq == 'weekly' ? r.amount : r.amount / 4.345;
+    }
+
+    final disposable = weeklyIncome -
+        (totalBudgets - currentBufferWeekly) -
+        goalBudgets -
+        unbudgetedRecurringWeekly;
+    final targetWeekly = disposable > 0 ? disposable * 0.25 : 0.0;
+
+    int? newBufferWeeks;
+    double newTargetWeekly = 0;
+    if (appSavings < 0 && targetWeekly > 0) {
+      final storedWeeks = await BuxlyBufferBudgetStore.getWeeks();
+      final defaultWeeks =
+          (appSavings.abs() / targetWeekly).ceil().clamp(1, 104);
+      newBufferWeeks = storedWeeks ?? defaultWeeks;
+      newTargetWeekly = targetWeekly;
+      final weeklyAmount = appSavings.abs() / newBufferWeeks;
+      await BuxlyBufferBudgetStore.save(
+          weeks: newBufferWeeks, weeklyAmount: weeklyAmount);
+    } else if (appSavings >= 0 && existingBufferBudget != null) {
+      await BuxlyBufferBudgetStore.clear();
+    }
+
     if (mounted) {
       setState(() {
         _appSavingsTotal = appSavings;
         _perBudgetBufferTotal = bufferTotal;
         _goals = goals;
         _cachedData = data;
+        _bufferBudgetWeeks = newBufferWeeks;
+        _bufferBudgetTargetWeekly = newTargetWeekly;
       });
     }
     return data;
@@ -183,52 +239,21 @@ class _SavingsScreenState extends State<SavingsScreen> {
     setState(() => _selectedTimeFrame = newValue);
   }
 
+  Future<void> _onBufferBudgetWeeksChanged(int newWeeks) async {
+    if (newWeeks < 1 || _appSavingsTotal >= 0) return;
+    final weeklyAmount = _appSavingsTotal.abs() / newWeeks;
+    await BuxlyBufferBudgetStore.save(
+        weeks: newWeeks, weeklyAmount: weeklyAmount);
+    if (mounted) setState(() => _bufferBudgetWeeks = newWeeks);
+  }
+
   Future<void> _openSettings() async {
     await Navigator.pushNamed(context, '/settings');
     if (mounted) _refresh();
   }
 
   Widget _buildHeader() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Financial Health. Mental Wealth.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontStyle: FontStyle.italic,
-                    color: BuxlyColors.midGrey,
-                    fontFamily: BuxlyTheme.fontFamily,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                SvgPicture.asset(
-                  'assets/images/SVG/BUXLY LOGO_Horizontal_Wordmark_Light Turquoise.svg',
-                  height: 28,
-                  colorFilter: const ColorFilter.mode(
-                    BuxlyColors.teal,
-                    BlendMode.srcIn,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Settings',
-            icon: const Icon(
-              Icons.settings_outlined,
-              color: BuxlyColors.darkText,
-            ),
-            onPressed: _openSettings,
-          ),
-        ],
-      ),
-    );
+    return BuxlyHeader(onSettingsPressed: _openSettings);
   }
 
   @override
@@ -298,6 +323,9 @@ class _SavingsScreenState extends State<SavingsScreen> {
                         onAssetActions: _showAssetActionsSheet,
                         onAccountToggle: _toggleAccountExclusion,
                         appStartDate: _appStartDate,
+                        bufferBudgetWeeks: _bufferBudgetWeeks,
+                        bufferBudgetTargetWeekly: _bufferBudgetTargetWeekly,
+                        onBufferBudgetWeeksChanged: _onBufferBudgetWeeksChanged,
                       ),
                         ],
                       ),
@@ -570,13 +598,7 @@ class _SavingsScreenState extends State<SavingsScreen> {
     );
   }
 
-  double _parseCurrency(String raw) {
-    if (raw.trim().isEmpty) return 0.0;
-    final sanitized = raw.replaceAll(RegExp(r'[^0-9\.\-]'), '');
-    final value = double.tryParse(sanitized);
-    if (value == null || value.isNaN || value.isInfinite) return 0.0;
-    return value;
-  }
+  double _parseCurrency(String raw) => parseCurrency(raw);
 
   IconData _getAssetCategoryIcon(AssetCategory category) {
     switch (category) {
@@ -640,6 +662,9 @@ class _SavingsContent extends StatelessWidget {
   final void Function(AssetModel) onAssetActions;
   final void Function(AccountModel, bool) onAccountToggle;
   final DateTime? appStartDate;
+  final int? bufferBudgetWeeks;
+  final double bufferBudgetTargetWeekly;
+  final ValueChanged<int>? onBufferBudgetWeeksChanged;
 
   const _SavingsContent({
     required this.data,
@@ -656,6 +681,9 @@ class _SavingsContent extends StatelessWidget {
     required this.onAssetActions,
     required this.onAccountToggle,
     this.appStartDate,
+    this.bufferBudgetWeeks,
+    this.bufferBudgetTargetWeekly = 0,
+    this.onBufferBudgetWeeksChanged,
   });
 
   @override
@@ -696,31 +724,90 @@ class _SavingsContent extends StatelessWidget {
                       fontFamily: BuxlyTheme.fontFamily,
                     ),
                   ),
+                  const SizedBox(width: 4),
+                  HelpIconTooltip(
+                    title: 'Buxly Buffer',
+                    message:
+                        'Your Buxly Buffer tracks money saved from your '
+                        'non-essential spending each week. When you stay '
+                        'under your Left to Spend, the leftover is added '
+                        'to your buffer.\n\n'
+                        'If you overspend, the buffer absorbs the cost. '
+                        'If it goes negative, you\'ve spent more than '
+                        'you\'ve saved.\n\n'
+                        'When your buffer is negative, the Buffer Budget '
+                        'automatically sets aside money each week to help '
+                        'you recover. It\'s calculated as 25% of your '
+                        'disposable income (income minus budgets and '
+                        'recurring expenses), and the number of weeks '
+                        'adjusts accordingly.\n\n'
+                        'You can change the weeks to pay it back faster '
+                        'or slower. This budget won\'t appear on your '
+                        'Budgets screen but will reduce your Left to '
+                        'Spend on the dashboard.',
+                  ),
                 ],
               ),
               const SizedBox(height: 16),
-              Text(
-                appSavings < 0
-                    ? '−\$${appSavings.abs().toStringAsFixed(0)}'
-                    : '\$${appSavings.toStringAsFixed(0)}',
-                style: TextStyle(
-                  fontSize: 36,
-                  fontWeight: FontWeight.w800,
-                  color: appSavings < 0
-                      ? BuxlyColors.coralOrange
-                      : BuxlyColors.darkText,
-                  fontFamily: BuxlyTheme.fontFamily,
-                  letterSpacing: -1,
+              if (appSavings < 0 && bufferBudgetWeeks != null) ...[
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '−\$${appSavings.abs().toStringAsFixed(0)}',
+                            style: const TextStyle(
+                              fontSize: 32,
+                              fontWeight: FontWeight.w800,
+                              color: BuxlyColors.coralOrange,
+                              fontFamily: BuxlyTheme.fontFamily,
+                              letterSpacing: -1,
+                            ),
+                          ),
+                          Text(
+                            'Non-essential\nexpense buffer',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: BuxlyColors.midGrey,
+                              fontFamily: BuxlyTheme.fontFamily,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildBufferBudgetCard(),
+                    ),
+                  ],
                 ),
-              ),
-              Text(
-                'Non-essential expense buffer',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: BuxlyColors.midGrey,
-                  fontFamily: BuxlyTheme.fontFamily,
+              ] else ...[
+                Text(
+                  appSavings < 0
+                      ? '−\$${appSavings.abs().toStringAsFixed(0)}'
+                      : '\$${appSavings.toStringAsFixed(0)}',
+                  style: TextStyle(
+                    fontSize: 36,
+                    fontWeight: FontWeight.w800,
+                    color: appSavings < 0
+                        ? BuxlyColors.coralOrange
+                        : BuxlyColors.darkText,
+                    fontFamily: BuxlyTheme.fontFamily,
+                    letterSpacing: -1,
+                  ),
                 ),
-              ),
+                Text(
+                  'Non-essential expense buffer',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: BuxlyColors.midGrey,
+                    fontFamily: BuxlyTheme.fontFamily,
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               const Divider(height: 1),
               const SizedBox(height: 16),
@@ -1020,6 +1107,85 @@ class _SavingsContent extends StatelessWidget {
     );
   }
 
+  Widget _buildBufferBudgetCard() {
+    final weeks = bufferBudgetWeeks ?? 1;
+    final weeklyAmount = appSavings.abs() / weeks;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: BuxlyColors.offWhite,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Buffer Budget',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: BuxlyColors.darkText,
+              fontFamily: BuxlyTheme.fontFamily,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '\$${weeklyAmount.toStringAsFixed(0)}/wk',
+            style: const TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: BuxlyColors.teal,
+              fontFamily: BuxlyTheme.fontFamily,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              _weeksButton(Icons.remove, () {
+                if (weeks > 1) {
+                  onBufferBudgetWeeksChanged?.call(weeks - 1);
+                }
+              }),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  '$weeks wks',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: BuxlyColors.darkText,
+                    fontFamily: BuxlyTheme.fontFamily,
+                  ),
+                ),
+              ),
+              _weeksButton(Icons.add, () {
+                onBufferBudgetWeeksChanged?.call(weeks + 1);
+              }),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _weeksButton(IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          color: BuxlyColors.teal.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        alignment: Alignment.center,
+        child: Icon(icon, size: 16, color: BuxlyColors.teal),
+      ),
+    );
+  }
+
   String _targetDateLabel(GoalModel goal) {
     if (goal.weeklyContribution <= 0 || goal.amount <= goal.savedAmount) {
       return '';
@@ -1027,11 +1193,7 @@ class _SavingsContent extends StatelessWidget {
     final remaining = goal.amount - goal.savedAmount;
     final weeks = (remaining / goal.weeklyContribution).ceil();
     final target = DateTime.now().add(Duration(days: weeks * 7));
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    return 'Target: ${months[target.month - 1]} ${target.year}';
+    return 'Target: ${kMonthAbbreviations[target.month - 1]} ${target.year}';
   }
 
   Color _goalBarColor(int index) {

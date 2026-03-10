@@ -19,7 +19,6 @@
 /// Alert types used by the `type` column.
 class AlertType {
   static const String recurring = 'recurring';
-  static const String cancelSubscription = 'cancel_subscription';
 }
 
 /// Represents a short alert message that can include an optional icon.
@@ -52,7 +51,6 @@ class AlertModel {
     this.createdAt,
   });
 
-  bool get isCancelSubscription => type == AlertType.cancelSubscription;
   bool get isCompleted => completedAt != null;
 
   AlertModel copyWith({

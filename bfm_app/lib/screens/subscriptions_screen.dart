@@ -272,14 +272,6 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
         );
       } else {
         await BudgetRepository.deleteByRecurringId(rid);
-
-        final displayTitle = _displayName(item);
-        await AlertRepository.insertCancelSubscription(
-          recurringId: rid,
-          title: 'Cancel $displayTitle',
-          icon: emoji,
-          amount: item.amount,
-        );
       }
     }
 
@@ -515,7 +507,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
         Padding(
           padding: const EdgeInsets.only(bottom: 16),
           child: Text(
-            'Select the detected recurring payments you would like to create budgets for. Reminders will be created to cancel unselected recurring payments.',
+            'Select the detected recurring payments you would like to create budgets for.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Colors.black54,
                   height: 1.4,

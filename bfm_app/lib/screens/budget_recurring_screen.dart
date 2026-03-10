@@ -28,7 +28,6 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
   final Map<int, TextEditingController> _nameCtrls = {};
   final Map<int, String> _categoryNames = {};
   List<AlertModel> _manualAlerts = [];
-  List<AlertModel> _cancelAlerts = [];
   CategoryEmojiHelper? _emojiHelper;
 
   @override
@@ -61,12 +60,10 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
       ..sort(_compareByDueDate);
 
     final alerts = await AlertRepository.getActiveRecurring();
-    final cancelAlerts = await AlertRepository.getActiveCancelAlerts();
     final manualAlerts = (await AlertRepository.getAll())
         .where((alert) =>
             alert.recurringTransactionId == null &&
-            alert.isActive &&
-            alert.type != AlertType.cancelSubscription)
+            alert.isActive)
         .toList()
       ..sort(_compareAlertsByDueDate);
     final alertsById = <int, AlertModel>{};
@@ -122,7 +119,6 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
         ..clear()
         ..addAll(categoryNames);
       _manualAlerts = manualAlerts;
-      _cancelAlerts = cancelAlerts;
       _emojiHelper = emojiHelper;
       _loading = false;
     });
@@ -187,8 +183,7 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Toggle recurring payment reminders and review '
-                    'subscriptions flagged for cancellation.',
+                    'Toggle recurring payment reminders and manage your alerts.',
                     style: TextStyle(fontSize: 14, color: Colors.black87),
                   ),
                   const SizedBox(height: 16),
@@ -316,55 +311,6 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
                   ],
                 ),
               ),
-            if (_cancelAlerts.isNotEmpty) ...[
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: [
-                    Expanded(child: Divider(height: 1, thickness: 1, indent: 16, endIndent: 8)),
-                    Text(
-                      'Cancel these subscriptions',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFE53935)),
-                    ),
-                    Expanded(child: Divider(height: 1, thickness: 1, indent: 8, endIndent: 16)),
-                  ],
-                ),
-              ),
-              ..._cancelAlerts.map(
-                (alert) => Column(
-                  children: [
-                    ListTile(
-                      leading: Text(
-                        alert.icon ?? '🚫',
-                        style: const TextStyle(fontSize: 24),
-                      ),
-                      title: Text(
-                        alert.title,
-                        style: TextStyle(
-                          decoration: alert.isCompleted ? TextDecoration.lineThrough : null,
-                          color: alert.isCompleted ? Colors.black38 : null,
-                        ),
-                      ),
-                      subtitle: Text(
-                        alert.isCompleted
-                            ? 'Done'
-                            : alert.amount != null
-                                ? 'Save \$${alert.amount!.toStringAsFixed(2)} by cancelling'
-                                : 'Consider cancelling to save money',
-                      ),
-                      trailing: alert.isCompleted
-                          ? const Icon(Icons.check_circle, color: Color(0xFF4CAF50))
-                          : IconButton(
-                              icon: const Icon(Icons.check_circle_outline, color: Color(0xFF4CAF50)),
-                              tooltip: 'Mark as done',
-                              onPressed: () => _markCancelAlertDone(alert),
-                            ),
-                    ),
-                    const Divider(height: 1),
-                  ],
-                ),
-              ),
-            ],
             if (_recurring.isNotEmpty) ...[
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 4),
@@ -503,18 +449,6 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text("Alert '${alert.title}' deleted.")),
-    );
-  }
-
-  Future<void> _markCancelAlertDone(AlertModel alert) async {
-    if (alert.id == null) return;
-    await AlertRepository.markCompleted(alert.id!);
-    if (!mounted) return;
-    setState(() {
-      _cancelAlerts.removeWhere((a) => a.id == alert.id);
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("'${alert.title}' marked as done.")),
     );
   }
 

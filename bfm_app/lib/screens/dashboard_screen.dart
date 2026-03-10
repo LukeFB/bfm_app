@@ -2,8 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:bfm_app/utils/app_route_observer.dart';
+import 'package:bfm_app/utils/format_helpers.dart';
+import 'package:bfm_app/widgets/buxly_header.dart';
 import 'package:bfm_app/models/dash_data.dart';
 import 'package:bfm_app/services/dashboard_service.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
@@ -277,45 +278,9 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _buildHeader() {
-    return Padding(
+    return BuxlyHeader(
+      onSettingsPressed: _openSettings,
       padding: const EdgeInsets.only(top: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Financial Health. Mental Wealth.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontStyle: FontStyle.italic,
-                    color: BuxlyColors.midGrey,
-                    fontFamily: BuxlyTheme.fontFamily,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                SvgPicture.asset(
-                  'assets/images/SVG/BUXLY LOGO_Horizontal_Wordmark_Light Turquoise.svg',
-                  height: 28,
-                  colorFilter: const ColorFilter.mode(
-                    BuxlyColors.teal,
-                    BlendMode.srcIn,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Settings',
-            icon: const Icon(
-              Icons.settings_outlined,
-              color: BuxlyColors.darkText,
-            ),
-            onPressed: _openSettings,
-          ),
-        ],
-      ),
     );
   }
 }
@@ -563,10 +528,7 @@ class _AlertsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = DateTime.now();
 
-    // Show standard and recurring alerts, exclude cancel-subscription
-    final filtered = alerts
-        .where((a) => a.type != AlertType.cancelSubscription)
-        .toList()
+    final filtered = alerts.toList()
       ..sort((a, b) {
         if (a.dueDate == null && b.dueDate == null) return 0;
         if (a.dueDate == null) return 1;
@@ -638,9 +600,7 @@ class _AlertsCard extends StatelessWidget {
                                       style: TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
-                                        color: alert.isCancelSubscription
-                                            ? BuxlyColors.coralOrange
-                                            : BuxlyColors.darkText,
+                                        color: BuxlyColors.darkText,
                                         fontFamily: BuxlyTheme.fontFamily,
                                       ),
                                       overflow: TextOverflow.ellipsis,
@@ -681,11 +641,7 @@ class _AlertsCard extends StatelessWidget {
     if (diff == 0) return 'Today';
     if (diff == 1) return 'Tomorrow';
     if (diff <= 7) return '${diff}d left';
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    return '${months[dueDate.month - 1]} ${dueDate.day}';
+    return shortDate(dueDate);
   }
 }
 
@@ -1093,11 +1049,5 @@ class _EventsCard extends StatelessWidget {
     );
   }
 
-  String _shortDate(DateTime date) {
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    return '${months[date.month - 1]} ${date.day}';
-  }
+  String _shortDate(DateTime date) => shortDate(date);
 }

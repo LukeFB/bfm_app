@@ -14,8 +14,8 @@
 
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:bfm_app/widgets/buxly_header.dart';
 import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/models/budget_model.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
@@ -29,6 +29,7 @@ import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
 import 'package:bfm_app/services/budget_buffer_refresh.dart';
 import 'package:bfm_app/services/budget_buffer_store.dart';
+import 'package:bfm_app/services/buxly_buffer_budget_store.dart';
 import 'package:bfm_app/theme/buxly_theme.dart';
 import 'package:bfm_app/widgets/help_icon_tooltip.dart';
 import 'package:bfm_app/widgets/budget_buffer_card.dart';
@@ -530,7 +531,10 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
 
     final db = await AppDatabase.instance.database;
     await db.transaction((txn) async {
-      await txn.delete('budgets');
+      // Preserve the hidden buffer budget row when clearing
+      await txn.delete('budgets',
+          where: 'label IS NULL OR label != ?',
+          whereArgs: [BuxlyBufferBudgetStore.bufferBudgetLabel]);
 
       // Save selected recurring items
       for (final rid in _selectedRecurringIds) {
@@ -606,6 +610,12 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
         ).toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
         saved += 1;
       }
+
+      // Keep the buffer budget's period in sync with the new budget period
+      await txn.rawUpdate(
+        'UPDATE budgets SET period_start = ? WHERE label = ?',
+        [periodStart, BuxlyBufferBudgetStore.bufferBudgetLabel],
+      );
     });
 
     // Save ALL manual budgets (including unselected) to persistent store
@@ -1413,46 +1423,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
   }
 
   Widget _buildHeader() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Financial Health. Mental Wealth.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontStyle: FontStyle.italic,
-                    color: BuxlyColors.midGrey,
-                    fontFamily: BuxlyTheme.fontFamily,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                SvgPicture.asset(
-                  'assets/images/SVG/BUXLY LOGO_Horizontal_Wordmark_Light Turquoise.svg',
-                  height: 28,
-                  colorFilter: const ColorFilter.mode(
-                    BuxlyColors.teal,
-                    BlendMode.srcIn,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Settings',
-            icon: const Icon(
-              Icons.settings_outlined,
-              color: BuxlyColors.darkText,
-            ),
-            onPressed: _openSettings,
-          ),
-        ],
-      ),
-    );
+    return BuxlyHeader(onSettingsPressed: _openSettings);
   }
 
   @override

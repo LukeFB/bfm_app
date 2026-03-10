@@ -22,6 +22,7 @@ import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/models/chat_message.dart';
 import 'package:bfm_app/models/goal_model.dart';
 import 'package:bfm_app/models/onboarding_response.dart';
+import 'package:bfm_app/repositories/alert_repository.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/services/app_savings_store.dart';
@@ -435,13 +436,22 @@ class ContextBuilder {
     }
   }
 
-  /// Recurring subscriptions with amounts, frequency, next due, cancel links.
+  /// Recurring subscriptions with amounts, frequency, next due, and cancel guidance.
+  /// Payments without an active alert are flagged as potential cancellation candidates
+  /// so the chatbot can proactively suggest cancelling where appropriate.
   static Future<void> _recurringSection(StringBuffer buf) async {
     try {
       final recurring = await RecurringRepository.getAll();
       if (recurring.isEmpty) {
         buf.writeln('No recurring payments detected.');
         return;
+      }
+
+      final activeAlerts = await AlertRepository.getActiveRecurring();
+      final trackedIds = <int>{};
+      for (final a in activeAlerts) {
+        final rid = a.recurringTransactionId;
+        if (rid != null) trackedIds.add(rid);
       }
 
       double totalMonthly = 0;
@@ -463,6 +473,7 @@ class ContextBuilder {
       for (final r in recurring) {
         final desc = r.description ?? 'Recurring payment';
         final amount = '\$${r.amount.abs().toStringAsFixed(r.amount.abs() >= 100 ? 0 : 2)}';
+        final hasAlert = r.id != null && trackedIds.contains(r.id);
         final cancelUrl = _cancellationUrl(desc);
         final pieces = <String>[
           desc,
@@ -470,10 +481,19 @@ class ContextBuilder {
           r.frequency,
           'next due ${r.nextDueDate}',
           r.transactionType,
-          if (cancelUrl != null) 'CANCEL: $cancelUrl',
+          if (!hasAlert) 'NO ALERT SET',
+          if (cancelUrl != null) 'CANCEL LINK: $cancelUrl',
         ];
         buf.writeln('• ${pieces.join(' | ')}');
       }
+
+      buf.writeln('');
+      buf.writeln('NOTE FOR ASSISTANT: Recurring payments marked "NO ALERT SET" are ones the '
+          'user chose not to budget for. Depending on what they are (e.g. streaming services, '
+          'unused memberships), the user may benefit from cancelling them. If the user asks '
+          'about saving money or cutting costs, suggest cancelling these where appropriate. '
+          'Try to provide a direct cancellation link — use the CANCEL LINK above if available, '
+          'otherwise look up the most likely cancellation page for that service.');
     } catch (e) {
       buf.writeln('Unable to load recurring: $e');
     }
