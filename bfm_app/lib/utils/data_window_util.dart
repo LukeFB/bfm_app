@@ -35,7 +35,10 @@ class DataWindowUtil {
       getTransactionDateWindow() async {
     final db = await AppDatabase.instance.database;
     final row = (await db.rawQuery(
-      'SELECT MIN(date) AS start, MAX(date) AS end FROM transactions WHERE excluded = 0',
+      '''SELECT MIN(date) AS start, MAX(date) AS end FROM transactions
+         WHERE excluded = 0
+           AND (account_id IS NULL OR account_id NOT IN
+                (SELECT akahu_id FROM accounts WHERE excluded = 1))''',
     ))
         .first;
 

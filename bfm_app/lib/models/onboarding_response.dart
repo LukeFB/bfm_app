@@ -34,6 +34,7 @@ class OnboardingRegistration {
   final String? email;
   final String? phone;
   final String? dateOfBirth;
+  final List<String>? ethnicities;
 
   const OnboardingRegistration({
     this.firstName,
@@ -41,6 +42,7 @@ class OnboardingRegistration {
     this.email,
     this.phone,
     this.dateOfBirth,
+    this.ethnicities,
   });
 
   Map<String, dynamic> toJson() => {
@@ -49,6 +51,8 @@ class OnboardingRegistration {
         'email': email,
         'phone': phone,
         'date_of_birth': dateOfBirth,
+        if (ethnicities != null && ethnicities!.isNotEmpty)
+          'ethnicities': ethnicities,
       };
 
   factory OnboardingRegistration.fromJson(Map<String, dynamic> json) =>
@@ -58,6 +62,9 @@ class OnboardingRegistration {
         email: json['email'] as String?,
         phone: json['phone'] as String?,
         dateOfBirth: json['date_of_birth'] as String?,
+        ethnicities: (json['ethnicities'] as List<dynamic>?)
+            ?.map((e) => e as String)
+            .toList(),
       );
 
   bool get isValid =>
@@ -146,6 +153,10 @@ class OnboardingResponse {
     add('Email', registration.email);
     add('Phone', registration.phone);
     add('Date of birth', registration.dateOfBirth);
+    if (registration.ethnicities != null &&
+        registration.ethnicities!.isNotEmpty) {
+      map['Ethnicity'] = registration.ethnicities!.join(', ');
+    }
     add('Referrer token', referrerToken);
     add('Income frequency', accountSetup.incomeFrequency);
     add('Primary goal', accountSetup.primaryGoal);

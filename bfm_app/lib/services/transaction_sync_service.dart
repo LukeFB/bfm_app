@@ -41,6 +41,11 @@ class TransactionSyncService {
   static const Duration _defaultStaleThreshold = Duration(hours: 1);
   static const Duration _refreshCooldown = Duration(hours: 1);
 
+  /// Don't mark the initial 365-day backfill as complete until the local DB
+  /// has at least this many transactions. Prevents premature switch to the
+  /// shorter rolling window when Akahu is still fetching from the bank.
+  static const int _minInitialTransactions = 100;
+
   static bool _syncing = false;
   static Future<void>? _activeSyncFuture;
 
@@ -132,8 +137,17 @@ class TransactionSyncService {
     ]);
 
     final accountPayloads = results[0];
-    final settledPayloads = results[1];
+    var settledPayloads = results[1];
     final pendingPayloads = results[2];
+
+    // If the date-windowed call returned nothing, retry without date params.
+    // Some backends or Akahu proxy implementations handle the unfiltered
+    // endpoint differently and may return data when the filtered one doesn't.
+    if (settledPayloads.isEmpty && pendingPayloads.isEmpty) {
+      try {
+        settledPayloads = await api.transactions();
+      } catch (_) {}
+    }
 
     for (final payload in pendingPayloads) {
       payload['_pending'] = true;
@@ -154,8 +168,20 @@ class TransactionSyncService {
       await TransactionRepository.upsertFromAkahu(allTxnPayloads);
     }
 
-    await IncomeSettingsStore.detectAndSetIncomeType();
-    await _markSynced(markBackfillComplete: usedBackfillWindow);
+    final gotTransactions = allTxnPayloads.isNotEmpty;
+    if (gotTransactions) {
+      await IncomeSettingsStore.detectAndSetIncomeType();
+    }
+    // Only mark synced/backfilled when we have a meaningful number of
+    // transactions. On a fresh connection Akahu may still be fetching from
+    // the bank, returning a tiny batch first. Keeping the backfill flag
+    // false preserves the full 365-day window for subsequent retries.
+    final totalStored = await TransactionRepository.count();
+    final enoughForBackfill = totalStored >= _minInitialTransactions;
+    await _markSynced(
+      markBackfillComplete: usedBackfillWindow && enoughForBackfill,
+      skipTimestamp: !gotTransactions,
+    );
 
     final totalMs = DateTime.now().difference(syncStart).inMilliseconds;
     DebugLog.instance.add('SYNC',
@@ -218,7 +244,10 @@ class TransactionSyncService {
     }
 
     if (allPayloads.isEmpty) {
-      await _markSynced(markBackfillComplete: usedBackfillWindow);
+      await _markSynced(
+        markBackfillComplete: false,
+        skipTimestamp: true,
+      );
       return;
     }
 
@@ -282,9 +311,18 @@ class TransactionSyncService {
 
   /// Writes the ISO timestamp of the latest sync to SharedPreferences so the
   /// next `syncIfStale` call has a comparison point.
-  Future<void> _markSynced({bool markBackfillComplete = false}) async {
+  ///
+  /// When [skipTimestamp] is true the last-sync timestamp is NOT updated,
+  /// which lets `syncIfStale` re-trigger quickly (used when Akahu returns
+  /// 0 transactions on a fresh connection).
+  Future<void> _markSynced({
+    bool markBackfillComplete = false,
+    bool skipTimestamp = false,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_lastSyncKey, DateTime.now().toIso8601String());
+    if (!skipTimestamp) {
+      await prefs.setString(_lastSyncKey, DateTime.now().toIso8601String());
+    }
     if (markBackfillComplete) {
       await prefs.setBool(_backfillCompleteKey, true);
     }

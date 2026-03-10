@@ -3,22 +3,17 @@
 /// Author: Luke Fraser-Brown
 ///
 /// Purpose:
-///   Settings surface for managing OpenAI keys, disconnecting the bank link,
+///   Settings surface for income type, bank connection, organisations,
 ///   and accessing debug tools.
 ///
 /// Called by:
 ///   `app.dart` when the user taps the Settings tab.
-///
-/// Inputs / Outputs:
-///   Reads/writes API keys via `ApiKeyStore`, toggles SharedPreferences flags,
-///   and routes to other screens as needed.
 /// ---------------------------------------------------------------------------
 
 import 'package:bfm_app/auth/credential_store.dart';
 import 'package:bfm_app/controllers/auth_controller.dart';
 import 'package:bfm_app/providers/api_providers.dart';
 import 'package:bfm_app/screens/onboarding_screen.dart';
-import 'package:bfm_app/services/api_key_store.dart';
 import 'package:bfm_app/services/bank_service.dart';
 import 'package:bfm_app/services/debug_log.dart';
 import 'package:bfm_app/services/dev_config.dart';
@@ -40,9 +35,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 /// Holds controller state for the settings form.
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  final _apiKeyCtrl = TextEditingController();
   final _referralCodeCtrl = TextEditingController();
-  String _apiKeyStatus = '';
   bool _openingWeeklyOverview = false;
   IncomeType _incomeType = IncomeType.regular;
   bool _incomeTypeLoaded = false;
@@ -56,7 +49,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadApiKey();
     _loadIncomeType();
     _loadOrganisations();
   }
@@ -225,39 +217,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  /// Loads the stored API key, pre-fills the text field, and updates the inline
-  /// status message.
-  Future<void> _loadApiKey() async {
-    final k = await ApiKeyStore.get();
-    setState(() {
-      _apiKeyCtrl.text = k ?? '';
-      _apiKeyStatus = k == null || k.isEmpty ? 'No key saved' : 'Key saved ✓';
-    });
-  }
-
-  /// Persists the key if it looks valid; otherwise surfaces inline help text.
-  Future<void> _saveApiKey() async {
-    final k = _apiKeyCtrl.text.trim();
-    if (k.isEmpty) {
-      setState(() => _apiKeyStatus = 'Please paste a valid key (sk-...)');
-      return;
-    }
-    await ApiKeyStore.set(k);
-    setState(() => _apiKeyStatus = 'Key saved ✓');
-  }
-
-  /// Removes the stored key and clears the text field/state.
-  Future<void> _clearApiKey() async {
-    await ApiKeyStore.clear();
-    setState(() {
-      _apiKeyCtrl.clear();
-      _apiKeyStatus = 'Key cleared';
-    });
-  }
-
   @override
   void dispose() {
-    _apiKeyCtrl.dispose();
     _referralCodeCtrl.dispose();
     super.dispose();
   }
@@ -372,63 +333,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   @override
-  /// Builds the full settings list:
-  /// - API key card
-  /// - Disconnect bank tile
-  /// - Debug button
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         children: [
-          // --- API Key section (dev only) ---
-          if (kDevMode)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Card(
-                elevation: 1,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('OpenAI API Key',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: _apiKeyCtrl,
-                        obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'sk-...',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          FilledButton(
-                            onPressed: _saveApiKey,
-                            child: const Text('Save'),
-                          ),
-                          const SizedBox(width: 8),
-                          OutlinedButton(
-                            onPressed: _clearApiKey,
-                            child: const Text('Clear'),
-                          ),
-                          const Spacer(),
-                          Text(
-                            _apiKeyStatus,
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
           // --- Income Type section ---
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -643,26 +552,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 8),
 
-          ListTile(
-            leading: const Icon(Icons.auto_stories_outlined),
-            title: const Text('Replay onboarding tour'),
-            subtitle: const Text('Restart the welcome questions and tips without touching your bank link.'),
-            onTap: () => _replayOnboarding(context),
-          ),
+          if (kDevMode) ...[
+            ListTile(
+              leading: const Icon(Icons.auto_stories_outlined),
+              title: const Text('Replay onboarding tour'),
+              subtitle: const Text('Restart the welcome questions and tips without touching your bank link.'),
+              onTap: () => _replayOnboarding(context),
+            ),
 
-          ListTile(
-            leading: const Icon(Icons.insights_outlined),
-            title: const Text("Weekly overview (last week)"),
-            subtitle: const Text('Review budgets, spend, and goal top-ups for the previous week.'),
-            trailing: _openingWeeklyOverview
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : null,
-            onTap: _openingWeeklyOverview ? null : _openWeeklyOverviewFromSettings,
-          ),
+            ListTile(
+              leading: const Icon(Icons.insights_outlined),
+              title: const Text("Weekly overview (last week)"),
+              subtitle: const Text('Review budgets, spend, and goal top-ups for the previous week.'),
+              trailing: _openingWeeklyOverview
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : null,
+              onTap: _openingWeeklyOverview ? null : _openWeeklyOverviewFromSettings,
+            ),
+          ],
 
           const Divider(height: 32),
 

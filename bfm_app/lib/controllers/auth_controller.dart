@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:bfm_app/auth/credential_store.dart';
 import 'package:bfm_app/auth/token_store.dart';
 import 'package:bfm_app/api/api_client.dart';
 import 'package:bfm_app/api/auth_api.dart';
@@ -43,11 +44,13 @@ class AuthState {
 class AuthController extends Notifier<AuthState> {
   late final AuthApi _authApi;
   late final TokenStore _tokenStore;
+  late final CredentialStore _credentialStore;
 
   @override
   AuthState build() {
     _authApi = ref.watch(authApiProvider);
     _tokenStore = ref.watch(tokenStoreProvider);
+    _credentialStore = ref.watch(credentialStoreProvider);
     _checkExistingSession();
     return const AuthState();
   }
@@ -63,9 +66,14 @@ class AuthController extends Notifier<AuthState> {
   /// Returns [SessionStatus.valid] if /auth/me succeeds,
   /// [SessionStatus.expired] if 401, [SessionStatus.noToken] if no stored
   /// token, or [SessionStatus.networkError] on connectivity failure.
+  ///
+  /// When the token is expired but stored credentials exist, automatically
+  /// re-authenticates so the user doesn't have to sign in again.
   Future<SessionStatus> tryRestoreSession() async {
     final token = await _tokenStore.getToken();
-    if (token == null || token.isEmpty) return SessionStatus.noToken;
+    if (token == null || token.isEmpty) {
+      return await _tryAutoLogin() ? SessionStatus.valid : SessionStatus.noToken;
+    }
 
     try {
       final user = await _authApi.me();
@@ -75,13 +83,33 @@ class AuthController extends Notifier<AuthState> {
       if (e.error is UnauthorizedException) {
         await _tokenStore.clear();
         state = const AuthState();
-        return SessionStatus.expired;
+        final reAuthed = await _tryAutoLogin();
+        return reAuthed ? SessionStatus.valid : SessionStatus.expired;
       }
       state = state.copyWith(isAuthed: true, clearError: true);
       return SessionStatus.networkError;
     } catch (_) {
       state = state.copyWith(isAuthed: true, clearError: true);
       return SessionStatus.networkError;
+    }
+  }
+
+  /// Attempts to sign in using stored credentials. Returns true on success.
+  Future<bool> _tryAutoLogin() async {
+    if (!await _credentialStore.hasCredentials()) return false;
+
+    final email = await _credentialStore.getEmail();
+    final password = await _credentialStore.getPassword();
+    if (email == null || password == null) return false;
+
+    try {
+      final token = await _authApi.login(email: email, password: password);
+      await _tokenStore.setToken(token);
+      state = state.copyWith(isAuthed: true, clearError: true);
+      return true;
+    } catch (_) {
+      await _credentialStore.clear();
+      return false;
     }
   }
 
@@ -93,6 +121,7 @@ class AuthController extends Notifier<AuthState> {
     try {
       final token = await _authApi.login(email: email, password: password);
       await _tokenStore.setToken(token);
+      await _credentialStore.saveCredentials(email, password);
       state = state.copyWith(isLoading: false, isAuthed: true);
       return true;
     } catch (e) {
@@ -128,6 +157,7 @@ class AuthController extends Notifier<AuthState> {
         referrerToken: referrerToken,
       );
       await _tokenStore.setToken(token);
+      await _credentialStore.saveCredentials(email, password);
       state = state.copyWith(isLoading: false, isAuthed: true);
       return true;
     } catch (e) {
@@ -148,6 +178,7 @@ class AuthController extends Notifier<AuthState> {
 
   Future<void> logout() async {
     await _tokenStore.clear();
+    await _credentialStore.clear();
     state = const AuthState();
   }
 }

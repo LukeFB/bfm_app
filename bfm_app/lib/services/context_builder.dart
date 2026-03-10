@@ -3,7 +3,7 @@
 // Author: Luke Fraser-Brown
 //
 // Called by:
-//   - `ai_client.dart` right before sending chat requests.
+//   - `chat_screen.dart` before sending backend chat requests.
 //
 // Purpose:
 //   - Builds the PRIVATE CONTEXT block (user financial data, goals, budgets,
@@ -15,7 +15,7 @@
 //   - Recent UI turns plus boolean flags for which data sections to include.
 //
 // Outputs:
-//   - A single multi-line string fed into the assistant prompt.
+//   - A single multi-line string sent to the backend with the message.
 // ---------------------------------------------------------------------------
 
 import 'package:bfm_app/db/app_database.dart';
@@ -78,8 +78,8 @@ class ContextBuilder {
     buf.writeln('(Cumulative money saved by staying under budget each week.)');
     await _appSavingsSection(buf);
 
-    // ── Budget buffer ──────────────────────────────────────────────────────
-    buf.writeln('\n--- BUDGET BUFFER ---');
+    // ── Buxly buffers ─────────────────────────────────────────────────────
+    buf.writeln('\n--- BUXLY BUFFERS ---');
     buf.writeln('(Money put aside from weekly budget surpluses as a safety net for budgets.)');
     await _budgetBufferSection(buf);
 
@@ -161,15 +161,17 @@ class ContextBuilder {
       final spentOnBudgets = await DashboardService.getSpentOnBudgets();
       final totalExpenses = await DashboardService.getTotalExpensesThisWeek();
 
+      // Combine non-goal budgets and goal budgets into unified totals so that
+      // goal spending isn't double-counted (once as a reservation and again
+      // inside nonBudgetSpend). This matches the insights formula.
+      final allBudgeted = totalBudgeted + goalContributions;
+      final allBudgetSpend = spentOnBudgets + goalContributions;
       final budgetOverspend =
-          (spentOnBudgets - totalBudgeted).clamp(0.0, double.infinity);
+          (allBudgetSpend - allBudgeted).clamp(0.0, double.infinity);
       final nonBudgetSpend =
-          (totalExpenses - spentOnBudgets).clamp(0.0, double.infinity);
-      final leftToSpend = weeklyIncome -
-          totalBudgeted -
-          goalContributions -
-          budgetOverspend -
-          nonBudgetSpend;
+          (totalExpenses - allBudgetSpend).clamp(0.0, double.infinity);
+      final leftToSpend =
+          weeklyIncome - allBudgeted - budgetOverspend - nonBudgetSpend;
 
       buf.writeln('');
       buf.writeln('Weekly Income: \$${weeklyIncome.toStringAsFixed(0)}');
@@ -292,7 +294,7 @@ class ContextBuilder {
       final lastContribs = await BudgetBufferStore.getLastContributions();
 
       buf.writeln('');
-      buf.writeln('How the budget buffer works:');
+      buf.writeln('How Buxly Buffers work:');
       buf.writeln('  Each budget has its own buffer. Weekly surpluses (budget limit minus spend)');
       buf.writeln('  are added to that budget\'s buffer. If overspent, the buffer absorbs it.');
       buf.writeln('  If a budget\'s buffer goes negative, app savings cover that individual shortfall.');
@@ -313,7 +315,7 @@ class ContextBuilder {
         buf.writeln('• ${entry.key}: \$${entry.value.toStringAsFixed(0)} buffered$contribStr');
       }
     } catch (e) {
-      buf.writeln('Unable to load budget buffer: $e');
+      buf.writeln('Unable to load Buxly Buffers: $e');
     }
   }
 

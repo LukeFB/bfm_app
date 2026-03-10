@@ -39,11 +39,9 @@ class _DebugApiScreenState extends ConsumerState<DebugApiScreen> {
 
   Future<void> _loadSavedCredentials() async {
     final email = await _credentialStore.getEmail();
-    final password = await _credentialStore.getPassword();
     if (!mounted) return;
     setState(() {
       if (email != null && email.isNotEmpty) _emailCtrl.text = email;
-      if (password != null && password.isNotEmpty) _passwordCtrl.text = password;
     });
   }
 
@@ -183,7 +181,7 @@ class _DebugApiScreenState extends ConsumerState<DebugApiScreen> {
                     firstName: _firstNameCtrl.text.trim(),
                   );
                   if (ok) {
-                    await _credentialStore.save(email: email, password: password);
+                    await _credentialStore.saveCredentials(email, password);
                   }
                   _log('Register', ok ? 'Success' : ref.read(authControllerProvider).error ?? 'Failed');
                 })),
@@ -195,7 +193,7 @@ class _DebugApiScreenState extends ConsumerState<DebugApiScreen> {
                     password: password,
                   );
                   if (ok) {
-                    await _credentialStore.save(email: email, password: password);
+                    await _credentialStore.saveCredentials(email, password);
                   }
                   _log('Login', ok ? 'Success' : ref.read(authControllerProvider).error ?? 'Failed');
                 })),

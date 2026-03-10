@@ -27,11 +27,25 @@ import 'package:sqflite/sqflite.dart';
 /// Data access helpers for the `transactions` table plus related analytics.
 class TransactionRepository {
 
+  /// SQL fragment that filters out transactions belonging to excluded accounts.
+  static const _excludeDeselectedAccounts =
+      "(account_id IS NULL OR account_id NOT IN "
+      "(SELECT akahu_id FROM accounts WHERE excluded = 1))";
+
+  /// Returns the total number of rows in the transactions table.
+  static Future<int> count() async {
+    final db = await AppDatabase.instance.database;
+    final result = await db.rawQuery('SELECT COUNT(*) AS c FROM transactions');
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+
   /// Returns the latest `limit` transactions ordered by date descending.
+  /// Excludes transactions from deselected accounts.
   static Future<List<TransactionModel>> getRecent(int limit) async {
     final db = await AppDatabase.instance.database;
     final result = await db.query(
       'transactions',
+      where: _excludeDeselectedAccounts,
       orderBy: 'date DESC',
       limit: limit,
     );
@@ -39,12 +53,13 @@ class TransactionRepository {
   }
 
   /// Returns every transaction, optionally filtered by category id.
+  /// Excludes transactions from deselected accounts.
   static Future<List<TransactionModel>> getAll({
     int? categoryId,
     bool includeExcluded = true,
   }) async {
     final db = await AppDatabase.instance.database;
-    final whereClauses = <String>[];
+    final whereClauses = <String>[_excludeDeselectedAccounts];
     final whereArgs = <dynamic>[];
     if (categoryId != null) {
       whereClauses.add('category_id = ?');
@@ -55,8 +70,8 @@ class TransactionRepository {
     }
     final result = await db.query(
       'transactions',
-      where: whereClauses.isEmpty ? null : whereClauses.join(' AND '),
-      whereArgs: whereClauses.isEmpty ? null : whereArgs,
+      where: whereClauses.join(' AND '),
+      whereArgs: whereArgs.isEmpty ? null : whereArgs,
       orderBy: 'date DESC',
     );
 
@@ -69,7 +84,8 @@ class TransactionRepository {
     return await db.delete('transactions', where: 'id = ?', whereArgs: [id]);
   }
 
-  /// Totals grouped by category (expenses only)
+  /// Totals grouped by category (expenses only).
+  /// Excludes transactions from deselected accounts.
   static Future<Map<String, double>> getCategoryTotals() async {
     final db = await AppDatabase.instance.database;
     final result = await db.rawQuery('''
@@ -78,6 +94,7 @@ class TransactionRepository {
       LEFT JOIN categories c ON t.category_id = c.id
       WHERE t.type = 'expense'
         AND t.excluded = 0
+        AND $_excludeDeselectedAccounts
       GROUP BY c.name
     ''');
 
@@ -110,6 +127,7 @@ class TransactionRepository {
       WHERE type = 'expense'
         AND date BETWEEN ? AND ?
         AND excluded = 0
+        AND $_excludeDeselectedAccounts
     ''', [start, end]);
 
     final raw = (res.isNotEmpty ? res.first['spent'] : null);
@@ -129,6 +147,7 @@ class TransactionRepository {
       WHERE type = 'expense'
         AND excluded = 0
         AND date BETWEEN ? AND ?
+        AND $_excludeDeselectedAccounts
       GROUP BY category_id
     ''', [_iso(start), _iso(end)]);
     final map = <int?, double>{};
@@ -151,6 +170,7 @@ class TransactionRepository {
       WHERE type = 'income'
         AND excluded = 0
         AND date BETWEEN ? AND ?
+        AND $_excludeDeselectedAccounts
     ''', [_iso(start), _iso(end)]);
     final value = rows.isNotEmpty ? rows.first['income'] : null;
     return (value is num) ? value.toDouble() : 0.0;
@@ -158,13 +178,14 @@ class TransactionRepository {
 
   /// Returns transactions between the provided dates sorted by newest first.
   /// Excludes transfers (type = 'transfer') by default.
+  /// Excludes transactions from deselected accounts.
   static Future<List<TransactionModel>> getBetween(
       DateTime start, DateTime end, {bool excludeTransfers = true}) async {
     final db = await AppDatabase.instance.database;
     if (excludeTransfers) {
       final rows = await db.query(
         'transactions',
-        where: "date BETWEEN ? AND ? AND type != 'transfer'",
+        where: "date BETWEEN ? AND ? AND type != 'transfer' AND $_excludeDeselectedAccounts",
         whereArgs: [_iso(start), _iso(end)],
         orderBy: 'date DESC',
       );
@@ -172,7 +193,7 @@ class TransactionRepository {
     }
     final rows = await db.query(
       'transactions',
-      where: 'date BETWEEN ? AND ?',
+      where: 'date BETWEEN ? AND ? AND $_excludeDeselectedAccounts',
       whereArgs: [_iso(start), _iso(end)],
       orderBy: 'date DESC',
     );
@@ -194,8 +215,8 @@ class TransactionRepository {
 
     final transactions = <TransactionModel>[];
     final hashes = <String>[];
-    for (final item in items) {
-      final txn = TransactionModel.fromAkahu(item);
+    for (var i = 0; i < items.length; i++) {
+      final txn = TransactionModel.fromAkahu(items[i], batchIndex: i);
       transactions.add(txn);
       final hash = txn.akahuHash?.trim();
       if (hash != null && hash.isNotEmpty) {
@@ -318,6 +339,7 @@ class TransactionRepository {
       WHERE type='expense'
         AND excluded = 0
         AND category_id IS NULL
+        AND $_excludeDeselectedAccounts
       GROUP BY description
       ORDER BY COUNT(*) DESC
       LIMIT ?
@@ -412,6 +434,60 @@ class TransactionRepository {
     await batch.commit(noResult: true);
   }
 
+  /// Returns income and expenses grouped by time period for charting.
+  /// [groupBy] accepts 'day', 'week', or 'month'.
+  static Future<List<({DateTime date, double income, double expenses})>>
+      getProfitLossByPeriod(
+    DateTime start,
+    DateTime end, {
+    String groupBy = 'month',
+  }) async {
+    final db = await AppDatabase.instance.database;
+
+    final String groupExpr;
+    switch (groupBy) {
+      case 'day':
+        groupExpr = "date";
+        break;
+      case 'week':
+        groupExpr = "strftime('%Y-%W', date)";
+        break;
+      case 'month':
+      default:
+        groupExpr = "strftime('%Y-%m', date)";
+        break;
+    }
+
+    final rows = await db.rawQuery('''
+      SELECT
+        MIN(date) AS period_date,
+        SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) AS income,
+        SUM(CASE WHEN type = 'expense' THEN ABS(amount) ELSE 0 END) AS expenses
+      FROM transactions
+      WHERE excluded = 0
+        AND type IN ('income', 'expense')
+        AND date BETWEEN ? AND ?
+        AND $_excludeDeselectedAccounts
+      GROUP BY $groupExpr
+      ORDER BY period_date
+    ''', [_iso(start), _iso(end)]);
+
+    return rows.map((row) {
+      final dateStr = (row['period_date'] as String?) ?? _iso(start);
+      DateTime parsed;
+      try {
+        parsed = DateTime.parse(dateStr);
+      } catch (_) {
+        parsed = start;
+      }
+      return (
+        date: parsed,
+        income: (row['income'] as num?)?.toDouble() ?? 0.0,
+        expenses: (row['expenses'] as num?)?.toDouble() ?? 0.0,
+      );
+    }).toList();
+  }
+
   /// Formats a DateTime as YYYY-MM-DD so SQL comparisons stay consistent.
   static String _iso(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
@@ -432,6 +508,8 @@ class TransactionRepository {
         AND t.excluded = 0
         AND t.date BETWEEN ? AND ?
         AND (t.category_id IS NULL OR LOWER(c.name) IN ('uncategorized', 'uncategorised'))
+        AND (t.account_id IS NULL OR t.account_id NOT IN
+             (SELECT akahu_id FROM accounts WHERE excluded = 1))
     ''', [_iso(start), _iso(end)]);
     final map = <String, double>{};
     for (final row in rows) {
@@ -465,6 +543,8 @@ class TransactionRepository {
         AND t.excluded = 0
         AND t.date BETWEEN ? AND ?
         AND (t.category_id IS NULL OR LOWER(c.name) IN ('uncategorized', 'uncategorised'))
+        AND (t.account_id IS NULL OR t.account_id NOT IN
+             (SELECT akahu_id FROM accounts WHERE excluded = 1))
       ORDER BY t.date DESC
     ''', [_iso(start), _iso(end)]);
     final result = <String, String>{};
@@ -485,6 +565,7 @@ class TransactionRepository {
   }
 
   /// Returns true when at least one non-excluded transaction exists for `day`.
+  /// Excludes transactions from deselected accounts.
   static Future<bool> hasTransactionsOn(DateTime day) async {
     final db = await AppDatabase.instance.database;
     final normalized = DateTime(day.year, day.month, day.day);
@@ -495,6 +576,7 @@ class TransactionRepository {
       FROM transactions
       WHERE date = ?
         AND excluded = 0
+        AND $_excludeDeselectedAccounts
       LIMIT 1
       ''',
       [target],
@@ -504,6 +586,7 @@ class TransactionRepository {
 
   /// Returns true when at least one non-excluded transaction exists between
   /// [start] and [end] (inclusive).
+  /// Excludes transactions from deselected accounts.
   static Future<bool> hasTransactionsBetween(DateTime start, DateTime end) async {
     final db = await AppDatabase.instance.database;
     final rows = await db.rawQuery(
@@ -512,6 +595,7 @@ class TransactionRepository {
       FROM transactions
       WHERE date BETWEEN ? AND ?
         AND excluded = 0
+        AND $_excludeDeselectedAccounts
       LIMIT 1
       ''',
       [_iso(start), _iso(end)],

@@ -61,17 +61,17 @@ class BudgetBufferCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header row
-          const Row(
+          Row(
             children: [
-              Text('🛡️', style: TextStyle(fontSize: 22)),
-              SizedBox(width: 8),
-              Text(
-                'Budget Buffer',
+              Icon(Icons.savings, color: BuxlyColors.teal, size: 24),
+              const SizedBox(width: 8),
+              const Text(
+                'Buxly Buffers',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
               SizedBox(width: 4),
               HelpIconTooltip(
-                title: 'Budget Buffer',
+                title: 'Buxly Buffers',
                 message:
                     'Money put aside per budget from your weekly surpluses.\n\n'
                     'Each week, leftover from each budget is added to that '
@@ -95,7 +95,7 @@ class BudgetBufferCard extends StatelessWidget {
           ] else ...[
             const SizedBox(height: 12),
             for (int i = 0; i < entries.length; i++) ...[
-              _BufferRow(entry: entries[i]),
+              BufferRow(entry: entries[i]),
               if (i < entries.length - 1) const SizedBox(height: 6),
             ],
           ],
@@ -105,9 +105,9 @@ class BudgetBufferCard extends StatelessWidget {
   }
 }
 
-class _BufferRow extends StatelessWidget {
+class BufferRow extends StatelessWidget {
   final BufferEntry entry;
-  const _BufferRow({required this.entry});
+  const BufferRow({super.key, required this.entry});
 
   @override
   Widget build(BuildContext context) {

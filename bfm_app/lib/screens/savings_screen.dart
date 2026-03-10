@@ -1,8 +1,14 @@
+import 'dart:math';
+
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:bfm_app/models/account_model.dart';
 import 'package:bfm_app/models/asset_model.dart';
 import 'package:bfm_app/repositories/asset_repository.dart';
+import 'package:bfm_app/repositories/account_repository.dart';
 import 'package:bfm_app/services/app_savings_store.dart';
+import 'package:bfm_app/services/budget_buffer_store.dart';
 import 'package:bfm_app/services/savings_service.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
@@ -25,7 +31,31 @@ class _SavingsScreenState extends State<SavingsScreen> {
   ProfitLossTimeFrame _selectedTimeFrame = ProfitLossTimeFrame.allTime;
   bool _initialized = false;
   double _appSavingsTotal = 0.0;
+  double _perBudgetBufferTotal = 0.0;
   List<GoalModel> _goals = [];
+  DateTime? _appStartDate;
+  SavingsData? _cachedData;
+  final ScrollController _scrollController = ScrollController();
+
+  double get _totalIncome {
+    final ts = _cachedData?.profitLossTimeSeries;
+    if (ts == null || ts.isEmpty) return _cachedData?.totalIncome ?? 0;
+    final start = _selectedTimeFrame.startDate;
+    return ts
+        .where((p) => !p.date.isBefore(start))
+        .fold(0.0, (s, p) => s + p.income);
+  }
+
+  double get _totalExpenses {
+    final ts = _cachedData?.profitLossTimeSeries;
+    if (ts == null || ts.isEmpty) return _cachedData?.totalExpenses ?? 0;
+    final start = _selectedTimeFrame.startDate;
+    return ts
+        .where((p) => !p.date.isBefore(start))
+        .fold(0.0, (s, p) => s + p.expenses);
+  }
+
+  double get _profitLoss => _totalIncome - _totalExpenses;
 
   @override
   void initState() {
@@ -33,10 +63,27 @@ class _SavingsScreenState extends State<SavingsScreen> {
     _initializeAndLoad();
   }
 
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
   Future<void> _initializeAndLoad() async {
     final prefs = await SharedPreferences.getInstance();
     final savedTimeFrame = prefs.getString(_timeFramePrefKey);
     _selectedTimeFrame = ProfitLossTimeFrame.fromString(savedTimeFrame);
+
+    final storedDate = prefs.getString('app_start_date');
+    if (storedDate != null) {
+      _appStartDate = DateTime.tryParse(storedDate);
+    }
+    if (_appStartDate == null) {
+      _appStartDate = DateTime.now();
+      await prefs.setString(
+          'app_start_date', _appStartDate!.toIso8601String());
+    }
+
     _initialized = true;
     _future = _load();
     if (mounted) setState(() {});
@@ -45,14 +92,20 @@ class _SavingsScreenState extends State<SavingsScreen> {
   Future<SavingsData> _load() async {
     await TransactionSyncService().syncIfStale();
     final appSavings = await AppSavingsStore.getTotal();
+    final bufferBalances = await BudgetBufferStore.getAll();
+    final bufferTotal = bufferBalances.values.fold<double>(0, (s, v) => s + v);
     final goals = await GoalRepository.getSavingsGoals();
+    final data = await SavingsService.loadSavingsData(
+        timeFrame: _selectedTimeFrame);
     if (mounted) {
       setState(() {
         _appSavingsTotal = appSavings;
+        _perBudgetBufferTotal = bufferTotal;
         _goals = goals;
+        _cachedData = data;
       });
     }
-    return SavingsService.loadSavingsData(timeFrame: _selectedTimeFrame);
+    return data;
   }
 
   Future<void> _refresh() async {
@@ -65,14 +118,117 @@ class _SavingsScreenState extends State<SavingsScreen> {
     setState(() => _future = _load());
   }
 
+  Future<void> _toggleAccountExclusion(
+      AccountModel account, bool included) async {
+    if (account.id == null) return;
+
+    // When excluding (included == false), check for linked budgets/recurring
+    if (!included) {
+      final counts = await AccountRepository.getLinkedBudgetAndRecurringCounts(
+        account.akahuId,
+      );
+      if (!mounted) return;
+
+      if (counts.budgetCount > 0 || counts.recurringCount > 0) {
+        final parts = <String>[];
+        if (counts.budgetCount > 0) {
+          parts.add('${counts.budgetCount} budget${counts.budgetCount == 1 ? '' : 's'}');
+        }
+        if (counts.recurringCount > 0) {
+          parts.add('${counts.recurringCount} recurring payment${counts.recurringCount == 1 ? '' : 's'}');
+        }
+
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Exclude account?'),
+            content: Text(
+              '"${account.name}" has ${parts.join(' and ')} linked to its '
+              'transactions. Excluding it will remove those transactions from '
+              'all calculations including budget tracking.\n\n'
+              'You can re-include this account at any time.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Exclude'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true || !mounted) return;
+      }
+    }
+
+    await AccountRepository.setExcluded(
+      id: account.id!,
+      excluded: !included,
+    );
+    if (!mounted) return;
+    // Reload data in the background without replacing the future so the
+    // FutureBuilder doesn't show the spinner and reset the scroll position.
+    _load().then((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
   Future<void> _onTimeFrameChanged(ProfitLossTimeFrame? newValue) async {
     if (newValue == null || newValue == _selectedTimeFrame) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_timeFramePrefKey, newValue.name);
-    setState(() {
-      _selectedTimeFrame = newValue;
-      _future = _load();
-    });
+    setState(() => _selectedTimeFrame = newValue);
+  }
+
+  Future<void> _openSettings() async {
+    await Navigator.pushNamed(context, '/settings');
+    if (mounted) _refresh();
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Financial Health. Mental Wealth.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic,
+                    color: BuxlyColors.midGrey,
+                    fontFamily: BuxlyTheme.fontFamily,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                SvgPicture.asset(
+                  'assets/images/SVG/BUXLY LOGO_Horizontal_Wordmark_Light Turquoise.svg',
+                  height: 28,
+                  colorFilter: const ColorFilter.mode(
+                    BuxlyColors.teal,
+                    BlendMode.srcIn,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Settings',
+            icon: const Icon(
+              Icons.settings_outlined,
+              color: BuxlyColors.darkText,
+            ),
+            onPressed: _openSettings,
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -119,17 +275,31 @@ class _SavingsScreenState extends State<SavingsScreen> {
                     color: BuxlyColors.teal,
                     onRefresh: _forceSync,
                     child: SingleChildScrollView(
+                      controller: _scrollController,
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(16),
-                      child: _SavingsContent(
-                        data: data,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildHeader(),
+                          const SizedBox(height: 12),
+                          _SavingsContent(
+                        data: _cachedData ?? data,
                         appSavings: _appSavingsTotal,
+                        perBudgetBufferTotal: _perBudgetBufferTotal,
                         goals: _goals,
+                        totalIncome: _totalIncome,
+                        totalExpenses: _totalExpenses,
+                        profitLoss: _profitLoss,
                         selectedTimeFrame: _selectedTimeFrame,
                         onTimeFrameChanged: _onTimeFrameChanged,
                         onAddAsset: _showAddAssetDialog,
                         onEditAsset: _showEditAssetDialog,
                         onAssetActions: _showAssetActionsSheet,
+                        onAccountToggle: _toggleAccountExclusion,
+                        appStartDate: _appStartDate,
+                      ),
+                        ],
                       ),
                     ),
                   );
@@ -458,204 +628,120 @@ class _SavingsScreenState extends State<SavingsScreen> {
 class _SavingsContent extends StatelessWidget {
   final SavingsData data;
   final double appSavings;
+  final double perBudgetBufferTotal;
   final List<GoalModel> goals;
+  final double totalIncome;
+  final double totalExpenses;
+  final double profitLoss;
   final ProfitLossTimeFrame selectedTimeFrame;
   final ValueChanged<ProfitLossTimeFrame?> onTimeFrameChanged;
   final VoidCallback onAddAsset;
   final void Function(AssetModel) onEditAsset;
   final void Function(AssetModel) onAssetActions;
+  final void Function(AccountModel, bool) onAccountToggle;
+  final DateTime? appStartDate;
 
   const _SavingsContent({
     required this.data,
     required this.appSavings,
+    required this.perBudgetBufferTotal,
     required this.goals,
+    required this.totalIncome,
+    required this.totalExpenses,
+    required this.profitLoss,
     required this.selectedTimeFrame,
     required this.onTimeFrameChanged,
     required this.onAddAsset,
     required this.onEditAsset,
     required this.onAssetActions,
+    required this.onAccountToggle,
+    this.appStartDate,
   });
 
   @override
   Widget build(BuildContext context) {
-    final profitLoss = data.overallProfitLoss;
-    final isProfit = profitLoss >= 0;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ---- Overview section ----
-        BuxlyCard(
+        // ---- Buxly Buffer card ----
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(BuxlyRadius.lg),
+            color: Colors.white,
+            border: appSavings < 0
+                ? Border.all(color: Colors.orange.shade400, width: 2)
+                : null,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 12,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
+                  Icon(Icons.savings, color: BuxlyColors.teal, size: 24),
+                  const SizedBox(width: 8),
                   const Text(
-                    'This Week',
+                    'Buxly Buffer',
                     style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      color: BuxlyColors.darkText,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
                       fontFamily: BuxlyTheme.fontFamily,
                     ),
                   ),
-                  const Spacer(),
-                  _buildTimeFrameDropdown(),
                 ],
               ),
               const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: isProfit
-                      ? BuxlyColors.limeGreen.withOpacity(0.15)
-                      : BuxlyColors.coralOrange.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(BuxlyRadius.pill),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      isProfit
-                          ? Icons.trending_up_rounded
-                          : Icons.trending_down_rounded,
-                      size: 16,
-                      color: isProfit
-                          ? BuxlyColors.limeGreen
-                          : BuxlyColors.coralOrange,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      isProfit ? 'Net Profit' : 'Net Loss',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: isProfit
-                            ? BuxlyColors.limeGreen
-                            : BuxlyColors.coralOrange,
-                        fontFamily: BuxlyTheme.fontFamily,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
               Text(
-                '${isProfit ? '' : '-'}\$${profitLoss.abs().toStringAsFixed(0)}',
+                appSavings < 0
+                    ? '−\$${appSavings.abs().toStringAsFixed(0)}'
+                    : '\$${appSavings.toStringAsFixed(0)}',
                 style: TextStyle(
                   fontSize: 36,
                   fontWeight: FontWeight.w800,
-                  color: isProfit
-                      ? BuxlyColors.darkText
-                      : BuxlyColors.coralOrange,
+                  color: appSavings < 0
+                      ? BuxlyColors.coralOrange
+                      : BuxlyColors.darkText,
                   fontFamily: BuxlyTheme.fontFamily,
                   letterSpacing: -1,
                 ),
               ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: _MiniStatCard(
-                      icon: Icons.trending_up_rounded,
-                      iconColor: BuxlyColors.limeGreen,
-                      label: 'Income',
-                      value: '\$${data.totalIncome.toStringAsFixed(0)}',
-                      valueColor: BuxlyColors.limeGreen,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _MiniStatCard(
-                      icon: Icons.trending_down_rounded,
-                      iconColor: BuxlyColors.coralOrange,
-                      label: 'Expenses',
-                      value: '\$${data.totalExpenses.toStringAsFixed(0)}',
-                      valueColor: BuxlyColors.coralOrange,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 16),
-
-        // Total Saved hero card (always visible)
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            gradient: appSavings >= 0
-                ? BuxlyColors.savingsGradient
-                : LinearGradient(
-                    colors: [Colors.orange.shade400, Colors.red.shade400],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-            borderRadius: BorderRadius.circular(BuxlyRadius.xl),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
               Text(
-                appSavings >= 0
-                    ? 'Buxly Buffer'
-                    : 'Buxly Buffer Deficit',
+                'Non-essential expense buffer',
                 style: TextStyle(
-                  fontSize: 14,
-                  color: BuxlyColors.white.withValues(alpha: 0.85),
+                  fontSize: 13,
+                  color: BuxlyColors.midGrey,
                   fontFamily: BuxlyTheme.fontFamily,
                 ),
               ),
-              const SizedBox(height: 4),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: BuxlyColors.white.withValues(alpha: 0.18),
-                      borderRadius: BorderRadius.circular(BuxlyRadius.md),
-                    ),
-                    child: Icon(
-                      appSavings >= 0
-                          ? Icons.savings_outlined
-                          : Icons.warning_amber_rounded,
-                      color: BuxlyColors.white,
-                      size: 28,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    appSavings < 0
-                        ? '−\$${appSavings.abs().toStringAsFixed(0)}'
-                        : '\$${appSavings.toStringAsFixed(0)}',
-                    style: const TextStyle(
-                      fontSize: 42,
-                      fontWeight: FontWeight.w800,
-                      color: BuxlyColors.white,
-                      fontFamily: BuxlyTheme.fontFamily,
-                      letterSpacing: -1,
-                    ),
-                  ),
-                ],
-              ),
-              if (appSavings < 0) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'You\'ve spent more than saved — stay under budget to recover!',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: BuxlyColors.white.withValues(alpha: 0.8),
-                    fontFamily: BuxlyTheme.fontFamily,
-                  ),
+              const SizedBox(height: 16),
+              const Divider(height: 1),
+              const SizedBox(height: 16),
+              Text(
+                '\$${perBudgetBufferTotal.toStringAsFixed(0)}',
+                style: const TextStyle(
+                  fontSize: 36,
+                  fontWeight: FontWeight.w800,
+                  color: BuxlyColors.darkText,
+                  fontFamily: BuxlyTheme.fontFamily,
+                  letterSpacing: -1,
                 ),
-              ],
+              ),
+              Text(
+                'Essential expense buffer',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: BuxlyColors.midGrey,
+                  fontFamily: BuxlyTheme.fontFamily,
+                ),
+              ),
             ],
           ),
         ),
@@ -675,8 +761,7 @@ class _SavingsContent extends StatelessWidget {
             ),
             const Spacer(),
             TextButton(
-              onPressed: () =>
-                  Navigator.of(context).pushNamed('/goals'),
+              onPressed: () => Navigator.of(context).pushNamed('/goals'),
               child: const Text(
                 'See all',
                 style: TextStyle(
@@ -813,6 +898,19 @@ class _SavingsContent extends StatelessWidget {
 
         const SizedBox(height: 20),
 
+        // ---- Profit / Loss with chart ----
+        _ProfitLossCard(
+          chartData: data.profitLossTimeSeries,
+          appStartDate: appStartDate,
+          profitLoss: profitLoss,
+          totalIncome: totalIncome,
+          totalExpenses: totalExpenses,
+          selectedTimeFrame: selectedTimeFrame,
+          onTimeFrameChanged: onTimeFrameChanged,
+        ),
+
+        const SizedBox(height: 20),
+
         // ---- Accounts section ----
         if (data.accounts.isNotEmpty) ...[
           const Text(
@@ -821,6 +919,15 @@ class _SavingsContent extends StatelessWidget {
               fontSize: 18,
               fontWeight: FontWeight.w800,
               color: BuxlyColors.darkText,
+              fontFamily: BuxlyTheme.fontFamily,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Toggle off to exclude an account from all calculations.',
+            style: TextStyle(
+              fontSize: 12,
+              color: BuxlyColors.midGrey,
               fontFamily: BuxlyTheme.fontFamily,
             ),
           ),
@@ -841,7 +948,11 @@ class _SavingsContent extends StatelessWidget {
                 const SizedBox(height: 8),
                 ...entry.value.map((account) => Padding(
                       padding: const EdgeInsets.only(bottom: 8),
-                      child: _AccountTile(account: account),
+                      child: _AccountTile(
+                        account: account,
+                        onToggle: (included) =>
+                            onAccountToggle(account, included),
+                      ),
                     )),
                 const SizedBox(height: 8),
               ],
@@ -909,37 +1020,6 @@ class _SavingsContent extends StatelessWidget {
     );
   }
 
-  Widget _buildTimeFrameDropdown() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: BuxlyColors.offWhite,
-        borderRadius: BorderRadius.circular(BuxlyRadius.sm),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<ProfitLossTimeFrame>(
-          value: selectedTimeFrame,
-          onChanged: onTimeFrameChanged,
-          isDense: true,
-          icon: const Icon(Icons.keyboard_arrow_down_rounded,
-              color: BuxlyColors.midGrey, size: 20),
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-            color: BuxlyColors.midGrey,
-            fontFamily: BuxlyTheme.fontFamily,
-          ),
-          items: ProfitLossTimeFrame.values.map((tf) {
-            return DropdownMenuItem<ProfitLossTimeFrame>(
-              value: tf,
-              child: Text(tf.label),
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-
   String _targetDateLabel(GoalModel goal) {
     if (goal.weeklyContribution <= 0 || goal.amount <= goal.savedAmount) {
       return '';
@@ -967,120 +1047,608 @@ class _SavingsContent extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Mini stat card
+// Profit/Loss Card with interactive chart
 // ---------------------------------------------------------------------------
 
-class _MiniStatCard extends StatelessWidget {
-  final IconData icon;
-  final Color iconColor;
-  final String label;
-  final String value;
-  final Color valueColor;
+class _ProfitLossCard extends StatefulWidget {
+  final List<ProfitLossPoint> chartData;
+  final DateTime? appStartDate;
+  final double profitLoss;
+  final double totalIncome;
+  final double totalExpenses;
+  final ProfitLossTimeFrame selectedTimeFrame;
+  final ValueChanged<ProfitLossTimeFrame?> onTimeFrameChanged;
 
-  const _MiniStatCard({
-    required this.icon,
-    required this.iconColor,
-    required this.label,
-    required this.value,
-    required this.valueColor,
+  const _ProfitLossCard({
+    required this.chartData,
+    this.appStartDate,
+    required this.profitLoss,
+    required this.totalIncome,
+    required this.totalExpenses,
+    required this.selectedTimeFrame,
+    required this.onTimeFrameChanged,
   });
 
   @override
+  State<_ProfitLossCard> createState() => _ProfitLossCardState();
+}
+
+class _ProfitLossCardState extends State<_ProfitLossCard> {
+  int? _selectedIndex;
+  late List<ProfitLossPoint> _visibleData;
+  late List<double> _cumulativeNet;
+  late List<double> _cumulativeIncome;
+  late List<double> _cumulativeExpenses;
+
+  @override
+  void initState() {
+    super.initState();
+    _visibleData = _filterData();
+    _computeCumulatives();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProfitLossCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedTimeFrame != widget.selectedTimeFrame ||
+        oldWidget.chartData != widget.chartData) {
+      _visibleData = _filterData();
+      _computeCumulatives();
+      _selectedIndex = null;
+    }
+  }
+
+  List<ProfitLossPoint> _filterData() {
+    final start = widget.selectedTimeFrame.startDate;
+    return widget.chartData
+        .where((p) => !p.date.isBefore(start))
+        .toList();
+  }
+
+  void _computeCumulatives() {
+    double runningNet = 0;
+    double runningIncome = 0;
+    double runningExpenses = 0;
+    _cumulativeNet = [];
+    _cumulativeIncome = [];
+    _cumulativeExpenses = [];
+    for (final p in _visibleData) {
+      runningNet += p.net;
+      runningIncome += p.income;
+      runningExpenses += p.expenses;
+      _cumulativeNet.add(runningNet);
+      _cumulativeIncome.add(runningIncome);
+      _cumulativeExpenses.add(runningExpenses);
+    }
+  }
+
+  double get _displayPL => _selectedIndex != null
+      ? _cumulativeNet[_selectedIndex!]
+      : widget.profitLoss;
+
+  double get _displayIncome => _selectedIndex != null
+      ? _cumulativeIncome[_selectedIndex!]
+      : widget.totalIncome;
+
+  double get _displayExpenses => _selectedIndex != null
+      ? _cumulativeExpenses[_selectedIndex!]
+      : widget.totalExpenses;
+
+  void _handleTouch(Offset local, double width) {
+    if (_visibleData.length < 2) return;
+    final ratio = (local.dx / width).clamp(0.0, 1.0);
+    final idx = (ratio * (_visibleData.length - 1))
+        .round()
+        .clamp(0, _visibleData.length - 1);
+    if (idx != _selectedIndex) setState(() => _selectedIndex = idx);
+  }
+
+  void _clearSelection() {
+    if (_selectedIndex != null) setState(() => _selectedIndex = null);
+  }
+
+  String _selectedPeriodLabel() {
+    if (_selectedIndex == null) return '';
+    final d = _visibleData[_selectedIndex!].date;
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return 'Week of ${d.day} ${months[d.month - 1]}';
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: iconColor.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(BuxlyRadius.md),
-      ),
+    final pl = _displayPL;
+    final isProfit = pl >= 0;
+    final isSelected = _selectedIndex != null;
+
+    return BuxlyCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, size: 16, color: iconColor),
-              const SizedBox(width: 4),
-              Text(
-                label,
+              const Text(
+                'Profit / Loss',
                 style: TextStyle(
-                  fontSize: 12,
-                  color: BuxlyColors.midGrey,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: BuxlyColors.darkText,
                   fontFamily: BuxlyTheme.fontFamily,
+                ),
+              ),
+              const Spacer(),
+              _buildTimeFrameDropdown(),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: (isProfit
+                      ? BuxlyColors.limeGreen
+                      : BuxlyColors.coralOrange)
+                  .withOpacity(0.15),
+              borderRadius: BorderRadius.circular(BuxlyRadius.pill),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isProfit
+                      ? Icons.trending_up_rounded
+                      : Icons.trending_down_rounded,
+                  size: 16,
+                  color: isProfit
+                      ? BuxlyColors.limeGreen
+                      : BuxlyColors.coralOrange,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  isSelected
+                      ? _selectedPeriodLabel()
+                      : (isProfit ? 'Net Profit' : 'Net Loss'),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: isProfit
+                        ? BuxlyColors.limeGreen
+                        : BuxlyColors.coralOrange,
+                    fontFamily: BuxlyTheme.fontFamily,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${isProfit ? '' : '-'}\$${pl.abs().toStringAsFixed(0)}',
+            style: TextStyle(
+              fontSize: 36,
+              fontWeight: FontWeight.w800,
+              color: isProfit ? BuxlyColors.darkText : BuxlyColors.coralOrange,
+              fontFamily: BuxlyTheme.fontFamily,
+              letterSpacing: -1,
+            ),
+          ),
+          const SizedBox(height: 16),
+          _buildChart(),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _CompactStat(
+                  icon: Icons.arrow_upward_rounded,
+                  color: BuxlyColors.limeGreen,
+                  label: 'Income',
+                  value: '\$${_displayIncome.toStringAsFixed(0)}',
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _CompactStat(
+                  icon: Icons.arrow_downward_rounded,
+                  color: BuxlyColors.coralOrange,
+                  label: 'Expenses',
+                  value: '\$${_displayExpenses.toStringAsFixed(0)}',
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            value,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimeFrameDropdown() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: BuxlyColors.offWhite,
+        borderRadius: BorderRadius.circular(BuxlyRadius.sm),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<ProfitLossTimeFrame>(
+          value: widget.selectedTimeFrame,
+          onChanged: widget.onTimeFrameChanged,
+          isDense: true,
+          icon: const Icon(Icons.keyboard_arrow_down_rounded,
+              color: BuxlyColors.midGrey, size: 20),
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: BuxlyColors.midGrey,
+            fontFamily: BuxlyTheme.fontFamily,
+          ),
+          items: ProfitLossTimeFrame.values.map((tf) {
+            return DropdownMenuItem<ProfitLossTimeFrame>(
+              value: tf,
+              child: Text(tf.label),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChart() {
+    final data = _visibleData;
+    if (data.length < 2) {
+      return SizedBox(
+        height: 120,
+        child: Center(
+          child: Text(
+            'Not enough data for chart',
             style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              color: valueColor,
+              color: BuxlyColors.midGrey,
+              fontSize: 12,
               fontFamily: BuxlyTheme.fontFamily,
             ),
           ),
-        ],
+        ),
+      );
+    }
+
+    final spots = <FlSpot>[];
+    for (int i = 0; i < data.length; i++) {
+      spots.add(FlSpot(i.toDouble(), _cumulativeNet[i]));
+    }
+
+    double? appStartX;
+    if (widget.appStartDate != null && data.isNotEmpty) {
+      final appStart = widget.appStartDate!;
+      if (!appStart.isBefore(data.first.date)) {
+        for (int i = 0; i < data.length; i++) {
+          if (!data[i].date.isBefore(appStart)) {
+            appStartX = i.toDouble();
+            break;
+          }
+        }
+        appStartX ??= (data.length - 1).toDouble();
+      }
+    }
+
+    final yValues = spots.map((s) => s.y).toList();
+    final dataMaxY = yValues.reduce(max);
+    final dataMinY = yValues.reduce(min);
+    final range = (dataMaxY - dataMinY).abs();
+    final yPad = range == 0 ? 100.0 : range * 0.15;
+
+    final barData = LineChartBarData(
+      spots: spots,
+      isCurved: true,
+      curveSmoothness: 0.3,
+      preventCurveOverShooting: true,
+      color: BuxlyColors.teal,
+      barWidth: 2.5,
+      dotData: const FlDotData(show: false),
+      belowBarData: BarAreaData(
+        show: true,
+        color: BuxlyColors.limeGreen.withOpacity(0.15),
+        cutOffY: 0,
+        applyCutOffY: true,
       ),
+      aboveBarData: BarAreaData(
+        show: true,
+        color: BuxlyColors.coralOrange.withOpacity(0.15),
+        cutOffY: 0,
+        applyCutOffY: true,
+      ),
+    );
+
+    return LayoutBuilder(builder: (context, constraints) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (d) => _handleTouch(d.localPosition, constraints.maxWidth),
+        onTapUp: (_) => _clearSelection(),
+        onHorizontalDragUpdate: (d) =>
+            _handleTouch(d.localPosition, constraints.maxWidth),
+        onHorizontalDragEnd: (_) => _clearSelection(),
+        child: SizedBox(
+          height: 180,
+          child: LineChart(
+            LineChartData(
+              gridData: const FlGridData(show: false),
+              borderData: FlBorderData(show: false),
+              clipData: const FlClipData.all(),
+              minX: 0,
+              maxX: (data.length - 1).toDouble(),
+              minY: dataMinY - yPad,
+              maxY: dataMaxY + yPad,
+              titlesData: FlTitlesData(
+                leftTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false)),
+                rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false)),
+                topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false)),
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 22,
+                    interval: _xInterval(data.length),
+                    getTitlesWidget: (value, meta) =>
+                        _bottomTitle(value, meta, data),
+                  ),
+                ),
+              ),
+              lineBarsData: [barData],
+              extraLinesData: ExtraLinesData(
+                horizontalLines: [
+                  HorizontalLine(
+                    y: 0,
+                    color: BuxlyColors.midGrey.withOpacity(0.3),
+                    strokeWidth: 1,
+                    dashArray: [4, 4],
+                  ),
+                ],
+                verticalLines: [
+                  if (appStartX != null)
+                    VerticalLine(
+                      x: appStartX,
+                      color: BuxlyColors.teal.withOpacity(0.5),
+                      strokeWidth: 1,
+                      dashArray: [4, 4],
+                      label: VerticalLineLabel(
+                        show: true,
+                        labelResolver: (_) => 'Started',
+                        alignment: Alignment.topRight,
+                        style: TextStyle(
+                          color: BuxlyColors.midGrey,
+                          fontSize: 10,
+                          fontFamily: BuxlyTheme.fontFamily,
+                        ),
+                      ),
+                    ),
+                  if (_selectedIndex != null)
+                    VerticalLine(
+                      x: _selectedIndex!.toDouble(),
+                      color: BuxlyColors.darkText.withOpacity(0.35),
+                      strokeWidth: 1,
+                      dashArray: [4, 4],
+                    ),
+                ],
+              ),
+              lineTouchData: LineTouchData(
+                enabled: false,
+                getTouchedSpotIndicator: (bar, idxs) {
+                  return idxs.map((i) {
+                    return TouchedSpotIndicatorData(
+                      const FlLine(
+                          color: Colors.transparent, strokeWidth: 0),
+                      FlDotData(
+                        show: true,
+                        getDotPainter: (spot, pct, b, idx) =>
+                            FlDotCirclePainter(
+                          radius: 4,
+                          color: BuxlyColors.teal,
+                          strokeWidth: 2,
+                          strokeColor: Colors.white,
+                        ),
+                      ),
+                    );
+                  }).toList();
+                },
+                touchTooltipData: LineTouchTooltipData(
+                  getTooltipItems: (_) => [null],
+                  getTooltipColor: (_) => Colors.transparent,
+                  tooltipPadding: EdgeInsets.zero,
+                  tooltipMargin: 0,
+                ),
+              ),
+              showingTooltipIndicators: _selectedIndex != null
+                  ? [
+                      ShowingTooltipIndicators([
+                        LineBarSpot(
+                            barData, 0, spots[_selectedIndex!]),
+                      ]),
+                    ]
+                  : [],
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+  static double _xInterval(int count) {
+    if (count <= 5) return 1;
+    if (count <= 10) return 2;
+    return (count / 5).ceilToDouble();
+  }
+
+  static Widget _bottomTitle(
+      double value, TitleMeta meta, List<ProfitLossPoint> data) {
+    final idx = value.toInt();
+    if (idx < 0 || idx >= data.length) return const SizedBox.shrink();
+    final date = data[idx].date;
+
+    final sameYear = data.first.date.year == data.last.date.year;
+
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+
+    final label = sameYear
+        ? months[date.month - 1]
+        : "${months[date.month - 1]} '${date.year % 100}";
+
+    return SideTitleWidget(
+      meta: meta,
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          color: BuxlyColors.midGrey,
+          fontFamily: BuxlyTheme.fontFamily,
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Compact stat row item
+// ---------------------------------------------------------------------------
+
+class _CompactStat extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String label;
+  final String value;
+
+  const _CompactStat({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, size: 15, color: color),
+        ),
+        const SizedBox(width: 8),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                color: BuxlyColors.midGrey,
+                fontFamily: BuxlyTheme.fontFamily,
+              ),
+            ),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: color,
+                fontFamily: BuxlyTheme.fontFamily,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
 
 class _AccountTile extends StatelessWidget {
   final AccountModel account;
-  const _AccountTile({required this.account});
+  final ValueChanged<bool>? onToggle;
+  const _AccountTile({required this.account, this.onToggle});
 
   @override
   Widget build(BuildContext context) {
     final balance = account.balanceCurrent;
     final isNegative = balance < 0;
+    final isIncluded = !account.excluded;
 
-    return BuxlyCard(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          BuxlyIconContainer(
-            icon: _accountIcon(account.type),
-            color: _accountColor(account.type),
-            size: 40,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  account.name,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: BuxlyTheme.fontFamily,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (account.maskedAccountNumber != null)
+    return AnimatedOpacity(
+      opacity: isIncluded ? 1.0 : 0.5,
+      duration: const Duration(milliseconds: 200),
+      child: BuxlyCard(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            BuxlyIconContainer(
+              icon: _accountIcon(account.type),
+              color: isIncluded
+                  ? _accountColor(account.type)
+                  : BuxlyColors.midGrey,
+              size: 40,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    account.maskedAccountNumber!,
+                    account.name,
                     style: TextStyle(
-                      fontSize: 11,
-                      color: BuxlyColors.midGrey,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
                       fontFamily: BuxlyTheme.fontFamily,
+                      color: isIncluded
+                          ? BuxlyColors.darkText
+                          : BuxlyColors.midGrey,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-              ],
+                  if (account.maskedAccountNumber != null)
+                    Text(
+                      account.maskedAccountNumber!,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: BuxlyColors.midGrey,
+                        fontFamily: BuxlyTheme.fontFamily,
+                      ),
+                    ),
+                ],
+              ),
             ),
-          ),
-          Text(
-            '${isNegative ? '-' : ''}\$${balance.abs().toStringAsFixed(2)}',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: isNegative ? BuxlyColors.coralOrange : BuxlyColors.darkText,
-              fontFamily: BuxlyTheme.fontFamily,
+            Text(
+              '${isNegative ? '-' : ''}\$${balance.abs().toStringAsFixed(2)}',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: !isIncluded
+                    ? BuxlyColors.midGrey
+                    : isNegative
+                        ? BuxlyColors.coralOrange
+                        : BuxlyColors.darkText,
+                fontFamily: BuxlyTheme.fontFamily,
+              ),
             ),
-          ),
-        ],
+            if (onToggle != null) ...[
+              const SizedBox(width: 8),
+              SizedBox(
+                height: 24,
+                child: Switch.adaptive(
+                  value: isIncluded,
+                  onChanged: onToggle,
+                  activeTrackColor: BuxlyColors.teal,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

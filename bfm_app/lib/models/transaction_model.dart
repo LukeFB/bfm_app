@@ -115,7 +115,7 @@ class TransactionModel {
   /// format. Handles both direct Akahu shapes (`_id`, `_account`,
   /// `category: {name: ...}`) and backend-transformed shapes (`id`,
   /// `account_id`, `category_name`).
-  factory TransactionModel.fromAkahu(Map<String, dynamic> a) {
+  factory TransactionModel.fromAkahu(Map<String, dynamic> a, {int? batchIndex}) {
     // ── Date ──────────────────────────────────────────────────────────────
     String dt = (a['date'] ?? a['created_at'] ?? '').toString();
     if (dt.isEmpty) dt = DateTime.now().toIso8601String();
@@ -190,7 +190,7 @@ class TransactionModel {
       balance = (a['balance'] as num).toDouble();
     }
 
-    final akahuHash = _resolveHash(a);
+    final akahuHash = _resolveHash(a, batchIndex: batchIndex);
 
     return TransactionModel(
       akahuId: akahuId,
@@ -223,15 +223,27 @@ class TransactionModel {
   }
 
   /// Returns the provided Akahu hash if it exists, otherwise derives one using
-  /// account/date/amount/description so duplicate detection still works.
-  static String _resolveHash(Map<String, dynamic> a) {
+  /// the Akahu _id (unique per transaction) or a composite of fields.
+  /// Including the Akahu ID prevents hash collisions when a user makes two
+  /// identical purchases on the same day (e.g., two coffees at the same cafe).
+  static String _resolveHash(Map<String, dynamic> a, {int? batchIndex}) {
     final provided = _str(a['hash']);
     if (provided != null) return provided;
+
+    // Prefer the Akahu _id which is globally unique per transaction.
+    final akahuId = _str(a['_id']) ?? _str(a['id']) ?? _str(a['akahu_id']);
+    if (akahuId != null) {
+      return sha1.convert(utf8.encode(akahuId)).toString();
+    }
+
+    // Fallback: composite hash with balance and batch index for disambiguation.
     final account = (a['_account'] ?? a['account_id'] ?? '').toString();
     final date = (a['date'] ?? a['created_at'] ?? '').toString();
     final amount = (a['amount'] ?? '').toString();
     final description = (a['description'] ?? '').toString().trim().toLowerCase();
-    final payload = '$account|$date|$amount|$description';
+    final balance = (a['balance'] ?? '').toString();
+    final idx = (batchIndex ?? 0).toString();
+    final payload = '$account|$date|$amount|$description|$balance|$idx';
     return sha1.convert(utf8.encode(payload)).toString();
   }
 

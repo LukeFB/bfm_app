@@ -34,11 +34,33 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            // REQUIRED before publishing: generate a keystore and fill these in.
+            //   keytool -genkey -v -keystore buxly-release.jks -keyalg RSA \
+            //     -keysize 2048 -validity 10000 -alias buxly
+            // Then populate via environment variables (do NOT commit secrets):
+            //   KEYSTORE_PASSWORD, KEY_PASSWORD
+            storeFile = file("buxly-release.jks")
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
+            keyAlias = "buxly"
+            keyPassword = System.getenv("KEY_PASSWORD") ?: ""
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = if (file("buxly-release.jks").exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

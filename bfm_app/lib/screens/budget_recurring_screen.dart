@@ -560,9 +560,9 @@ class _BudgetRecurringScreenState extends State<BudgetRecurringScreen> {
     final emoji = _emojiHelper?.emojiForName(emojiSource) ??
         CategoryEmojiHelper.defaultEmoji;
 
-    return CheckboxListTile(
+    return SwitchListTile(
       value: selected,
-      onChanged: (value) => _toggleSelection(id, value ?? false),
+      onChanged: (value) => _toggleSelection(id, value),
       title: Text(fallback),
       subtitle: Text(
         '$dueLabel · \$${item.amount.toStringAsFixed(2)} / ${item.frequency}',

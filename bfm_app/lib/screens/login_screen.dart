@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -41,15 +42,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _loadSavedCredentials() async {
-    final email = await _credentialStore.getEmail();
-    final password = await _credentialStore.getPassword();
+    final results = await Future.wait([
+      _credentialStore.getEmail(),
+      _credentialStore.getPassword(),
+    ]);
     if (!mounted) return;
 
-    final hasBoth = email != null &&
-        email.isNotEmpty &&
-        password != null &&
-        password.isNotEmpty;
-
+    final email = results[0];
+    final password = results[1];
     setState(() {
       if (email != null && email.isNotEmpty) _emailCtrl.text = email;
       if (password != null && password.isNotEmpty) {
@@ -57,8 +57,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       }
       _credentialsLoaded = true;
     });
-
-    if (hasBoth) _submit();
   }
 
   Future<void> _submit() async {
@@ -86,7 +84,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (!mounted) return;
 
     if (ok) {
-      await _credentialStore.save(email: email, password: password);
+      TextInput.finishAutofillContext();
+      await _credentialStore.saveCredentials(email, password);
       if (!mounted) return;
       await _routeBasedOnBankStatus();
     } else {
@@ -140,15 +139,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   void _handleGetStarted() {
     if (_loading) return;
 
-    final hasCreds = _credentialsLoaded &&
-        _emailCtrl.text.isNotEmpty &&
-        _passwordCtrl.text.isNotEmpty;
-
-    if (hasCreds) {
-      _submit();
-    } else {
-      _showLoginSheet();
-    }
+    _showLoginSheet();
   }
 
   void _showLoginSheet() {
@@ -195,68 +186,72 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                 ),
                 const SizedBox(height: 20),
-                Form(
-                  key: _formKey,
-                  child: Column(
-                    children: [
-                      TextFormField(
-                        controller: _emailCtrl,
-                        keyboardType: TextInputType.emailAddress,
-                        textInputAction: TextInputAction.next,
-                        decoration: const InputDecoration(
-                          labelText: 'Email',
-                          hintText: 'your@email.co.nz',
+                AutofillGroup(
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      children: [
+                        TextFormField(
+                          controller: _emailCtrl,
+                          keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.next,
+                          autofillHints: const [AutofillHints.email],
+                          decoration: const InputDecoration(
+                            labelText: 'Email',
+                            hintText: 'your@email.co.nz',
+                          ),
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) {
+                              return 'Email is required';
+                            }
+                            return null;
+                          },
                         ),
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) {
-                            return 'Email is required';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _passwordCtrl,
-                        obscureText: true,
-                        textInputAction: TextInputAction.done,
-                        onFieldSubmitted: (_) {
-                          if (_formKey.currentState!.validate()) {
-                            Navigator.pop(ctx);
-                            _submit();
-                          }
-                        },
-                        decoration: const InputDecoration(
-                          labelText: 'Password',
-                        ),
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) {
-                            return 'Password is required';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 20),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton(
-                          onPressed: () {
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _passwordCtrl,
+                          obscureText: true,
+                          textInputAction: TextInputAction.done,
+                          autofillHints: const [AutofillHints.password],
+                          onFieldSubmitted: (_) {
                             if (_formKey.currentState!.validate()) {
                               Navigator.pop(ctx);
                               _submit();
                             }
                           },
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text('Sign in'),
-                              SizedBox(width: 8),
-                              Icon(Icons.arrow_forward, size: 20),
-                            ],
+                          decoration: const InputDecoration(
+                            labelText: 'Password',
+                          ),
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) {
+                              return 'Password is required';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 20),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                            onPressed: () {
+                              if (_formKey.currentState!.validate()) {
+                                Navigator.pop(ctx);
+                                _submit();
+                              }
+                            },
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('Sign in'),
+                                SizedBox(width: 8),
+                                Icon(Icons.arrow_forward, size: 20),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ],

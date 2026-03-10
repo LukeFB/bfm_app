@@ -19,16 +19,22 @@ import 'package:bfm_app/repositories/account_repository.dart';
 import 'package:bfm_app/repositories/alert_repository.dart';
 import 'package:bfm_app/repositories/asset_repository.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
+import 'package:bfm_app/repositories/event_repository.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/transaction_repository.dart';
 import 'package:bfm_app/repositories/recurring_repository.dart';
 import 'package:bfm_app/repositories/weekly_report_repository.dart';
+import 'package:bfm_app/services/app_savings_store.dart';
+import 'package:bfm_app/services/budget_buffer_store.dart';
 import 'package:bfm_app/services/budget_seen_store.dart';
 import 'package:bfm_app/services/chat_storage.dart';
 import 'package:bfm_app/services/income_settings_store.dart';
+import 'package:bfm_app/services/manual_budget_store.dart';
 import 'package:bfm_app/services/onboarding_store.dart';
+import 'package:bfm_app/services/debug_log.dart';
 import 'package:bfm_app/services/secure_credential_store.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
+import 'package:bfm_app/services/weekly_overview_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Coordinates cleanup when the user disconnects their bank.
@@ -61,12 +67,48 @@ class BankService {
     await prefs.setBool('bank_connected', true);
     await prefs.remove('last_sync_at');
 
+    await WeeklyOverviewService.suppressInitialOverview();
+
     if (triggerInitialSync) {
-      await TransactionSyncService().syncNow();
+      await _syncUntilMinTransactions();
 
       // Auto-detect income regularity after transactions are synced
       await IncomeSettingsStore.detectAndSetIncomeType();
     }
+  }
+
+  /// Minimum number of transactions we expect after a fresh bank connection.
+  /// Akahu sometimes returns a tiny first batch while it's still fetching
+  /// from the user's bank. We retry until we hit this threshold.
+  static const int _minTransactions = 100;
+  static const int _maxRetries = 5;
+  static const Duration _retryDelay = Duration(seconds: 5);
+
+  /// Syncs repeatedly until at least [_minTransactions] are stored locally,
+  /// or until [_maxRetries] attempts have been exhausted.
+  static Future<void> _syncUntilMinTransactions() async {
+    final syncService = TransactionSyncService();
+
+    for (var attempt = 1; attempt <= _maxRetries; attempt++) {
+      await syncService.syncNow();
+
+      final txCount = await TransactionRepository.count();
+      DebugLog.instance.add('SYNC',
+          'Initial sync attempt $attempt/$_maxRetries – $txCount transactions');
+
+      if (txCount >= _minTransactions) return;
+
+      if (attempt < _maxRetries) {
+        DebugLog.instance.add('SYNC',
+            'Only $txCount txns (need $_minTransactions), '
+            'retrying in ${_retryDelay.inSeconds}s…');
+        await Future.delayed(_retryDelay);
+      }
+    }
+
+    final finalCount = await TransactionRepository.count();
+    DebugLog.instance.add('SYNC',
+        'Gave up after $_maxRetries attempts with $finalCount transactions');
   }
 
   /// Disconnects the current bank session by:
@@ -95,6 +137,7 @@ class BankService {
     await AccountRepository.clearAll();
     await AssetRepository.clearAll();
     await WeeklyReportRepository.clearAll();
+    await EventRepository.clearAll();
 
     // ------ Reset category usage counters (keep categories themselves) ------
     final db = await AppDatabase.instance.database;
@@ -110,6 +153,13 @@ class BankService {
 
     // ------ Clear budget seen state ------
     await BudgetSeenStore.clearAll();
+
+    // ------ Clear manual budgets ------
+    await ManualBudgetStore.clearAll();
+
+    // ------ Clear app savings and budget buffers ------
+    await AppSavingsStore.clear();
+    await BudgetBufferStore.clear();
 
     // ------ Clear income settings ------
     await IncomeSettingsStore.clear();

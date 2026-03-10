@@ -23,7 +23,7 @@ class AuthApi {
   ///
   /// Required: [email], [password], [passwordConfirmation], [firstName].
   /// Optional: [lastName], [phone], [dateOfBirth], [incomeFrequency],
-  ///           [primaryGoal], [referrerToken].
+  ///           [primaryGoal], [referrerToken], [ethnicities].
   Future<String> register({
     required String email,
     required String password,
@@ -35,6 +35,7 @@ class AuthApi {
     String? incomeFrequency,
     String? primaryGoal,
     dynamic referrerToken,
+    List<String>? ethnicities,
   }) async {
     final fields = <String, dynamic>{
       'email': email,
@@ -50,6 +51,8 @@ class AuthApi {
       if (primaryGoal != null && primaryGoal.isNotEmpty)
         'primary_goal': primaryGoal,
       if (referrerToken != null) 'referrer_token': referrerToken,
+      if (ethnicities != null && ethnicities.isNotEmpty)
+        'ethnicities': ethnicities,
     };
 
     final response = await _client.dio.post(

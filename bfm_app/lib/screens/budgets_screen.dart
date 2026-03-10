@@ -14,6 +14,9 @@
 
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:bfm_app/db/app_database.dart';
 import 'package:bfm_app/models/budget_model.dart';
 import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
@@ -30,8 +33,6 @@ import 'package:bfm_app/theme/buxly_theme.dart';
 import 'package:bfm_app/widgets/help_icon_tooltip.dart';
 import 'package:bfm_app/widgets/budget_buffer_card.dart';
 
-const Color bfmBlue = Color(0xFF005494);
-const Color bfmOrange = Color(0xFFFF6934);
 
 /// Budget overview screen with chart and detailed breakdowns.
 class BudgetsScreen extends StatefulWidget {
@@ -518,90 +519,95 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
   }
 
   Future<void> _saveChanges({bool showSnackbar = true}) async {
+    // Guard: never wipe the DB if data hasn't finished loading yet.
+    // dispose() fires this as fire-and-forget; if the screen is torn down
+    // before _load() completes, _data will still be null and all selection
+    // sets will be empty — clearAll() would permanently delete every budget.
+    if (_data == null || _loading) return;
+
     final periodStart = _mondayOfThisWeek();
     int saved = 0;
 
-    await BudgetRepository.clearAll();
+    final db = await AppDatabase.instance.database;
+    await db.transaction((txn) async {
+      await txn.delete('budgets');
 
-    // Save selected recurring items
-    for (final rid in _selectedRecurringIds) {
-      final weeklyLimit = _parseAmount(_recurringCurrentAmounts[rid]);
-      if (weeklyLimit <= 0) continue;
-      
-      final sub = _data?.subscriptions.firstWhere(
-        (s) => s.recurringId == rid,
-        orElse: () => _SubscriptionItem(
-          recurringId: null, categoryId: 0, name: '', frequency: '', amount: 0, weeklyAmount: 0,
-        ),
-      );
-      if (sub?.recurringId == null) continue;
-      
-      final customName = _recurringNameOverrides[rid];
-      final m = BudgetModel(
-        categoryId: sub!.categoryId,
-        recurringTransactionId: rid,
-        label: customName,
-        weeklyLimit: weeklyLimit,
-        periodStart: periodStart,
-      );
-      await BudgetRepository.insert(m);
-      saved += 1;
-    }
+      // Save selected recurring items
+      for (final rid in _selectedRecurringIds) {
+        final weeklyLimit = _parseAmount(_recurringCurrentAmounts[rid]);
+        if (weeklyLimit <= 0) continue;
 
-    // Save selected category budgets
-    for (final entry in _selectedCategories.entries) {
-      if (entry.value != true || entry.key == null) continue;
-      
-      final weeklyLimit = _parseAmount(_categoryCurrentAmounts[entry.key]);
-      if (weeklyLimit <= 0) continue;
-      
-      final m = BudgetModel(
-        categoryId: entry.key,
-        weeklyLimit: weeklyLimit,
-        periodStart: periodStart,
-      );
-      await BudgetRepository.insert(m);
-      saved += 1;
-    }
+        final sub = _data?.subscriptions.firstWhere(
+          (s) => s.recurringId == rid,
+          orElse: () => _SubscriptionItem(
+            recurringId: null, categoryId: 0, name: '', frequency: '', amount: 0, weeklyAmount: 0,
+          ),
+        );
+        if (sub?.recurringId == null) continue;
 
-    // Save selected uncategorized items
-    for (final key in _selectedUncatKeys) {
-      final weeklyLimit = _parseAmount(_uncatCurrentAmounts[key]);
-      if (weeklyLimit <= 0) continue;
-      
-      final uncat = _data?.uncategorizedBudgets.firstWhere(
-        (u) => u.key == key,
-        orElse: () => _UncategorizedItem(key: '', name: '', weeklyAmount: 0, txCount: 0),
-      );
-      if (uncat == null || uncat.key.isEmpty) continue;
-      
-      final displayName = _uncatNameOverrides[key] ?? uncat.name;
-      
-      final m = BudgetModel(
-        categoryId: null,
-        label: displayName,
-        uncategorizedKey: key,
-        weeklyLimit: weeklyLimit,
-        periodStart: periodStart,
-      );
-      await BudgetRepository.insert(m);
-      saved += 1;
-    }
+        final customName = _recurringNameOverrides[rid];
+        await txn.insert('budgets', BudgetModel(
+          categoryId: sub!.categoryId,
+          recurringTransactionId: rid,
+          label: customName,
+          weeklyLimit: weeklyLimit,
+          periodStart: periodStart,
+        ).toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+        saved += 1;
+      }
 
-    // Save selected manual budgets to DB (for budget tracking)
-    for (int i = 0; i < _manualBudgets.length; i++) {
-      if (!_selectedManualBudgetIndices.contains(i)) continue;
-      final manual = _manualBudgets[i];
-      final m = BudgetModel(
-        categoryId: null,
-        label: manual.name,
-        weeklyLimit: manual.weeklyLimit,
-        periodStart: periodStart,
-      );
-      await BudgetRepository.insert(m);
-      saved += 1;
-    }
-    
+      // Save selected category budgets
+      for (final entry in _selectedCategories.entries) {
+        if (entry.value != true || entry.key == null) continue;
+
+        final weeklyLimit = _parseAmount(_categoryCurrentAmounts[entry.key]);
+        if (weeklyLimit <= 0) continue;
+
+        await txn.insert('budgets', BudgetModel(
+          categoryId: entry.key,
+          weeklyLimit: weeklyLimit,
+          periodStart: periodStart,
+        ).toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+        saved += 1;
+      }
+
+      // Save selected uncategorized items
+      for (final key in _selectedUncatKeys) {
+        final weeklyLimit = _parseAmount(_uncatCurrentAmounts[key]);
+        if (weeklyLimit <= 0) continue;
+
+        final uncat = _data?.uncategorizedBudgets.firstWhere(
+          (u) => u.key == key,
+          orElse: () => _UncategorizedItem(key: '', name: '', weeklyAmount: 0, txCount: 0),
+        );
+        if (uncat == null || uncat.key.isEmpty) continue;
+
+        final displayName = _uncatNameOverrides[key] ?? uncat.name;
+
+        await txn.insert('budgets', BudgetModel(
+          categoryId: null,
+          label: displayName,
+          uncategorizedKey: key,
+          weeklyLimit: weeklyLimit,
+          periodStart: periodStart,
+        ).toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+        saved += 1;
+      }
+
+      // Save selected manual budgets to DB (for budget tracking)
+      for (int i = 0; i < _manualBudgets.length; i++) {
+        if (!_selectedManualBudgetIndices.contains(i)) continue;
+        final manual = _manualBudgets[i];
+        await txn.insert('budgets', BudgetModel(
+          categoryId: null,
+          label: manual.name,
+          weeklyLimit: manual.weeklyLimit,
+          periodStart: periodStart,
+        ).toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+        saved += 1;
+      }
+    });
+
     // Save ALL manual budgets (including unselected) to persistent store
     final manualBudgetsToStore = <ManualBudget>[];
     for (int i = 0; i < _manualBudgets.length; i++) {
@@ -876,7 +882,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              style: BuxlyTheme.destructiveButtonStyle,
               onPressed: () => Navigator.pop(dialogContext, true),
               child: const Text('Delete'),
             ),
@@ -989,15 +995,34 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
   BoxDecoration _rowDecoration(bool isSelected) {
     return BoxDecoration(
       color: isSelected
-          ? BuxlyColors.teal.withOpacity(0.08)
-          : Colors.white,
-      borderRadius: BorderRadius.circular(16),
+          ? BuxlyColors.tealLight
+          : BuxlyColors.white,
+      borderRadius: BorderRadius.circular(BuxlyRadius.lg),
       border: Border.all(
         color: isSelected
             ? BuxlyColors.teal.withOpacity(0.4)
-            : Colors.black12,
+            : BuxlyColors.disabled.withOpacity(0.5),
         width: isSelected ? 1.5 : 1,
       ),
+    );
+  }
+
+  Widget _buildCheckbox(bool isSelected) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      width: 28,
+      height: 28,
+      decoration: BoxDecoration(
+        color: isSelected ? BuxlyColors.teal : Colors.transparent,
+        borderRadius: BorderRadius.circular(BuxlyRadius.sm),
+        border: Border.all(
+          width: 2,
+          color: isSelected ? BuxlyColors.teal : BuxlyColors.disabled,
+        ),
+      ),
+      child: isSelected
+          ? const Icon(Icons.check, size: 18, color: BuxlyColors.white)
+          : null,
     );
   }
 
@@ -1010,15 +1035,15 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     return Container(
       width: 20,
       height: 20,
-      decoration: BoxDecoration(
-        color: bfmOrange,
+      decoration: const BoxDecoration(
+        color: BuxlyColors.coralOrange,
         shape: BoxShape.circle,
       ),
       child: const Center(
         child: Text(
           '!',
           style: TextStyle(
-            color: Colors.white,
+            color: BuxlyColors.white,
             fontWeight: FontWeight.bold,
             fontSize: 14,
           ),
@@ -1033,7 +1058,6 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     required bool showAlert,
     VoidCallback? onDismiss,
   }) {
-    // Show nothing if no alert to display
     if (!isNew && !showAlert) return const SizedBox.shrink();
     
     return GestureDetector(
@@ -1045,15 +1069,15 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
         child: Container(
           width: 20,
           height: 20,
-          decoration: BoxDecoration(
-            color: bfmOrange,
+          decoration: const BoxDecoration(
+            color: BuxlyColors.coralOrange,
             shape: BoxShape.circle,
           ),
           child: Center(
             child: Text(
               isNew ? '!' : '↑',
               style: const TextStyle(
-                color: Colors.white,
+                color: BuxlyColors.white,
                 fontWeight: FontWeight.bold,
                 fontSize: 14,
               ),
@@ -1145,16 +1169,18 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     String? helperText,
   }) async {
     final controller = TextEditingController(text: initialValue);
-    // Select all text so user can immediately type
     controller.selection = TextSelection(baseOffset: 0, extentOffset: controller.text.length);
     final result = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(BuxlyRadius.xl)),
+      ),
       builder: (sheetContext) {
         return Padding(
           padding: EdgeInsets.only(
-            left: 20, right: 20, top: 16,
-            bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 24,
+            left: BuxlySpacing.xl, right: BuxlySpacing.xl, top: BuxlySpacing.lg,
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom + BuxlySpacing.xl,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1164,18 +1190,18 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                 child: Container(
                   width: 40, height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.black26,
-                    borderRadius: BorderRadius.circular(999),
+                    color: BuxlyColors.disabled,
+                    borderRadius: BorderRadius.circular(BuxlyRadius.pill),
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: BuxlySpacing.lg),
+              Text(title, style: Theme.of(sheetContext).textTheme.titleLarge),
               if (helperText != null) ...[
-                const SizedBox(height: 4),
-                Text(helperText, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: BuxlySpacing.xs),
+                Text(helperText, style: Theme.of(sheetContext).textTheme.bodySmall),
               ],
-              const SizedBox(height: 16),
+              const SizedBox(height: BuxlySpacing.lg),
               TextField(
                 controller: controller,
                 autofocus: true,
@@ -1183,15 +1209,14 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                 decoration: const InputDecoration(
                   labelText: 'Weekly limit',
                   prefixText: '\$',
-                  border: OutlineInputBorder(),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: BuxlySpacing.lg),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(onPressed: () => Navigator.pop(sheetContext), child: const Text('Cancel')),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: BuxlySpacing.sm),
                   FilledButton(
                     onPressed: () => Navigator.pop(sheetContext, controller.text.trim()),
                     child: const Text('Save'),
@@ -1218,11 +1243,14 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     final result = await showModalBottomSheet<_SubscriptionEditResult>(
       context: context,
       isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(BuxlyRadius.xl)),
+      ),
       builder: (sheetContext) {
         return Padding(
           padding: EdgeInsets.only(
-            left: 20, right: 20, top: 16,
-            bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 24,
+            left: BuxlySpacing.xl, right: BuxlySpacing.xl, top: BuxlySpacing.lg,
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom + BuxlySpacing.xl,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1232,44 +1260,40 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                 child: Container(
                   width: 40, height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.black26,
-                    borderRadius: BorderRadius.circular(999),
+                    color: BuxlyColors.disabled,
+                    borderRadius: BorderRadius.circular(BuxlyRadius.pill),
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
-              const Text('Edit recurring payment',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+              const SizedBox(height: BuxlySpacing.lg),
+              Text('Edit recurring payment',
+                  style: Theme.of(sheetContext).textTheme.titleLarge),
               if (helperText != null) ...[
-                const SizedBox(height: 4),
-                Text(helperText, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                const SizedBox(height: BuxlySpacing.xs),
+                Text(helperText, style: Theme.of(sheetContext).textTheme.bodySmall),
               ],
-              const SizedBox(height: 16),
+              const SizedBox(height: BuxlySpacing.lg),
               TextField(
                 controller: nameCtrl,
                 autofocus: true,
                 textCapitalization: TextCapitalization.words,
-                decoration: InputDecoration(
-                  labelText: 'Name',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                ),
+                decoration: const InputDecoration(labelText: 'Name'),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: BuxlySpacing.md),
               TextField(
                 controller: amountCtrl,
                 keyboardType: const TextInputType.numberWithOptions(signed: false, decimal: true),
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   labelText: 'Weekly limit',
                   prefixText: '\$',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: BuxlySpacing.lg),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(onPressed: () => Navigator.pop(sheetContext), child: const Text('Cancel')),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: BuxlySpacing.sm),
                   FilledButton(
                     onPressed: () => Navigator.pop(
                       sheetContext,
@@ -1383,6 +1407,54 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     return total;
   }
 
+  Future<void> _openSettings() async {
+    await Navigator.pushNamed(context, '/settings');
+    if (mounted) _load();
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Financial Health. Mental Wealth.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic,
+                    color: BuxlyColors.midGrey,
+                    fontFamily: BuxlyTheme.fontFamily,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                SvgPicture.asset(
+                  'assets/images/SVG/BUXLY LOGO_Horizontal_Wordmark_Light Turquoise.svg',
+                  height: 28,
+                  colorFilter: const ColorFilter.mode(
+                    BuxlyColors.teal,
+                    BlendMode.srcIn,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Settings',
+            icon: const Icon(
+              Icons.settings_outlined,
+              color: BuxlyColors.darkText,
+            ),
+            onPressed: _openSettings,
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final subscriptionsBudgeted = _getSubscriptionsBudgeted();
@@ -1396,11 +1468,12 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
               onRefresh: _forceSync,
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 24),
+                padding: const EdgeInsets.only(left: BuxlySpacing.lg, right: BuxlySpacing.lg, top: 0, bottom: BuxlySpacing.xl),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Total budgeted box at the top center
+                    _buildHeader(),
+                    const SizedBox(height: 12),
                     _buildTotalBudgetedBox(totalBudgeted),
                     const SizedBox(height: 16),
                     _buildDropdownCard(
@@ -1419,17 +1492,18 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                           '• Orange (!) means a new subscription or price change was detected\n\n'
                           'Monthly subscriptions are automatically converted to weekly amounts.',
                       children: _data!.subscriptions.isEmpty
-                          ? [const Padding(
-                              padding: EdgeInsets.all(16),
-                              child: Text('No subscriptions detected', style: TextStyle(color: Colors.black54)),
+                          ? [Padding(
+                              padding: const EdgeInsets.all(BuxlySpacing.lg),
+                              child: Text('No subscriptions detected',
+                                  style: Theme.of(context).textTheme.bodySmall),
                             )]
                           : [
                               Padding(
-                                padding: const EdgeInsets.only(top: 8, bottom: 6),
+                                padding: const EdgeInsets.only(top: BuxlySpacing.sm, bottom: 6),
                                 child: Text(
                                   'Hold to edit',
                                   textAlign: TextAlign.center,
-                                  style: TextStyle(fontSize: 12, color: Colors.black.withOpacity(0.35)),
+                                  style: TextStyle(fontSize: 12, color: BuxlyColors.midGrey.withOpacity(0.6)),
                                 ),
                               ),
                               ..._data!.subscriptions.map((s) => _buildSubscriptionRow(s)),
@@ -1458,19 +1532,20 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                       children: [
                         if (_data!.categoryBudgets.isNotEmpty || _data!.uncategorizedBudgets.isNotEmpty || _manualBudgets.isNotEmpty)
                           Padding(
-                            padding: const EdgeInsets.only(top: 8, bottom: 6),
+                            padding: const EdgeInsets.only(top: BuxlySpacing.sm, bottom: 6),
                             child: Text(
                               'Hold to edit',
                               textAlign: TextAlign.center,
-                              style: TextStyle(fontSize: 12, color: Colors.black.withOpacity(0.35)),
+                              style: TextStyle(fontSize: 12, color: BuxlyColors.midGrey.withOpacity(0.6)),
                             ),
                           ),
                         for (int i = 0; i < _manualBudgets.length; i++)
                           _buildManualBudgetRow(_manualBudgets[i], i),
                         if (_data!.categoryBudgets.isEmpty && _data!.uncategorizedBudgets.isEmpty && _manualBudgets.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Text('No budgets detected', style: TextStyle(color: Colors.black54)),
+                          Padding(
+                            padding: const EdgeInsets.all(BuxlySpacing.lg),
+                            child: Text('No budgets detected',
+                                style: Theme.of(context).textTheme.bodySmall),
                           )
                         else ..._buildCombinedBudgetRows(),
                       ],
@@ -1486,42 +1561,28 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
   }
   
   Widget _buildTotalBudgetedBox(double total) {
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 32),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: Colors.white,
-          border: Border.all(
-            color: bfmBlue.withOpacity(0.2),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: BuxlySpacing.xxl, horizontal: BuxlySpacing.xxl),
+      decoration: BuxlyTheme.cardDecoration,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '\$${total.toStringAsFixed(2)}',
+            style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: BuxlyColors.teal,
+                ),
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '\$${total.toStringAsFixed(2)}',
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: bfmBlue,
-                  ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              'total weekly budgeted',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.black54,
-                  ),
-            ),
-          ],
-        ),
+          const SizedBox(height: BuxlySpacing.xs),
+          Text(
+            'total weekly budgeted',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: BuxlyColors.darkText,
+                ),
+          ),
+        ],
       ),
     );
   }
@@ -1538,28 +1599,29 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     String? helpMessage,
     Widget? headerAction,
   }) {
-    return Card(
-      elevation: 1,
+    return Container(
+      decoration: BuxlyTheme.cardDecoration,
+      clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
           InkWell(
             onTap: onToggle,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(BuxlyRadius.lg),
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(BuxlySpacing.lg),
               child: Row(
                 children: [
-                  Icon(icon, color: bfmBlue),
-                  const SizedBox(width: 12),
+                  BuxlyIconContainer(icon: icon, color: BuxlyColors.teal, size: 36),
+                  const SizedBox(width: BuxlySpacing.md),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                            Text(title, style: Theme.of(context).textTheme.titleLarge),
                             if (helpMessage != null) ...[
-                              const SizedBox(width: 4),
+                              const SizedBox(width: BuxlySpacing.xs),
                               HelpIconTooltip(
                                 title: helpTitle ?? title,
                                 message: helpMessage,
@@ -1572,11 +1634,10 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                           const SizedBox(height: 2),
                           Text(
                             '\$${budgetedAmount.toStringAsFixed(2)}/wk budgeted',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: bfmBlue.withOpacity(0.8),
-                              fontWeight: FontWeight.w500,
-                            ),
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: BuxlyColors.teal,
+                                  fontWeight: FontWeight.w600,
+                                ),
                           ),
                         ],
                       ],
@@ -1584,21 +1645,24 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                   ),
                   if (hasChanges) ...[
                     _buildSectionChangeIndicator(),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: BuxlySpacing.sm),
                   ],
-                  Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: Colors.grey),
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: BuxlyColors.midGrey,
+                  ),
                 ],
               ),
             ),
           ),
           if (isExpanded) ...[
-            const Divider(height: 1),
+            Divider(height: 1, color: BuxlyColors.offWhite),
             if (headerAction != null) ...[
               headerAction,
-              const Divider(height: 1),
+              Divider(height: 1, color: BuxlyColors.offWhite),
             ],
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+              padding: const EdgeInsets.symmetric(vertical: BuxlySpacing.sm),
               child: Column(children: children),
             ),
           ],
@@ -1672,7 +1736,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     final isMonthly = item.frequency == 'monthly';
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: BuxlySpacing.md, vertical: 2),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _handleRecurringToggle(rid, !isSelected),
@@ -1680,7 +1744,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           decoration: _rowDecoration(isSelected),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: BuxlySpacing.lg, vertical: BuxlySpacing.md),
           child: Row(
             children: [
               Text(emoji, style: const TextStyle(fontSize: 28)),
@@ -1696,8 +1760,10 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                           child: Text(
                             displayName,
                             style: const TextStyle(
+                              fontFamily: BuxlyTheme.fontFamily,
                               fontWeight: FontWeight.w600,
                               fontSize: 15,
+                              color: BuxlyColors.darkText,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -1718,13 +1784,18 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: bfmOrange.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: bfmOrange.withOpacity(0.3)),
+                              color: BuxlyColors.orangeLight,
+                              borderRadius: BorderRadius.circular(BuxlyRadius.sm),
+                              border: Border.all(color: BuxlyColors.coralOrange.withOpacity(0.3)),
                             ),
                             child: Text(
                               'Use \$${detectedAmount.toStringAsFixed(0)}/wk',
-                              style: TextStyle(fontSize: 11, color: bfmOrange, fontWeight: FontWeight.w600),
+                              style: const TextStyle(
+                                fontFamily: BuxlyTheme.fontFamily,
+                                fontSize: 11,
+                                color: BuxlyColors.coralOrange,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
@@ -1732,71 +1803,46 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: BuxlySpacing.sm),
               if (isMonthly) ...[
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: isSelected
-                        ? BuxlyColors.teal.withOpacity(0.1)
-                        : Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(8),
+                    color: isSelected ? BuxlyColors.tealLight : BuxlyColors.offWhite,
+                    borderRadius: BorderRadius.circular(BuxlyRadius.sm),
                   ),
                   child: Text(
                     '\$${item.amount.toStringAsFixed(0)}/mo',
                     style: TextStyle(
+                      fontFamily: BuxlyTheme.fontFamily,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                       color: isSelected
                           ? BuxlyColors.darkText.withOpacity(0.6)
-                          : Colors.black.withOpacity(0.5),
+                          : BuxlyColors.midGrey,
                     ),
                   ),
                 ),
                 const SizedBox(width: 4),
               ],
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: isSelected
-                      ? BuxlyColors.teal.withOpacity(0.1)
-                      : Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
+                  color: isSelected ? BuxlyColors.tealLight : BuxlyColors.offWhite,
+                  borderRadius: BorderRadius.circular(BuxlyRadius.sm),
                 ),
                 child: Text(
                   '\$${currentAmount.toStringAsFixed(0)}/wk',
                   style: TextStyle(
+                    fontFamily: BuxlyTheme.fontFamily,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: isSelected
-                        ? BuxlyColors.darkText
-                        : Colors.black87,
+                    color: isSelected ? BuxlyColors.darkText : BuxlyColors.darkText.withOpacity(0.7),
                   ),
                 ),
               ),
               const SizedBox(width: 10),
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? BuxlyColors.teal
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    width: 2,
-                    color: isSelected
-                        ? BuxlyColors.teal
-                        : Colors.black26,
-                  ),
-                ),
-                child: isSelected
-                    ? const Icon(Icons.check, size: 18, color: Colors.white)
-                    : null,
-              ),
+              _buildCheckbox(isSelected),
             ],
           ),
         ),
@@ -1818,7 +1864,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     final emoji = _getEmoji(item.name);
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: BuxlySpacing.md, vertical: 2),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _handleCategoryToggle(catId, !isSelected),
@@ -1826,7 +1872,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           decoration: _rowDecoration(isSelected),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: BuxlySpacing.lg, vertical: BuxlySpacing.md),
           child: Row(
             children: [
               Text(emoji, style: const TextStyle(fontSize: 28)),
@@ -1842,8 +1888,10 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                           child: Text(
                             item.name,
                             style: const TextStyle(
+                              fontFamily: BuxlyTheme.fontFamily,
                               fontWeight: FontWeight.w600,
                               fontSize: 15,
+                              color: BuxlyColors.darkText,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -1864,13 +1912,18 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: bfmOrange.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: bfmOrange.withOpacity(0.3)),
+                              color: BuxlyColors.orangeLight,
+                              borderRadius: BorderRadius.circular(BuxlyRadius.sm),
+                              border: Border.all(color: BuxlyColors.coralOrange.withOpacity(0.3)),
                             ),
                             child: Text(
                               'Use \$${detectedAmount.toStringAsFixed(0)}/wk',
-                              style: TextStyle(fontSize: 11, color: bfmOrange, fontWeight: FontWeight.w600),
+                              style: const TextStyle(
+                                fontFamily: BuxlyTheme.fontFamily,
+                                fontSize: 11,
+                                color: BuxlyColors.coralOrange,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
@@ -1878,48 +1931,25 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: BuxlySpacing.sm),
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: isSelected
-                      ? BuxlyColors.teal.withOpacity(0.1)
-                      : Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
+                  color: isSelected ? BuxlyColors.tealLight : BuxlyColors.offWhite,
+                  borderRadius: BorderRadius.circular(BuxlyRadius.sm),
                 ),
                 child: Text(
                   '\$${currentAmount.toStringAsFixed(0)}/wk',
                   style: TextStyle(
+                    fontFamily: BuxlyTheme.fontFamily,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: isSelected
-                        ? BuxlyColors.darkText
-                        : Colors.black87,
+                    color: isSelected ? BuxlyColors.darkText : BuxlyColors.darkText.withOpacity(0.7),
                   ),
                 ),
               ),
               const SizedBox(width: 10),
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? BuxlyColors.teal
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    width: 2,
-                    color: isSelected
-                        ? BuxlyColors.teal
-                        : Colors.black26,
-                  ),
-                ),
-                child: isSelected
-                    ? const Icon(Icons.check, size: 18, color: Colors.white)
-                    : null,
-              ),
+              _buildCheckbox(isSelected),
             ],
           ),
         ),
@@ -1940,7 +1970,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     final emoji = _getEmoji(displayName);
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: BuxlySpacing.md, vertical: 2),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _handleUncatToggle(key, !isSelected),
@@ -1948,7 +1978,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           decoration: _rowDecoration(isSelected),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: BuxlySpacing.lg, vertical: BuxlySpacing.md),
           child: Row(
             children: [
               Text(emoji, style: const TextStyle(fontSize: 28)),
@@ -1964,9 +1994,10 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                           child: Text(
                             displayName,
                             style: const TextStyle(
+                              fontFamily: BuxlyTheme.fontFamily,
                               fontWeight: FontWeight.w600,
                               fontSize: 15,
-                              color: Colors.orange,
+                              color: BuxlyColors.coralOrange,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -1987,13 +2018,18 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: bfmOrange.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: bfmOrange.withOpacity(0.3)),
+                              color: BuxlyColors.orangeLight,
+                              borderRadius: BorderRadius.circular(BuxlyRadius.sm),
+                              border: Border.all(color: BuxlyColors.coralOrange.withOpacity(0.3)),
                             ),
                             child: Text(
                               'Use \$${detectedAmount.toStringAsFixed(0)}/wk',
-                              style: TextStyle(fontSize: 11, color: bfmOrange, fontWeight: FontWeight.w600),
+                              style: const TextStyle(
+                                fontFamily: BuxlyTheme.fontFamily,
+                                fontSize: 11,
+                                color: BuxlyColors.coralOrange,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
@@ -2001,48 +2037,25 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: BuxlySpacing.sm),
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: isSelected
-                      ? BuxlyColors.teal.withOpacity(0.1)
-                      : Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
+                  color: isSelected ? BuxlyColors.tealLight : BuxlyColors.offWhite,
+                  borderRadius: BorderRadius.circular(BuxlyRadius.sm),
                 ),
                 child: Text(
                   '\$${currentAmount.toStringAsFixed(0)}/wk',
                   style: TextStyle(
+                    fontFamily: BuxlyTheme.fontFamily,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: isSelected
-                        ? BuxlyColors.darkText
-                        : Colors.black87,
+                    color: isSelected ? BuxlyColors.darkText : BuxlyColors.darkText.withOpacity(0.7),
                   ),
                 ),
               ),
               const SizedBox(width: 10),
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? BuxlyColors.teal
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    width: 2,
-                    color: isSelected
-                        ? BuxlyColors.teal
-                        : Colors.black26,
-                  ),
-                ),
-                child: isSelected
-                    ? const Icon(Icons.check, size: 18, color: Colors.white)
-                    : null,
-              ),
+              _buildCheckbox(isSelected),
             ],
           ),
         ),
@@ -2055,26 +2068,16 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
     return InkWell(
       onTap: _showCreateManualBudgetDialog,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: BuxlySpacing.lg, vertical: BuxlySpacing.md),
         child: Row(
           children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: bfmBlue.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.add, color: bfmBlue, size: 20),
-            ),
-            const SizedBox(width: 12),
-            const Text(
+            BuxlyIconContainer(icon: Icons.add, color: BuxlyColors.teal, size: 32),
+            const SizedBox(width: BuxlySpacing.md),
+            Text(
               'Create Budget',
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: bfmBlue,
-                fontSize: 15,
-              ),
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: BuxlyColors.teal,
+                  ),
             ),
           ],
         ),
@@ -2120,20 +2123,20 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
                   children: [
                     Text(
                       item.name,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
+                      style: Theme.of(context).textTheme.titleMedium,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
                     Text(
                       'Weekly limit: \$${item.weeklyLimit.toStringAsFixed(2)}',
-                      style: const TextStyle(fontSize: 12, color: Colors.black54),
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.red, size: 22),
+                icon: const Icon(Icons.delete_outline, color: BuxlyColors.coralOrange, size: 22),
                 onPressed: () => _deleteManualBudget(item),
                 tooltip: 'Delete budget',
                 padding: EdgeInsets.zero,

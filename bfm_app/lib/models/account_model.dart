@@ -88,6 +88,7 @@ class AccountModel {
   final String? accountNumber;
   final DateTime? refreshedAt;
   final DateTime? syncedAt;
+  final bool excluded;
 
   const AccountModel({
     this.id,
@@ -104,6 +105,7 @@ class AccountModel {
     this.accountNumber,
     this.refreshedAt,
     this.syncedAt,
+    this.excluded = false,
   });
 
   /// Creates an AccountModel from Akahu API JSON or backend-proxied equivalent.
@@ -199,6 +201,13 @@ class AccountModel {
       return null;
     }
 
+    final rawExcluded = map['excluded'];
+    final excluded = rawExcluded is int
+        ? rawExcluded != 0
+        : rawExcluded is bool
+            ? rawExcluded
+            : false;
+
     return AccountModel(
       id: map['id'] as int?,
       akahuId: map['akahu_id'] as String? ?? '',
@@ -217,6 +226,7 @@ class AccountModel {
       accountNumber: map['account_number'] as String?,
       refreshedAt: parseDate(map['refreshed_at']),
       syncedAt: parseDate(map['synced_at']),
+      excluded: excluded,
     );
   }
 
@@ -236,6 +246,7 @@ class AccountModel {
       'account_number': accountNumber,
       'refreshed_at': refreshedAt?.toIso8601String(),
       'synced_at': syncedAt?.toIso8601String() ?? DateTime.now().toIso8601String(),
+      'excluded': excluded ? 1 : 0,
     };
     if (includeId && id != null) {
       map['id'] = id;
@@ -294,6 +305,7 @@ class AccountModel {
     String? accountNumber,
     DateTime? refreshedAt,
     DateTime? syncedAt,
+    bool? excluded,
   }) {
     return AccountModel(
       id: id ?? this.id,
@@ -310,6 +322,7 @@ class AccountModel {
       accountNumber: accountNumber ?? this.accountNumber,
       refreshedAt: refreshedAt ?? this.refreshedAt,
       syncedAt: syncedAt ?? this.syncedAt,
+      excluded: excluded ?? this.excluded,
     );
   }
 }

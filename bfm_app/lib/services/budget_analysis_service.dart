@@ -126,6 +126,8 @@ class BudgetAnalysisService {
         AND t.excluded = 0
         AND c.name IS NOT NULL
         AND c.name <> 'Uncategorized'
+        AND (t.account_id IS NULL OR t.account_id NOT IN
+             (SELECT akahu_id FROM accounts WHERE excluded = 1))
       GROUP BY t.category_id, c.name, c.usage_count
     ''', [start, end]);
 
@@ -170,6 +172,8 @@ class BudgetAnalysisService {
         AND date(t.date) BETWEEN ? AND ?
         AND t.excluded = 0
         AND (t.category_id IS NULL OR c.name IS NULL OR c.name = 'Uncategorized')
+        AND (t.account_id IS NULL OR t.account_id NOT IN
+             (SELECT akahu_id FROM accounts WHERE excluded = 1))
       GROUP BY t.description
       HAVING description IS NOT NULL AND TRIM(description) <> ''
       ORDER BY tx_count DESC, total_spent DESC

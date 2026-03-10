@@ -13,6 +13,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:bfm_app/models/alert_model.dart';
+import 'package:bfm_app/theme/buxly_theme.dart';
 import 'package:bfm_app/widgets/help_icon_tooltip.dart';
 
 /// Semi-circle chart displaying income breakdown with budget tracking.
@@ -28,12 +29,11 @@ class SemiCircleChart extends StatelessWidget {
   /// When true, hides the alerts section and centers the legend labels.
   final bool hideAlerts;
 
-  // Colors - brighter orange
-  static const Color orangeBright = Color(0xFFFF7A00);
-  static const Color orangeLight = Color(0xFFFFE0C0);
-  static const Color blueBright = Color(0xFF2196F3);
-  static const Color blueLight = Color(0xFFBBDEFB);
-  static const Color redOverspent = Color(0xFFE53935);
+  static const Color orangeBright = BuxlyColors.coralOrange;
+  static final Color orangeLight = BuxlyColors.coralOrange.withOpacity(0.25);
+  static const Color blueBright = BuxlyColors.teal;
+  static final Color blueLight = BuxlyColors.teal.withOpacity(0.25);
+  static const Color redOverspent = BuxlyColors.hotPink;
 
   const SemiCircleChart({
     super.key,
@@ -94,9 +94,10 @@ class SemiCircleChart extends StatelessWidget {
                         Text(
                           '${isOverspentTotal ? '-' : ''}\$${totalLeftToSpend.abs().toStringAsFixed(0)}',
                           style: TextStyle(
+                            fontFamily: BuxlyTheme.fontFamily,
                             fontSize: 32,
                             fontWeight: FontWeight.bold,
-                            color: isOverspentTotal ? redOverspent : Colors.black87,
+                            color: isOverspentTotal ? redOverspent : BuxlyColors.darkText,
                           ),
                         ),
                         Row(
@@ -105,8 +106,9 @@ class SemiCircleChart extends StatelessWidget {
                             const Text(
                               'left for budgets & non-budgets',
                               style: TextStyle(
+                                fontFamily: BuxlyTheme.fontFamily,
                                 fontSize: 11,
-                                color: Colors.grey,
+                                color: BuxlyColors.midGrey,
                               ),
                             ),
                             const SizedBox(width: 2),
@@ -418,9 +420,8 @@ class SemiCircleChart extends StatelessWidget {
         ),
       ],
       const SizedBox(height: 8),
-      // Income: (no color)
       _LegendItem(
-        color: Colors.grey,
+        color: BuxlyColors.midGrey,
         label: 'Income',
         value: '\$${income.toStringAsFixed(0)}',
         isFilled: true,
@@ -493,18 +494,8 @@ class SemiCircleChart extends StatelessWidget {
     
     return Container(
       height: 130,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+      padding: const EdgeInsets.all(BuxlySpacing.md),
+      decoration: BuxlyTheme.cardDecoration,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -523,7 +514,7 @@ class SemiCircleChart extends StatelessWidget {
                 child: const Icon(
                   Icons.chevron_right,
                   size: 20,
-                  color: Colors.grey,
+                  color: BuxlyColors.midGrey,
                 ),
               ),
             ],
@@ -534,8 +525,9 @@ class SemiCircleChart extends StatelessWidget {
                 ? const Text(
                     'No alerts',
                     style: TextStyle(
+                      fontFamily: BuxlyTheme.fontFamily,
                       fontSize: 12,
-                      color: Colors.grey,
+                      color: BuxlyColors.midGrey,
                     ),
                   )
                 : ListView.separated(
@@ -588,7 +580,7 @@ class SemiCircleChart extends StatelessWidget {
                                 daysText,
                                 style: TextStyle(
                                   fontSize: 11,
-                                  color: (daysLeft ?? 999) <= 1 ? redOverspent : Colors.grey,
+                                  color: (daysLeft ?? 999) <= 1 ? redOverspent : BuxlyColors.midGrey,
                                   fontWeight: (daysLeft ?? 999) <= 1 ? FontWeight.w600 : FontWeight.normal,
                                 ),
                               ),
@@ -656,16 +648,18 @@ class _LegendItem extends StatelessWidget {
               Text(
                 '$label: ',
                 style: const TextStyle(
+                  fontFamily: BuxlyTheme.fontFamily,
                   fontSize: 11,
-                  color: Colors.black54,
+                  color: BuxlyColors.midGrey,
                 ),
               ),
               Text(
                 value,
                 style: TextStyle(
+                  fontFamily: BuxlyTheme.fontFamily,
                   fontSize: 11,
                   fontWeight: FontWeight.bold,
-                  color: showIndicator ? (isFilled ? color : Colors.black87) : Colors.black87,
+                  color: showIndicator ? (isFilled ? color : BuxlyColors.darkText) : BuxlyColors.darkText,
                 ),
               ),
               if (helpMessage != null) ...[
@@ -696,13 +690,12 @@ class _SemiCircleChartPainter extends CustomPainter {
   final double leftToSpend;
   final double discretionarySpent;
 
-  // Colors - brighter
-  static const Color _orangeBright = Color(0xFFFF7A00);
-  static const Color _orangeLight = Color(0xFFFFE0C0);
-  static const Color _blueBright = Color(0xFF2196F3);
-  static const Color _blueLight = Color(0xFFBBDEFB);
-  static const Color _redOverspent = Color(0xFFE53935);
-  static const Color _backgroundTrack = Color(0xFFE8E8E8);
+  static const Color _orangeBright = BuxlyColors.coralOrange;
+  static final Color _orangeLight = BuxlyColors.coralOrange.withOpacity(0.25);
+  static const Color _blueBright = BuxlyColors.teal;
+  static final Color _blueLight = BuxlyColors.teal.withOpacity(0.25);
+  static const Color _redOverspent = BuxlyColors.hotPink;
+  static const Color _backgroundTrack = BuxlyColors.offWhite;
 
   _SemiCircleChartPainter({
     required this.income,

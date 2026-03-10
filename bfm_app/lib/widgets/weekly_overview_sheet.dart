@@ -11,6 +11,7 @@ import 'package:bfm_app/services/budget_buffer_store.dart';
 import 'package:bfm_app/services/insights_service.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
 import 'package:bfm_app/services/weekly_overview_service.dart';
+import 'package:bfm_app/theme/buxly_theme.dart';
 import 'package:bfm_app/widgets/budget_buffer_card.dart';
 import 'package:bfm_app/widgets/help_icon_tooltip.dart';
 import 'package:bfm_app/widgets/weekly_report_widgets.dart';
@@ -241,9 +242,7 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
                       forWeekStart: _payload.weekStart,
                     ),
                     const SizedBox(height: 16),
-                    BudgetBufferCard(entries: _buildBufferEntries()),
-                    const SizedBox(height: 16),
-                    _buildAppSavingsSection(),
+                    _buildCombinedBuxlyBufferSection(),
                     const SizedBox(height: 16),
                     _buildContributionSection(),
                     const SizedBox(height: 80),
@@ -387,40 +386,51 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
     return _appSavingsTotal - _bufferRecoveryAmount - _leftToSpendDeficit;
   }
   
-  /// Builds the Buxly Buffer card showing current balance, deductions, and
-  /// (when under budget) an option to add leftover to savings.
-  Widget _buildAppSavingsSection() {
+  /// Builds the combined Buxly Buffer card showing per-budget buffers,
+  /// overall savings balance, deductions, and the add-to-savings option.
+  Widget _buildCombinedBuxlyBufferSection() {
     final isOverBudget = _baseLeftToSpend < 0;
     final leftover = (_baseLeftToSpend - _selectedContributionTotal)
         .clamp(0.0, double.infinity);
     final bufferRecovery = _bufferRecoveryAmount;
     final adjusted = _adjustedAppSavings;
     final hasDeductions = bufferRecovery > 0 || _leftToSpendDeficit > 0;
-    final cardColor =
-        hasDeductions ? Colors.orange.shade50 : Colors.teal.shade50;
-    final accentColor =
-        hasDeductions ? Colors.orange.shade700 : Colors.teal.shade700;
+    final bufferEntries = _buildBufferEntries();
+    final perBudgetTotal = bufferEntries.fold<double>(
+      0, (sum, e) => sum + e.buffered,
+    );
+    final effectiveBalance = hasDeductions ? adjusted : _appSavingsTotal;
+    final totalSafetyNet = effectiveBalance + perBudgetTotal;
 
-    return Card(
-      color: cardColor,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(BuxlyRadius.lg),
+        color: Colors.white,
+        border: hasDeductions
+            ? Border.all(color: Colors.orange.shade400, width: 2)
+            : null,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Header
             Row(
               children: [
-                Icon(Icons.savings, color: accentColor, size: 20),
+                Icon(Icons.savings, color: BuxlyColors.teal, size: 24),
                 const SizedBox(width: 8),
-                Text(
+                const Text(
                   "Buxly Buffer",
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 16,
-                    color: hasDeductions
-                        ? Colors.orange.shade800
-                        : Colors.teal.shade800,
                   ),
                 ),
                 const Spacer(),
@@ -428,31 +438,31 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
                   title: 'Buxly Buffer',
                   message:
                       'Money you save by staying under budget each week.\n\n'
-                      'If you go over budget or a budget buffer goes negative, '
-                      'the Buxly Buffer absorbs the deficit.',
+                      'Each budget also has its own buffer built from weekly '
+                      'surpluses. If you overspend a budget, its buffer absorbs '
+                      'the cost. If the buffer runs out, your main Buxly Buffer '
+                      'covers the rest.',
                   size: 16,
                 ),
               ],
             ),
             const SizedBox(height: 12),
 
-            // Breakdown container
+            // Savings breakdown
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: BuxlyColors.offWhite,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
                 children: [
-                  // Current balance (before any deductions)
                   _savingsRow(
                     "Current balance",
                     _appSavingsTotal,
                     bold: false,
                   ),
 
-                  // Buffer recovery deduction
                   if (bufferRecovery > 0) ...[
                     const SizedBox(height: 6),
                     _savingsRow(
@@ -462,7 +472,6 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
                     ),
                   ],
 
-                  // Over-budget deduction
                   if (_leftToSpendDeficit > 0) ...[
                     const SizedBox(height: 6),
                     _savingsRow(
@@ -472,7 +481,6 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
                     ),
                   ],
 
-                  // Divider + total when there are deductions
                   if (hasDeductions) ...[
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 8),
@@ -483,7 +491,28 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
                       adjusted,
                       bold: true,
                       color: adjusted >= 0
-                          ? Colors.teal.shade700
+                          ? BuxlyColors.teal
+                          : Colors.red.shade600,
+                    ),
+                  ],
+
+                  if (perBudgetTotal > 0) ...[
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Divider(height: 1),
+                    ),
+                    _savingsRow(
+                      "Per-budget buffers",
+                      perBudgetTotal,
+                      color: Colors.black54,
+                    ),
+                    const SizedBox(height: 6),
+                    _savingsRow(
+                      "Total safety net",
+                      totalSafetyNet,
+                      bold: true,
+                      color: totalSafetyNet >= 0
+                          ? BuxlyColors.teal
                           : Colors.red.shade600,
                     ),
                   ],
@@ -497,12 +526,12 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: BuxlyColors.offWhite,
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
                     color: _addToAppSavings
-                        ? Colors.teal.shade400
-                        : Colors.teal.shade200,
+                        ? BuxlyColors.teal
+                        : BuxlyColors.disabled,
                     width: _addToAppSavings ? 2 : 1,
                   ),
                 ),
@@ -510,7 +539,7 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
                   children: [
                     Checkbox(
                       value: _addToAppSavings,
-                      activeColor: Colors.teal.shade600,
+                      activeColor: BuxlyColors.teal,
                       onChanged: (v) =>
                           setState(() => _addToAppSavings = v ?? false),
                     ),
@@ -532,7 +561,7 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
                               "New total: \$${(adjusted + (_addToAppSavings ? leftover : 0)).toStringAsFixed(0)}",
                               style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.teal.shade600,
+                                color: BuxlyColors.teal,
                               ),
                             ),
                           ],
@@ -543,9 +572,26 @@ class _WeeklyOverviewSheetState extends State<WeeklyOverviewSheet> {
                 ),
               ),
             ],
+
+            // Per-budget buffer entries
+            if (bufferEntries.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Text(
+                "Per-budget buffers",
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  color: BuxlyColors.darkText,
+                ),
+              ),
+              const SizedBox(height: 8),
+              for (int i = 0; i < bufferEntries.length; i++) ...[
+                BufferRow(entry: bufferEntries[i]),
+                if (i < bufferEntries.length - 1) const SizedBox(height: 6),
+              ],
+            ],
           ],
         ),
-      ),
     );
   }
 

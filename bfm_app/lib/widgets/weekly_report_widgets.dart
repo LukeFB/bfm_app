@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'package:bfm_app/models/weekly_report.dart';
 import 'package:bfm_app/services/budget_comparison_service.dart';
+import 'package:bfm_app/theme/buxly_theme.dart';
 import 'package:bfm_app/utils/category_emoji_helper.dart';
 import 'package:bfm_app/widgets/help_icon_tooltip.dart';
 import 'package:bfm_app/widgets/semi_circle_chart.dart';
@@ -120,21 +121,30 @@ class BudgetRingCard extends StatelessWidget {
                       Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Text(
+                          Text(
                             "Income",
-                            style: TextStyle(fontSize: 12, color: Colors.black54),
+                            style: TextStyle(
+                              fontFamily: BuxlyTheme.fontFamily,
+                              fontSize: 12,
+                              color: BuxlyColors.midGrey,
+                            ),
                           ),
                           Text(
                             "\$${report.totalIncome.toStringAsFixed(0)}",
                             style: const TextStyle(
-                                fontSize: 20, fontWeight: FontWeight.bold),
+                              fontFamily: BuxlyTheme.fontFamily,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: BuxlyColors.darkText,
+                            ),
                           ),
                           const SizedBox(height: 4),
                           Text(
                             "Spent: \$${spentFromSegments.toStringAsFixed(0)}",
                             style: const TextStyle(
+                              fontFamily: BuxlyTheme.fontFamily,
                               fontSize: 12,
-                              color: Colors.black54,
+                              color: BuxlyColors.midGrey,
                             ),
                           ),
                         ],
@@ -174,19 +184,20 @@ class BudgetRingCard extends StatelessWidget {
   Widget _buildSectionHeader(String text) {
     return Row(
       children: [
-        Expanded(child: Divider(color: Colors.grey.shade400)),
+        const Expanded(child: Divider(color: BuxlyColors.disabled)),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Text(
             text,
             style: TextStyle(
+              fontFamily: BuxlyTheme.fontFamily,
               fontSize: 11,
-              color: Colors.grey.shade600,
+              color: BuxlyColors.midGrey,
               fontStyle: FontStyle.italic,
             ),
           ),
         ),
-        Expanded(child: Divider(color: Colors.grey.shade400)),
+        const Expanded(child: Divider(color: BuxlyColors.disabled)),
       ],
     );
   }
@@ -219,14 +230,22 @@ class BudgetRingCard extends StatelessWidget {
             Flexible(
               child: Text(
                 seg.label,
-                style: const TextStyle(fontSize: 12),
+                style: const TextStyle(
+                  fontFamily: BuxlyTheme.fontFamily,
+                  fontSize: 12,
+                  color: BuxlyColors.darkText,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
             Text(
               " \$${seg.value.toStringAsFixed(0)}",
-              style: const TextStyle(fontSize: 12),
+              style: const TextStyle(
+                fontFamily: BuxlyTheme.fontFamily,
+                fontSize: 12,
+                color: BuxlyColors.darkText,
+              ),
             ),
           ],
         ),
@@ -290,7 +309,12 @@ class BudgetRingCard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text("This week",
-            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+            style: TextStyle(
+              fontFamily: BuxlyTheme.fontFamily,
+              fontWeight: FontWeight.w600,
+              fontSize: 16,
+              color: BuxlyColors.darkText,
+            )),
         const SizedBox(height: 6),
         _StatRow(
           label: "Budgeted",
@@ -299,18 +323,18 @@ class BudgetRingCard extends StatelessWidget {
         _StatRow(
           label: "Spent on budgets",
           value: "\$${budgetSpend.toStringAsFixed(2)}",
-          valueColor: budgetSpend > budgetTotal ? Colors.deepOrangeAccent : null,
+          valueColor: budgetSpend > budgetTotal ? BuxlyColors.coralOrange : null,
         ),
         _StatRow(
           label: "Total spent",
           value: "\$${totalSpent.toStringAsFixed(2)}",
-          valueColor: Colors.deepOrangeAccent,
+          valueColor: BuxlyColors.coralOrange,
         ),
         const SizedBox(height: 8),
         _StatRow(
           label: "Left to spend",
           value: "\$${leftToSpend.abs().toStringAsFixed(2)}",
-          valueColor: leftoverPositive ? Colors.green : Colors.redAccent,
+          valueColor: leftoverPositive ? BuxlyColors.limeGreen : BuxlyColors.hotPink,
           prefix: leftoverPositive ? null : "over",
         ),
       ],
@@ -321,10 +345,10 @@ class BudgetRingCard extends StatelessWidget {
   Color? _getSpecialColor(String label) {
     final lower = label.toLowerCase();
     if (lower.contains('goal contribution') || lower.contains('savings')) {
-      return Colors.green.shade500; // Green for savings/goals
+      return BuxlyColors.limeGreen;
     }
     if (lower.contains('recovery payment') || lower.contains('recovery')) {
-      return Colors.orange.shade500; // Orange for recovery
+      return BuxlyColors.coralOrange;
     }
     return null;
   }
@@ -412,7 +436,7 @@ class BudgetRingCard extends StatelessWidget {
             label: label,
             color: specialColor ?? (hasBudget 
                 ? _ringPalette[colorIndex % _ringPalette.length]
-                : Colors.blueGrey.shade400),
+                : BuxlyColors.midGrey),
             isBudgeted: hasBudget || isContrib,
           ),
         );
@@ -427,7 +451,7 @@ class BudgetRingCard extends StatelessWidget {
           _RingSegment(
             value: remaining,
             label: 'Other',
-            color: Colors.blueGrey.shade300,
+            color: BuxlyColors.disabled,
             isBudgeted: false,
           ),
         );
@@ -440,7 +464,7 @@ class BudgetRingCard extends StatelessWidget {
         _RingSegment(
           value: leftover,
           label: 'Leftover',
-          color: Colors.grey.shade300,
+          color: BuxlyColors.disabled,
           isBudgeted: true, // Not shown in legend anyway
         ),
       );
@@ -451,7 +475,7 @@ class BudgetRingCard extends StatelessWidget {
         _RingSegment(
           value: report.totalIncome > 0 ? report.totalIncome : 1,
           label: 'No spend yet',
-          color: Colors.grey.shade300,
+          color: BuxlyColors.disabled,
           isBudgeted: true,
         ),
       );
@@ -522,11 +546,11 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
         children: [
           // Tab selector at top
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            padding: const EdgeInsets.fromLTRB(BuxlySpacing.lg, BuxlySpacing.md, BuxlySpacing.lg, 0),
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.grey.shade200,
-                borderRadius: BorderRadius.circular(8),
+                color: BuxlyColors.offWhite,
+                borderRadius: BorderRadius.circular(BuxlyRadius.sm),
               ),
               child: Row(
                 children: [
@@ -571,12 +595,12 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 8),
         decoration: BoxDecoration(
-          color: isSelected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
+          color: isSelected ? BuxlyColors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(BuxlyRadius.sm),
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
+                    color: BuxlyColors.darkText.withOpacity(0.08),
                     blurRadius: 2,
                     offset: const Offset(0, 1),
                   ),
@@ -590,15 +614,16 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
             Icon(
               icon,
               size: 16,
-              color: isSelected ? Colors.blue.shade700 : Colors.grey.shade600,
+              color: isSelected ? BuxlyColors.teal : BuxlyColors.midGrey,
             ),
             const SizedBox(width: 4),
             Text(
               label,
               style: TextStyle(
+                fontFamily: BuxlyTheme.fontFamily,
                 fontSize: 13,
                 fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                color: isSelected ? Colors.blue.shade700 : Colors.grey.shade600,
+                color: isSelected ? BuxlyColors.teal : BuxlyColors.midGrey,
               ),
             ),
           ],
@@ -662,7 +687,11 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
                           children: [
                             const Text(
                               "Income",
-                              style: TextStyle(fontSize: 12, color: Colors.black54),
+                              style: TextStyle(
+                                fontFamily: BuxlyTheme.fontFamily,
+                                fontSize: 12,
+                                color: BuxlyColors.midGrey,
+                              ),
                             ),
                             const SizedBox(width: 2),
                             HelpIconTooltip(
@@ -677,7 +706,11 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
                         Text(
                           "\$${widget.report.totalIncome.toStringAsFixed(0)}",
                           style: const TextStyle(
-                              fontSize: 20, fontWeight: FontWeight.bold),
+                            fontFamily: BuxlyTheme.fontFamily,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: BuxlyColors.darkText,
+                          ),
                         ),
                         const SizedBox(height: 4),
                         Row(
@@ -686,8 +719,9 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
                             Text(
                               "Spent: \$${spentFromSegments.toStringAsFixed(0)}",
                               style: const TextStyle(
+                                fontFamily: BuxlyTheme.fontFamily,
                                 fontSize: 12,
-                                color: Colors.black54,
+                                color: BuxlyColors.midGrey,
                               ),
                             ),
                             const SizedBox(width: 2),
@@ -735,19 +769,20 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
   Widget _buildSectionHeader(String text) {
     return Row(
       children: [
-        Expanded(child: Divider(color: Colors.grey.shade400)),
+        const Expanded(child: Divider(color: BuxlyColors.disabled)),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Text(
             text,
             style: TextStyle(
+              fontFamily: BuxlyTheme.fontFamily,
               fontSize: 11,
-              color: Colors.grey.shade600,
+              color: BuxlyColors.midGrey,
               fontStyle: FontStyle.italic,
             ),
           ),
         ),
-        Expanded(child: Divider(color: Colors.grey.shade400)),
+        const Expanded(child: Divider(color: BuxlyColors.disabled)),
       ],
     );
   }
@@ -779,14 +814,22 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
             Flexible(
               child: Text(
                 seg.label,
-                style: const TextStyle(fontSize: 12),
+                style: const TextStyle(
+                  fontFamily: BuxlyTheme.fontFamily,
+                  fontSize: 12,
+                  color: BuxlyColors.darkText,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
             Text(
               " \$${seg.value.toStringAsFixed(0)}",
-              style: const TextStyle(fontSize: 12),
+              style: const TextStyle(
+                fontFamily: BuxlyTheme.fontFamily,
+                fontSize: 12,
+                color: BuxlyColors.darkText,
+              ),
             ),
           ],
         ),
@@ -844,7 +887,12 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text("This week",
-            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+            style: TextStyle(
+              fontFamily: BuxlyTheme.fontFamily,
+              fontWeight: FontWeight.w600,
+              fontSize: 16,
+              color: BuxlyColors.darkText,
+            )),
         const SizedBox(height: 6),
         _StatRow(
           label: "Budgeted",
@@ -856,7 +904,7 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
         _StatRow(
           label: "Spent on budgets",
           value: "\$${budgetSpend.toStringAsFixed(2)}",
-          valueColor: budgetSpend > budgetTotal ? Colors.deepOrangeAccent : null,
+          valueColor: budgetSpend > budgetTotal ? BuxlyColors.coralOrange : null,
           helpTitle: "Budget Spending",
           helpMessage: "Amount spent in categories that have a budget.\n\n"
               "Orange if you've exceeded your total budget allocation.",
@@ -864,7 +912,7 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
         _StatRow(
           label: "Total spent",
           value: "\$${totalSpent.toStringAsFixed(2)}",
-          valueColor: Colors.deepOrangeAccent,
+          valueColor: BuxlyColors.coralOrange,
           helpTitle: "Total Spent",
           helpMessage: "All spending this week.\n\n"
               "Includes both budgeted categories and non-budgeted spending.",
@@ -873,7 +921,7 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
         _StatRow(
           label: "Left to spend",
           value: "\$${leftToSpend.abs().toStringAsFixed(2)}",
-          valueColor: leftoverPositive ? Colors.green : Colors.redAccent,
+          valueColor: leftoverPositive ? BuxlyColors.limeGreen : BuxlyColors.hotPink,
           prefix: leftoverPositive ? null : "over",
           helpTitle: "Left to Spend",
           helpMessage: "How much you have left after all spending.\n\n"
@@ -888,10 +936,10 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
   Color? _getSpecialColor(String label) {
     final lower = label.toLowerCase();
     if (lower.contains('goal contribution') || lower.contains('savings')) {
-      return Colors.green.shade500;
+      return BuxlyColors.limeGreen;
     }
     if (lower.contains('recovery payment') || lower.contains('recovery')) {
-      return Colors.orange.shade500;
+      return BuxlyColors.coralOrange;
     }
     return null;
   }
@@ -974,7 +1022,7 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
             color: specialColor ??
                 (hasBudget
                     ? _ringPalette[colorIndex % _ringPalette.length]
-                    : Colors.blueGrey.shade400),
+                    : BuxlyColors.midGrey),
             isBudgeted: hasBudget || isContrib,
           ),
         );
@@ -988,7 +1036,7 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
           _RingSegment(
             value: remaining,
             label: 'Other',
-            color: Colors.blueGrey.shade300,
+            color: BuxlyColors.disabled,
             isBudgeted: false,
           ),
         );
@@ -1001,7 +1049,7 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
         _RingSegment(
           value: leftover,
           label: 'Leftover',
-          color: Colors.grey.shade300,
+          color: BuxlyColors.disabled,
           isBudgeted: true,
         ),
       );
@@ -1012,7 +1060,7 @@ class _CombinedChartCardState extends State<CombinedChartCard> {
         _RingSegment(
           value: report.totalIncome > 0 ? report.totalIncome : 1,
           label: 'No spend yet',
-          color: Colors.grey.shade300,
+          color: BuxlyColors.disabled,
           isBudgeted: true,
         ),
       );
@@ -1036,15 +1084,23 @@ class TopCategoryChart extends StatelessWidget {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(BuxlySpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Top spending this week",
-                style: TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 12),
+            Text("Top spending this week",
+                style: TextStyle(
+                  fontFamily: BuxlyTheme.fontFamily,
+                  fontWeight: FontWeight.w600,
+                  color: BuxlyColors.darkText,
+                )),
+            const SizedBox(height: BuxlySpacing.md),
             if (display.isEmpty)
-              const Text("No category data yet.")
+              Text("No category data yet.",
+                  style: TextStyle(
+                    fontFamily: BuxlyTheme.fontFamily,
+                    color: BuxlyColors.midGrey,
+                  ))
             else
               ...display.map((c) {
                 final percent =
@@ -1054,19 +1110,23 @@ class TopCategoryChart extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(c.label, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(c.label,
+                        style: const TextStyle(
+                          fontFamily: BuxlyTheme.fontFamily,
+                          color: BuxlyColors.darkText,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       const SizedBox(height: 4),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: LinearProgressIndicator(
-                          value: percent,
-                          minHeight: 10,
-                          backgroundColor: Colors.grey.shade200,
-                          color: Colors.blueAccent,
+                      BuxlyProgressBar(value: percent, height: 10),
+                      const SizedBox(height: 2),
+                      Text("\$${c.spent.toStringAsFixed(2)} spent",
+                        style: const TextStyle(
+                          fontFamily: BuxlyTheme.fontFamily,
+                          color: BuxlyColors.midGrey,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text("\$${c.spent.toStringAsFixed(2)} spent"),
                     ],
                   ),
                 );
@@ -1115,7 +1175,7 @@ class _BudgetRingPainter extends CustomPainter {
       ..strokeCap = StrokeCap.butt;
 
     if (total <= 0) {
-      paint.color = Colors.grey.shade300;
+      paint.color = BuxlyColors.disabled;
       canvas.drawArc(rect, 0, math.pi * 2, false, paint);
       return;
     }
@@ -1138,14 +1198,14 @@ class _BudgetRingPainter extends CustomPainter {
 }
 
 const List<Color> _ringPalette = [
-  Colors.deepOrangeAccent,
-  Colors.blueAccent,
-  Colors.green,
-  Colors.purple,
-  Colors.teal,
-  Colors.pinkAccent,
-  Colors.brown,
-  Colors.amber,
+  BuxlyColors.coralOrange,
+  BuxlyColors.skyBlue,
+  BuxlyColors.limeGreen,
+  BuxlyColors.hotPink,
+  BuxlyColors.teal,
+  BuxlyColors.sunshineYellow,
+  BuxlyColors.blushPink,
+  Color(0xFF9B8FD7),
 ];
 
 class _StatRow extends StatelessWidget {
@@ -1175,7 +1235,10 @@ class _StatRow extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(label, style: const TextStyle(color: Colors.black54)),
+              Text(label, style: const TextStyle(
+                fontFamily: BuxlyTheme.fontFamily,
+                color: BuxlyColors.midGrey,
+              )),
               if (helpMessage != null) ...[
                 const SizedBox(width: 4),
                 HelpIconTooltip(
@@ -1189,8 +1252,9 @@ class _StatRow extends StatelessWidget {
           Text(
             prefix == null ? value : "$value ($prefix)",
             style: TextStyle(
+              fontFamily: BuxlyTheme.fontFamily,
               fontWeight: FontWeight.w600,
-              color: valueColor ?? Colors.black87,
+              color: valueColor ?? BuxlyColors.darkText,
             ),
           ),
         ],
@@ -1256,7 +1320,7 @@ class _BudgetComparisonCardState extends State<BudgetComparisonCard> {
             InkWell(
             onTap: () => setState(() => _isExpanded = !_isExpanded),
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(BuxlySpacing.lg),
               child: Row(
                 children: [
                   Expanded(
@@ -1265,9 +1329,14 @@ class _BudgetComparisonCardState extends State<BudgetComparisonCard> {
                       children: [
                         Row(
                           children: [
-                            const Text(
+                            Text(
                               "Monthly Average vs Budget",
-                              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                              style: TextStyle(
+                                fontFamily: BuxlyTheme.fontFamily,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 16,
+                                color: BuxlyColors.darkText,
+                              ),
                             ),
                             const SizedBox(width: 4),
                             const HelpIconTooltip(
@@ -1285,14 +1354,18 @@ class _BudgetComparisonCardState extends State<BudgetComparisonCard> {
                         ),
                         Text(
                           _formatWeekLabel(),
-                          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                          style: const TextStyle(
+                            fontFamily: BuxlyTheme.fontFamily,
+                            fontSize: 12,
+                            color: BuxlyColors.midGrey,
+                          ),
                         ),
                       ],
                     ),
                   ),
                   Icon(
                     _isExpanded ? Icons.expand_less : Icons.expand_more,
-                    color: Colors.grey.shade600,
+                    color: BuxlyColors.midGrey,
                   ),
                 ],
               ),
@@ -1300,7 +1373,7 @@ class _BudgetComparisonCardState extends State<BudgetComparisonCard> {
           ),
           if (_isExpanded)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              padding: const EdgeInsets.fromLTRB(BuxlySpacing.lg, 0, BuxlySpacing.lg, BuxlySpacing.lg),
               child: FutureBuilder<List<BudgetSpendComparison>>(
                 future: _comparisonsFuture,
                 builder: (context, snapshot) {
@@ -1346,19 +1419,19 @@ class _ComparisonRow extends StatelessWidget {
     String statusText;
     
     if (c.isAvgOverBudget) {
-      statusColor = Colors.orange;
+      statusColor = BuxlyColors.coralOrange;
       statusIcon = Icons.trending_up;
       statusText = "Over budget";
     } else if (c.weeklyAvgSpend > c.budgetLimit) {
-      statusColor = Colors.green;
+      statusColor = BuxlyColors.limeGreen;
       statusIcon = Icons.check;
       statusText = "Normal variance";
     } else if (c.isAvgUnderBudget) {
-      statusColor = Colors.green;
+      statusColor = BuxlyColors.limeGreen;
       statusIcon = Icons.trending_down;
       statusText = "Under budget";
     } else {
-      statusColor = Colors.teal;
+      statusColor = BuxlyColors.teal;
       statusIcon = Icons.check;
       statusText = "On track";
     }
@@ -1377,14 +1450,22 @@ class _ComparisonRow extends StatelessWidget {
               children: [
                 Text(
                   c.label,
-                  style: const TextStyle(fontWeight: FontWeight.w500),
+                  style: const TextStyle(
+                    fontFamily: BuxlyTheme.fontFamily,
+                    fontWeight: FontWeight.w500,
+                    color: BuxlyColors.darkText,
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
                 Text(
                   "Avg: \$${c.weeklyAvgSpend.toStringAsFixed(0)}  •  Budget: \$${c.budgetLimit.toStringAsFixed(0)}",
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                  style: const TextStyle(
+                    fontFamily: BuxlyTheme.fontFamily,
+                    fontSize: 11,
+                    color: BuxlyColors.midGrey,
+                  ),
                 ),
               ],
             ),
@@ -1393,7 +1474,12 @@ class _ComparisonRow extends StatelessWidget {
           const SizedBox(width: 4),
           Text(
             statusText,
-            style: TextStyle(fontSize: 11, color: statusColor, fontWeight: FontWeight.w500),
+            style: TextStyle(
+              fontFamily: BuxlyTheme.fontFamily,
+              fontSize: 11,
+              color: statusColor,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ],
       ),
@@ -1414,7 +1500,7 @@ class WeeklyBudgetBreakdownCard extends StatefulWidget {
 }
 
 class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
-  bool _isExpanded = false;
+  bool _isExpanded = true;
   final Set<int> _expandedGroups = {};
   CategoryEmojiHelper? _emojiHelper;
   Future<List<BudgetWeeklyBreakdown>>? _breakdownFuture;
@@ -1460,7 +1546,7 @@ class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
           InkWell(
             onTap: () => setState(() => _isExpanded = !_isExpanded),
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(BuxlySpacing.lg),
               child: Row(
                 children: [
                   Expanded(
@@ -1469,14 +1555,18 @@ class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
                       children: [
                         Row(
                           children: [
-                            const Text(
-                              "Weekly Transactions",
+                            Text(
+                              "Spending Category",
                               style: TextStyle(
-                                  fontWeight: FontWeight.w600, fontSize: 16),
+                                fontFamily: BuxlyTheme.fontFamily,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 16,
+                                color: BuxlyColors.darkText,
+                              ),
                             ),
                             const SizedBox(width: 4),
                             const HelpIconTooltip(
-                              title: 'Weekly Transactions',
+                              title: 'Spending Category',
                               message:
                                   'All transactions for the week grouped by budget.\n\n'
                                   '• Each budget shows a spending bar and your 4-week average\n'
@@ -1488,15 +1578,18 @@ class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
                         ),
                         Text(
                           _formatWeekLabel(),
-                          style: TextStyle(
-                              fontSize: 12, color: Colors.grey.shade600),
+                          style: const TextStyle(
+                            fontFamily: BuxlyTheme.fontFamily,
+                            fontSize: 12,
+                            color: BuxlyColors.midGrey,
+                          ),
                         ),
                       ],
                     ),
                   ),
                   Icon(
                     _isExpanded ? Icons.expand_less : Icons.expand_more,
-                    color: Colors.grey.shade600,
+                    color: BuxlyColors.midGrey,
                   ),
                 ],
               ),
@@ -1504,7 +1597,7 @@ class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
           ),
           if (_isExpanded)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              padding: const EdgeInsets.fromLTRB(BuxlySpacing.lg, 0, BuxlySpacing.lg, BuxlySpacing.lg),
               child: FutureBuilder<List<BudgetWeeklyBreakdown>>(
                 future: _breakdownFuture,
                 builder: (context, snapshot) {
@@ -1552,19 +1645,20 @@ class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
   Widget _sectionDivider(String text) {
     return Row(
       children: [
-        Expanded(child: Divider(color: Colors.grey.shade400)),
+        const Expanded(child: Divider(color: BuxlyColors.disabled)),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Text(
             text,
             style: TextStyle(
+              fontFamily: BuxlyTheme.fontFamily,
               fontSize: 11,
-              color: Colors.grey.shade600,
+              color: BuxlyColors.midGrey,
               fontStyle: FontStyle.italic,
             ),
           ),
         ),
-        Expanded(child: Divider(color: Colors.grey.shade400)),
+        const Expanded(child: Divider(color: BuxlyColors.disabled)),
       ],
     );
   }
@@ -1579,23 +1673,23 @@ class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
         : 0.0;
     final isOverBudget =
         b.budgetLimit > 0 && b.thisWeekSpend > b.budgetLimit;
-    final barColor = isOverBudget ? Colors.redAccent : Colors.blueAccent;
+    final barColor = isOverBudget ? BuxlyColors.hotPink : BuxlyColors.teal;
 
     String avgStatus = '';
-    Color avgColor = Colors.grey;
+    Color avgColor = BuxlyColors.midGrey;
     if (b.isBudgeted && b.budgetLimit > 0) {
       if (b.isAvgOverBudget) {
         avgStatus = 'Over budget';
-        avgColor = Colors.orange;
+        avgColor = BuxlyColors.coralOrange;
       } else if (b.weeklyAvgSpend > b.budgetLimit) {
         avgStatus = 'Normal variance';
-        avgColor = Colors.green;
+        avgColor = BuxlyColors.limeGreen;
       } else if (b.isAvgUnderBudget) {
         avgStatus = 'Under budget';
-        avgColor = Colors.green;
+        avgColor = BuxlyColors.limeGreen;
       } else {
         avgStatus = 'On track';
-        avgColor = Colors.teal;
+        avgColor = BuxlyColors.teal;
       }
     }
 
@@ -1637,8 +1731,11 @@ class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
                             child: Text(
                               b.label,
                               style: const TextStyle(
-                                  fontWeight: FontWeight.w500,
-                                  fontSize: 14),
+                                fontFamily: BuxlyTheme.fontFamily,
+                                fontWeight: FontWeight.w500,
+                                fontSize: 14,
+                                color: BuxlyColors.darkText,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -1648,54 +1745,33 @@ class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
                                 ? "\$${b.thisWeekSpend.toStringAsFixed(0)} / \$${b.budgetLimit.toStringAsFixed(0)}"
                                 : "\$${b.thisWeekSpend.toStringAsFixed(0)}",
                             style: TextStyle(
+                              fontFamily: BuxlyTheme.fontFamily,
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
                               color: isOverBudget
-                                  ? Colors.redAccent
-                                  : Colors.black87,
+                                  ? BuxlyColors.hotPink
+                                  : BuxlyColors.darkText,
                             ),
                           ),
                         ],
                       ),
                       if (b.budgetLimit > 0) ...[
                         const SizedBox(height: 4),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: LinearProgressIndicator(
-                            value: barPercent,
-                            minHeight: 6,
-                            backgroundColor: Colors.grey.shade200,
-                            color: barColor,
-                          ),
+                        BuxlyProgressBar(
+                          value: barPercent,
+                          color: barColor,
+                          height: 6,
                         ),
                       ],
                       if (b.isBudgeted && b.budgetLimit > 0) ...[
                         const SizedBox(height: 3),
-                        Row(
-                          children: [
-                            Text(
-                              "Monthly avg: \$${b.weeklyAvgSpend.toStringAsFixed(0)}/wk",
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey.shade600),
-                            ),
-                            if (avgStatus.isNotEmpty) ...[
-                              Text(
-                                " · ",
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey.shade400),
-                              ),
-                              Text(
-                                avgStatus,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: avgColor,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ],
+                        Text(
+                          "Monthly avg: \$${b.weeklyAvgSpend.toStringAsFixed(0)}/wk",
+                          style: const TextStyle(
+                            fontFamily: BuxlyTheme.fontFamily,
+                            fontSize: 11,
+                            color: BuxlyColors.midGrey,
+                          ),
                         ),
                       ],
                     ],
@@ -1710,7 +1786,7 @@ class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
                           ? Icons.expand_less
                           : Icons.expand_more,
                       size: 20,
-                      color: Colors.grey.shade500,
+                      color: BuxlyColors.midGrey,
                     ),
                   ),
                 ],
@@ -1731,9 +1807,11 @@ class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
                         Expanded(
                           child: Text(
                             txn.description,
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey.shade700),
+                            style: const TextStyle(
+                              fontFamily: BuxlyTheme.fontFamily,
+                              fontSize: 12,
+                              color: BuxlyColors.midGrey,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -1741,9 +1819,11 @@ class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
                         const SizedBox(width: 8),
                         Text(
                           "-\$${txn.amount.toStringAsFixed(2)}",
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade700),
+                          style: const TextStyle(
+                            fontFamily: BuxlyTheme.fontFamily,
+                            fontSize: 12,
+                            color: BuxlyColors.midGrey,
+                          ),
                         ),
                       ],
                     ),
@@ -1751,7 +1831,7 @@ class _WeeklyBudgetBreakdownCardState extends State<WeeklyBudgetBreakdownCard> {
               ],
             ),
           ),
-        Divider(height: 1, color: Colors.grey.shade200),
+        const Divider(height: 1, color: BuxlyColors.offWhite),
       ],
     );
   }

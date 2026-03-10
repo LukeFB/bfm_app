@@ -70,6 +70,21 @@ enum ProfitLossTimeFrame {
     }
   }
 
+  /// Returns the grouping granularity for the chart based on the time frame.
+  String get chartGroupBy {
+    switch (this) {
+      case ProfitLossTimeFrame.thisWeek:
+      case ProfitLossTimeFrame.thisMonth:
+        return 'day';
+      case ProfitLossTimeFrame.last3Months:
+      case ProfitLossTimeFrame.last6Months:
+        return 'week';
+      case ProfitLossTimeFrame.thisYear:
+      case ProfitLossTimeFrame.allTime:
+        return 'month';
+    }
+  }
+
   /// Parses from stored string value.
   static ProfitLossTimeFrame fromString(String? value) {
     if (value == null) return ProfitLossTimeFrame.allTime;
@@ -78,6 +93,20 @@ enum ProfitLossTimeFrame {
       orElse: () => ProfitLossTimeFrame.allTime,
     );
   }
+}
+
+/// A single data point in the profit/loss time series.
+class ProfitLossPoint {
+  final DateTime date;
+  final double income;
+  final double expenses;
+  double get net => income - expenses;
+
+  const ProfitLossPoint({
+    required this.date,
+    required this.income,
+    required this.expenses,
+  });
 }
 
 /// Aggregated data for the savings screen.
@@ -106,6 +135,9 @@ class SavingsData {
   /// Total value of all assets.
   final double totalAssetValue;
 
+  /// Time-series profit/loss data for charting.
+  final List<ProfitLossPoint> profitLossTimeSeries;
+
   const SavingsData({
     required this.totalIncome,
     required this.totalExpenses,
@@ -115,6 +147,7 @@ class SavingsData {
     required this.assets,
     required this.assetsByCategory,
     required this.totalAssetValue,
+    required this.profitLossTimeSeries,
   });
 }
 
@@ -137,6 +170,11 @@ class SavingsService {
       AssetRepository.getAll(),
       AssetRepository.getGroupedByCategory(),
       AssetRepository.getTotalValue(),
+      TransactionRepository.getProfitLossByPeriod(
+        DateTime(now.year - 1, now.month, now.day),
+        now,
+        groupBy: 'week',
+      ),
     ]);
 
     final accounts = results[0] as List<AccountModel>;
@@ -146,6 +184,16 @@ class SavingsService {
     final assets = results[4] as List<AssetModel>;
     final assetsByCategory = results[5] as Map<AssetCategory, List<AssetModel>>;
     final totalAssetValue = results[6] as double;
+    final rawTimeSeries =
+        results[7] as List<({DateTime date, double income, double expenses})>;
+
+    final timeSeries = rawTimeSeries
+        .map((r) => ProfitLossPoint(
+              date: r.date,
+              income: r.income,
+              expenses: r.expenses,
+            ))
+        .toList();
 
     return SavingsData(
       totalIncome: totalIncome,
@@ -156,6 +204,7 @@ class SavingsService {
       assets: assets,
       assetsByCategory: assetsByCategory,
       totalAssetValue: totalAssetValue,
+      profitLossTimeSeries: timeSeries,
     );
   }
 

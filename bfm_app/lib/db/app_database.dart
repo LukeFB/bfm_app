@@ -27,17 +27,33 @@ import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
 /// Singleton wrapper that lazy-inits the on-device SQLite database.
+///
+/// TODO(security): Replace `sqflite` with `sqflite_sqlcipher` and pass an
+/// encryption key derived from FlutterSecureStorage to protect financial data
+/// at rest. This requires a one-time unencrypted→encrypted migration using
+/// `ATTACH DATABASE ... AS encrypted KEY '...'` + `SELECT sqlcipher_export`.
 class AppDatabase {
   static final AppDatabase instance = AppDatabase._init();
   static Database? _database;
+  static Completer<Database>? _initCompleter;
 
   AppDatabase._init();
 
-  /// Lazy getter that opens the SQLite file once and caches the connection for
-  /// the rest of the process lifetime.
+  /// Lazy getter that opens the SQLite file exactly once, even if multiple
+  /// callers race on the first access.
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB("bfm_app.db");
+    if (_initCompleter != null) return _initCompleter!.future;
+
+    _initCompleter = Completer<Database>();
+    try {
+      _database = await _initDB("bfm_app.db");
+      _initCompleter!.complete(_database!);
+    } catch (e) {
+      _initCompleter!.completeError(e);
+      _initCompleter = null;
+      rethrow;
+    }
     return _database!;
   }
 
@@ -50,7 +66,7 @@ class AppDatabase {
     // Open the database with version and an onUpgrade callback
     return await openDatabase(
       path,
-      version: 26,
+      version: 27,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON;');
       },
@@ -148,6 +164,11 @@ class AppDatabase {
     if (!await hasTable('goal_progress_log')) await _createGoalProgressLog(db);
     if (!await hasTable('weekly_reports')) await _createWeeklyReports(db);
     if (!await hasTable('accounts')) await _createAccounts(db);
+    if (!await hasCol('accounts', 'excluded')) {
+      await db.execute(
+        "ALTER TABLE accounts ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0;",
+      );
+    }
     if (!await hasTable('assets')) await _createAssets(db);
 
     // Goals schema migration (name, amount, weekly_contribution, saved_amount)
@@ -518,7 +539,8 @@ class AppDatabase {
         connection_type TEXT,
         account_number TEXT,
         refreshed_at TEXT,
-        synced_at TEXT DEFAULT CURRENT_TIMESTAMP
+        synced_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        excluded INTEGER NOT NULL DEFAULT 0
       );
     ''');
     await db.execute(

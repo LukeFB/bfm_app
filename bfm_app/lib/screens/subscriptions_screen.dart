@@ -58,7 +58,8 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
   }
 
   /// Ensures transactions exist in the local DB before analysing them.
-  /// If no transactions are found, waits for any running sync or starts one.
+  /// Retries with delays after a fresh bank connection since Akahu needs
+  /// time to pull transactions from the bank.
   Future<void> _ensureTransactionsAndLoad() async {
     setState(() {
       _loading = true;
@@ -68,32 +69,40 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
 
     // Check if we already have transactions locally
     final existing = await TransactionRepository.getRecent(1);
-    final hasTransactions = existing.isNotEmpty;
+    if (existing.isNotEmpty) {
+      if (!mounted) return;
+      setState(() => _waitingForSync = false);
+      await _loadRecurring();
+      return;
+    }
 
-    if (!hasTransactions) {
-      // Wait for a running sync, or start a fresh one
+    // No local transactions — sync with retries. After a fresh Akahu
+    // connection the backend needs time to fetch bank data.
+    const retryDelays = [0, 10, 15, 20, 20];
+    for (var i = 0; i < retryDelays.length; i++) {
+      if (!mounted) return;
+      if (retryDelays[i] > 0) {
+        await Future.delayed(Duration(seconds: retryDelays[i]));
+      }
+
       if (TransactionSyncService.isSyncing) {
-        try {
-          await TransactionSyncService.waitForSync();
-        } catch (_) {}
+        try { await TransactionSyncService.waitForSync(); } catch (_) {}
       } else {
-        try {
-          await TransactionSyncService().syncNow();
-        } catch (_) {}
+        try { await TransactionSyncService().syncNow(); } catch (_) {}
       }
 
       if (!mounted) return;
-
-      // Check again after sync
       final afterSync = await TransactionRepository.getRecent(1);
-      if (afterSync.isEmpty) {
-        setState(() => _syncFailed = true);
-      }
+      if (afterSync.isNotEmpty) break;
     }
 
     if (!mounted) return;
-    setState(() => _waitingForSync = false);
+    final finalCheck = await TransactionRepository.getRecent(1);
+    if (finalCheck.isEmpty) {
+      setState(() => _syncFailed = true);
+    }
 
+    setState(() => _waitingForSync = false);
     await _loadRecurring();
   }
 
@@ -382,7 +391,7 @@ class _SubscriptionsScreenState extends State<SubscriptionsScreen> {
             ),
           ),
         ),
-        if (_waitingForSync)
+        if (_syncFailed)
           SafeArea(
             top: false,
             child: Padding(

@@ -16,6 +16,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -33,6 +34,7 @@ import 'package:bfm_app/services/bank_service.dart';
 import 'package:bfm_app/services/income_settings_store.dart';
 import 'package:bfm_app/services/onboarding_store.dart';
 import 'package:bfm_app/services/transaction_sync_service.dart';
+import 'package:bfm_app/services/weekly_overview_service.dart';
 import 'package:bfm_app/theme/buxly_theme.dart';
 
 /// How the user connects their bank during onboarding.
@@ -40,8 +42,8 @@ enum _AkahuConnectMode { webflow, manualTokens }
 
 class OnboardingScreen extends StatefulWidget {
   /// Page indices exposed for external navigation (e.g. LoginScreen).
-  static const int bankConnectPage = 4;
-  static const int postBankConnectPage = 5;
+  static const int bankConnectPage = 3;
+  static const int postBankConnectPage = 4;
 
   final String onCompleteRoute;
 
@@ -66,7 +68,7 @@ class OnboardingScreen extends StatefulWidget {
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final PageController _pageController = PageController();
   final OnboardingStore _store = OnboardingStore();
 
@@ -79,6 +81,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   final _dobCtrl = TextEditingController();
 
   DateTime? _selectedDob;
+  final Set<String> _selectedEthnicities = {};
 
   // Referrer token
   final _referrerTokenCtrl = TextEditingController();
@@ -119,12 +122,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   static const int _registrationIndex = 0;
   static const int _referrerTokenIndex = 1;
   static const int _accountSetupIndex = 2;
-  static const int _appExplainIndex = 3;
-  static const int _akahuConnectIndex = 4;
-  static const int _recurringExplainIndex = 5;
-  static const int _categorisationExplainIndex = 6;
-  static const int _budgetExplainIndex = 7;
-  static const int _totalPages = 8;
+  static const int _akahuConnectIndex = 3;
+  static const int _recurringExplainIndex = 4;
+  static const int _categorisationExplainIndex = 5;
+  static const int _budgetExplainIndex = 6;
+  static const int _totalPages = 7;
 
   static const _incomeOptions = [
     ('weekly', 'Weekly'),
@@ -139,6 +141,16 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     ('BudgetBetter', 'Get better at budgeting'),
     ('TrackSpending', 'Track my spending'),
     ('GrowWealth', 'Grow my wealth'),
+  ];
+
+  static const _ethnicityOptions = [
+    ('nz_european', 'NZ European / Pākehā'),
+    ('maori', 'Māori'),
+    ('pacific_peoples', 'Pacific Peoples'),
+    ('asian', 'Asian'),
+    ('melaa', 'Middle Eastern / Latin American / African'),
+    ('other', 'Other'),
+    ('prefer_not_to_say', 'Prefer not to say'),
   ];
 
   static const _regionOptions = [
@@ -169,6 +181,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _hydrateBankStatus();
     _fadeController = AnimationController(
       duration: const Duration(milliseconds: 400),
@@ -241,6 +254,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
     _fadeController.dispose();
     _firstNameCtrl.dispose();
@@ -254,6 +268,17 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _authPasswordCtrl.dispose();
     _authConfirmPasswordCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        _webflowLaunched &&
+        !_bankConnected &&
+        !_verifyingConnection &&
+        _currentPage == _akahuConnectIndex) {
+      _handleWebflowVerify();
+    }
   }
 
   /// Pages shown in replay mode (skip registration + Akahu connect).
@@ -289,12 +314,14 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   });
                   _fadeController.reset();
                   _fadeController.forward();
+                  if (index == _recurringExplainIndex && _bankConnected) {
+                    _startBackgroundSync();
+                  }
                 },
                 children: [
                   _buildRegistrationPage(),
                   _buildReferrerTokenPage(),
                   _buildAccountSetupPage(),
-                  _buildAppExplainPage(),
                   _buildAkahuConnectPage(),
                   _buildRecurringExplainPage(),
                   _buildCategorisationExplainPage(),
@@ -318,7 +345,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       body: SafeArea(
         child: Column(
           children: [
-            _OnboardingProgress(currentPage: _currentPage + 5, minPage: 5),
+            _OnboardingProgress(currentPage: _currentPage + 4, minPage: 4),
             if (_replaySyncing) ...[
               const Expanded(
                 child: Center(
@@ -474,11 +501,29 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 ),
               ),
               const Spacer(),
-              _buildWelcomeFeatureRow('💚', 'Track your spending'),
-              const SizedBox(height: 14),
-              _buildWelcomeFeatureRow('🎯', 'Set savings goals'),
-              const SizedBox(height: 14),
-              _buildWelcomeFeatureRow('🤖', 'AI-powered coaching'),
+              _buildWelcomeExplainerCard(
+                Icons.trending_down,
+                'Track, budget & reduce',
+                'Creates budgets based on your average spending and works with you to reduce them.',
+              ),
+              const SizedBox(height: 8),
+              _buildWelcomeExplainerCard(
+                Icons.sync_alt,
+                'Automatic bank syncing',
+                'Connects securely to your bank via Akahu and pulls in transactions automatically.',
+              ),
+              const SizedBox(height: 8),
+              _buildWelcomeExplainerCard(
+                Icons.pie_chart_outline,
+                'Spending insights',
+                'See where your money goes with intelligent categorisation and weekly breakdowns.',
+              ),
+              const SizedBox(height: 8),
+              _buildWelcomeExplainerCard(
+                Icons.lightbulb_outline,
+                'AI-powered guidance',
+                'Chat with your personal money coach to get tailored advice and stay on track.',
+              ),
               const Spacer(),
               Container(
                 padding:
@@ -512,30 +557,54 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     );
   }
 
-  Widget _buildWelcomeFeatureRow(String emoji, String text) {
-    return Row(
-      children: [
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(12),
+  Widget _buildWelcomeExplainerCard(IconData icon, String title, String description) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.white.withOpacity(0.15),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, size: 18, color: Colors.white),
           ),
-          alignment: Alignment.center,
-          child: Text(emoji, style: const TextStyle(fontSize: 20)),
-        ),
-        const SizedBox(width: 14),
-        Text(
-          text,
-          style: const TextStyle(
-            fontFamily: BuxlyTheme.fontFamily,
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: Colors.white,
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontFamily: BuxlyTheme.fontFamily,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  description,
+                  style: TextStyle(
+                    fontFamily: BuxlyTheme.fontFamily,
+                    fontSize: 12,
+                    color: Colors.white.withOpacity(0.8),
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -663,68 +732,72 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                       ),
                 ),
                 const SizedBox(height: 20),
-                Form(
-                  key: _loginFormKey,
-                  child: Column(
-                    children: [
-                      TextFormField(
-                        controller: _emailCtrl,
-                        keyboardType: TextInputType.emailAddress,
-                        textInputAction: TextInputAction.next,
-                        decoration: const InputDecoration(
-                          labelText: 'Email',
-                          hintText: 'your@email.co.nz',
+                AutofillGroup(
+                  child: Form(
+                    key: _loginFormKey,
+                    child: Column(
+                      children: [
+                        TextFormField(
+                          controller: _emailCtrl,
+                          keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.next,
+                          autofillHints: const [AutofillHints.email],
+                          decoration: const InputDecoration(
+                            labelText: 'Email',
+                            hintText: 'your@email.co.nz',
+                          ),
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) {
+                              return 'Email is required';
+                            }
+                            return null;
+                          },
                         ),
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) {
-                            return 'Email is required';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _authPasswordCtrl,
-                        obscureText: true,
-                        textInputAction: TextInputAction.done,
-                        onFieldSubmitted: (_) {
-                          if (_loginFormKey.currentState!.validate()) {
-                            Navigator.pop(ctx);
-                            _handleWelcomeLogin();
-                          }
-                        },
-                        decoration: const InputDecoration(
-                          labelText: 'Password',
-                        ),
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) {
-                            return 'Password is required';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 20),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton(
-                          onPressed: () {
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _authPasswordCtrl,
+                          obscureText: true,
+                          textInputAction: TextInputAction.done,
+                          autofillHints: const [AutofillHints.password],
+                          onFieldSubmitted: (_) {
                             if (_loginFormKey.currentState!.validate()) {
                               Navigator.pop(ctx);
                               _handleWelcomeLogin();
                             }
                           },
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text('Sign in'),
-                              SizedBox(width: 8),
-                              Icon(Icons.arrow_forward, size: 20),
-                            ],
+                          decoration: const InputDecoration(
+                            labelText: 'Password',
+                          ),
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) {
+                              return 'Password is required';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 20),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                            onPressed: () {
+                              if (_loginFormKey.currentState!.validate()) {
+                                Navigator.pop(ctx);
+                                _handleWelcomeLogin();
+                              }
+                            },
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('Sign in'),
+                                SizedBox(width: 8),
+                                Icon(Icons.arrow_forward, size: 20),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -757,7 +830,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
 
       final token = await authApi.login(email: email, password: password);
       await tokenStore.setToken(token);
-      await CredentialStore().save(email: email, password: password);
+      TextInput.finishAutofillContext();
+      await CredentialStore().saveCredentials(email, password);
 
       if (!mounted) return;
 
@@ -781,6 +855,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('bank_connected', true);
         await prefs.remove('last_sync_at');
+        await WeeklyOverviewService.suppressInitialOverview();
 
         _startBackgroundSync();
 
@@ -859,7 +934,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     final isRegistration = _currentPage == _registrationIndex;
     final isAkahuConnect = _currentPage == _akahuConnectIndex;
     final isFinalPage = _currentPage == _budgetExplainIndex;
-    final isReferrerPage = _currentPage == _referrerTokenIndex;
 
     String nextLabel;
     IconData nextIcon;
@@ -896,14 +970,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (isReferrerPage || (isAkahuConnect && !_bankConnected))
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: TextButton(
-                onPressed: isProcessing ? null : _goToNextPage,
-                child: const Text('Skip'),
-              ),
-            ),
           SizedBox(
             width: double.infinity,
             child: FilledButton(
@@ -935,6 +1001,18 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     if (_currentPage == _registrationIndex) {
       if (!_formKey.currentState!.validate()) return;
       _handleRegistration();
+      return;
+    }
+    if (_currentPage == _accountSetupIndex) {
+      if (_region == null || _region!.isEmpty) {
+        setState(() => _accountSetupError = 'Please select your region.');
+        return;
+      }
+      if (_selectedEthnicities.isEmpty) {
+        setState(() => _accountSetupError = 'Please select at least one ethnicity.');
+        return;
+      }
+      _goToNextPage();
       return;
     }
     if (_currentPage == _akahuConnectIndex) {
@@ -981,14 +1059,15 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       opacity: _fadeAnimation,
       child: _PageShell(
         scrollable: true,
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '👋 Welcome to Buxly',
-                style: TextStyle(
+        child: AutofillGroup(
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '👋 Welcome to Buxly',
+                  style: TextStyle(
                   fontFamily: BuxlyTheme.fontFamily,
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
@@ -1043,6 +1122,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 keyboardType: TextInputType.emailAddress,
                 validator: _emailValidator,
                 textInputAction: TextInputAction.next,
+                autofillHints: const [AutofillHints.email],
               ),
               const SizedBox(height: 16),
               _StyledFormField(
@@ -1075,6 +1155,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 label: 'Password',
                 hint: 'Min 8 characters',
                 obscureText: true,
+                autofillHints: const [AutofillHints.newPassword],
                 validator: (v) {
                   if (v == null || v.trim().isEmpty) {
                     return 'Password is required';
@@ -1091,6 +1172,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 controller: _authConfirmPasswordCtrl,
                 label: 'Confirm password',
                 obscureText: true,
+                autofillHints: const [AutofillHints.newPassword],
                 validator: (v) {
                   if (v != _authPasswordCtrl.text) {
                     return 'Passwords do not match';
@@ -1136,6 +1218,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
               ),
             ],
           ),
+        ),
         ),
       ),
     );
@@ -1199,6 +1282,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   // Page 2 – Account Setup Wizard
   // ---------------------------------------------------------------------------
 
+  String? _accountSetupError;
+
   Widget _buildAccountSetupPage() {
     return FadeTransition(
       opacity: _fadeAnimation,
@@ -1215,12 +1300,86 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             ),
             const SizedBox(height: 8),
             Text(
-              'A few quick preferences so Moni works best for you.',
+              'A few quick preferences so Buxly works best for you.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: Colors.black54,
                   ),
             ),
+            if (_accountSetupError != null) ...[
+              const SizedBox(height: 12),
+              _ErrorBanner(message: _accountSetupError!),
+            ],
             const SizedBox(height: 20),
+
+            // ── Region (required) ──
+            Text(
+              'What region are you in?',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            _RegionDropdown(
+              value: _region,
+              options: _regionOptions,
+              onChanged: (v) => setState(() {
+                _region = v;
+                _accountSetupError = null;
+              }),
+            ),
+
+            const SizedBox(height: 20),
+
+            // ── Ethnicity (required, multi-select) ──
+            Text(
+              'Ethnicity',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Select all that apply.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.black45,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _ethnicityOptions.map((opt) {
+                final selected = _selectedEthnicities.contains(opt.$1);
+                return FilterChip(
+                  label: Text(opt.$2),
+                  selected: selected,
+                  onSelected: (value) {
+                    setState(() {
+                      if (value) {
+                        _selectedEthnicities.add(opt.$1);
+                      } else {
+                        _selectedEthnicities.remove(opt.$1);
+                      }
+                      _accountSetupError = null;
+                    });
+                  },
+                  selectedColor: BuxlyColors.teal.withOpacity(0.15),
+                  checkmarkColor: BuxlyColors.teal,
+                  side: BorderSide(
+                    color: selected
+                        ? BuxlyColors.teal
+                        : Colors.black.withOpacity(0.1),
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                );
+              }).toList(),
+            ),
+
+            const SizedBox(height: 20),
+
+            // ── Income frequency ──
             Text(
               'How often do you get paid?',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
@@ -1233,7 +1392,10 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   selected: _incomeFrequency == opt.$1,
                   onTap: () => setState(() => _incomeFrequency = opt.$1),
                 )),
+
             const SizedBox(height: 16),
+
+            // ── Primary goal ──
             Text(
               'What is your main financial goal?',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
@@ -1246,26 +1408,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                   selected: _primaryGoal == opt.$1,
                   onTap: () => setState(() => _primaryGoal = opt.$1),
                 )),
-            const SizedBox(height: 16),
-            Text(
-              'What region are you in?',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Optional — helps us tailor insights to your area.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.black45,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            _RegionDropdown(
-              value: _region,
-              options: _regionOptions,
-              onChanged: (v) => setState(() => _region = v),
-            ),
           ],
         ),
       ),
@@ -1273,82 +1415,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   // ---------------------------------------------------------------------------
-  // Page 3 – App Explanation
-  // ---------------------------------------------------------------------------
-
-  Widget _buildAppExplainPage() {
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: _PageShell(
-        alignment: Alignment.center,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.savings_outlined,
-                size: 36,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'Welcome to Moni',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Your financial personal trainer',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    color: Colors.black54,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            _ExplainerCard(
-              icon: Icons.trending_down,
-              title: 'Track, budget & reduce',
-              description:
-                  'Creates budgets based on your average spending and works with you to reduce them.',
-            ),
-            const SizedBox(height: 8),
-            _ExplainerCard(
-              icon: Icons.sync_alt,
-              title: 'Automatic bank syncing',
-              description:
-                  'Connects securely to your bank via Akahu and pulls in transactions automatically.',
-            ),
-            const SizedBox(height: 8),
-            _ExplainerCard(
-              icon: Icons.pie_chart_outline,
-              title: 'Spending insights',
-              description:
-                  'See where your money goes with intelligent categorisation and weekly breakdowns.',
-            ),
-            const SizedBox(height: 8),
-            _ExplainerCard(
-              icon: Icons.lightbulb_outline,
-              title: 'AI-powered guidance',
-              description:
-                  'Chat with your personal money coach to get tailored advice and stay on track.',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Page 4 – Akahu Connection
+  // Page 3 – Akahu Connection
   // ---------------------------------------------------------------------------
 
   Widget _buildAkahuConnectPage() {
@@ -1368,9 +1435,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             const SizedBox(height: 8),
             Text(
               _connectMode == _AkahuConnectMode.webflow
-                  ? 'Moni uses Akahu to securely read your transactions. '
+                  ? 'Buxly uses Akahu to securely read your transactions. '
                     'Tap the button below to connect through your bank\'s login.'
-                  : 'Moni uses Akahu to securely read your transactions. '
+                  : 'Buxly uses Akahu to securely read your transactions. '
                     'Enter the tokens provided to you.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: Colors.black54,
@@ -1397,7 +1464,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 title: 'Bank-grade security',
                 description:
                     'Akahu is a trusted NZ open-finance provider. '
-                    'Your login credentials are never shared with Moni.',
+                    'Your login credentials are never shared with Buxly.',
               ),
               const SizedBox(height: 24),
 
@@ -1456,7 +1523,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 const SizedBox(height: 8),
                 Center(
                   child: TextButton(
-                    onPressed: _bankConnecting ? null : _handleWebflowConnect,
+                    onPressed: (_bankConnecting || _verifyingConnection)
+                        ? null
+                        : _handleWebflowConnect,
                     child: const Text('Re-open Akahu'),
                   ),
                 ),
@@ -1470,7 +1539,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                 title: 'Bank-grade security',
                 description:
                     'Akahu is a trusted NZ open-finance provider. '
-                    'Your login credentials are never shared with Moni.',
+                    'Your login credentials are never shared with Buxly.',
               ),
               const SizedBox(height: 20),
               _StyledTextField(
@@ -1573,7 +1642,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             ),
             const SizedBox(height: 8),
             Text(
-              'Moni automatically detects your regular payments like rent, subscriptions, and bills.',
+              'Buxly automatically detects your regular payments like rent, subscriptions, and bills.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: Colors.black87,
                     height: 1.5,
@@ -1651,13 +1720,6 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             ),
             const SizedBox(height: 20),
             const _DemoInsightsChart(),
-            const SizedBox(height: 12),
-            _ExplainerCard(
-              icon: Icons.tune,
-              title: 'NZ-specific categories',
-              description:
-                  'Based on the NZ Financial Capability Census to match real Kiwi spending patterns.',
-            ),
           ],
         ),
       ),
@@ -1699,7 +1761,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             ),
             const SizedBox(height: 8),
             Text(
-              'Moni suggests budgets based on your average spending to start with a realistic plan and will work with you to reduce these budgets.',
+              'Buxly suggests budgets based on your average spending to start with a realistic plan and will work with you to reduce these budgets.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: Colors.black87,
                     height: 1.5,
@@ -1764,6 +1826,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           'referrer_token': _referrerTokenCtrl.text.trim(),
         if (_region != null && _region!.isNotEmpty)
           'region': _region,
+        if (_selectedEthnicities.isNotEmpty)
+          'ethnicities': _selectedEthnicities.toList(),
       };
 
       String token;
@@ -1780,6 +1844,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           incomeFrequency: profilePayload['income_frequency'] as String?,
           primaryGoal: profilePayload['primary_goal'] as String?,
           referrerToken: profilePayload['referrer_token'] as String?,
+          ethnicities: profilePayload['ethnicities'] as List<String>?,
         );
       } on DioException catch (e) {
         final body = e.response?.data;
@@ -1802,7 +1867,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
       }
 
       await tokenStore.setToken(token);
-      await CredentialStore().save(email: email, password: password);
+      TextInput.finishAutofillContext();
+      await CredentialStore().saveCredentials(email, password);
 
       // When we fell back to login, the backend didn't get the onboarding
       // profile data (register sends it, login doesn't). Push it now.
@@ -1972,14 +2038,12 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     });
 
     try {
-      // Ensure we have a valid token before polling
       await _refreshBackendToken();
 
       final container = ProviderScope.containerOf(context);
       final akahuApi = container.read(akahuApiProvider);
 
-      // Poll for accounts - the backend may still be processing the callback.
-      // Bail immediately on 429 (rate-limited) instead of making things worse.
+      // Poll for accounts — the backend may still be processing the callback.
       List<Map<String, dynamic>> accounts = [];
       const maxAttempts = 6;
       for (var attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -1997,9 +2061,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             });
             return;
           }
-        } catch (_) {
-          // Swallow other individual poll errors
-        }
+        } catch (_) {}
         if (accounts.isNotEmpty) break;
         if (attempt < maxAttempts) {
           await Future.delayed(const Duration(seconds: 5));
@@ -2018,39 +2080,21 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         return;
       }
 
-      // Store accounts in local DB (same as manual-token flow)
+      // Store accounts and mark connected — transactions will be pulled
+      // by _startBackgroundSync() on the next page, giving the backend
+      // time to fetch them from Akahu.
       await AccountRepository.upsertFromAkahu(accounts);
 
-      // Pull transactions (may be empty initially - Akahu syncs asynchronously).
-      // Skip gracefully on rate-limit; dashboard sync will pick them up later.
-      List<Map<String, dynamic>> transactions = [];
-      try {
-        transactions = await akahuApi.transactions();
-        if (transactions.isNotEmpty) {
-          await TransactionRepository.upsertFromAkahu(transactions);
-        }
-      } on DioException catch (e) {
-        if (e.error is RateLimitedException || e.response?.statusCode == 429) {
-          // Rate limited fetching transactions – continue onboarding anyway,
-          // the dashboard sync will pick them up once the window resets.
-        }
-      } catch (_) {
-        // Transactions may not be ready yet - dashboard sync will pick them up
-      }
-
-      // Run the same post-processing that BankService.connect() does
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('bank_connected', true);
       await prefs.remove('last_sync_at');
-      await IncomeSettingsStore.detectAndSetIncomeType();
-      await BudgetAnalysisService.identifyRecurringTransactions();
+      await WeeklyOverviewService.suppressInitialOverview();
 
       if (!mounted) return;
       setState(() {
         _verifyingConnection = false;
         _bankConnected = true;
         _backendAccountCount = accounts.length;
-        _backendTxnCount = transactions.length;
       });
 
       await Future.delayed(const Duration(milliseconds: 400));
@@ -2123,6 +2167,9 @@ class _OnboardingScreenState extends State<OnboardingScreen>
         email: _trimOrNull(_emailCtrl.text),
         phone: _trimOrNull(_phoneCtrl.text),
         dateOfBirth: _trimOrNull(_dobCtrl.text),
+        ethnicities: _selectedEthnicities.isNotEmpty
+            ? _selectedEthnicities.toList()
+            : null,
       ),
       referrerToken: _trimOrNull(_referrerTokenCtrl.text),
       accountSetup: OnboardingAccountSetup(
@@ -2272,7 +2319,7 @@ class _OnboardingProgress extends StatelessWidget {
   const _OnboardingProgress({
     required this.currentPage,
     this.minPage = 0,
-    this.totalPages = 8,
+    this.totalPages = 7,
   });
 
   @override
@@ -2391,6 +2438,7 @@ class _StyledFormField extends StatelessWidget {
   final TextInputAction? textInputAction;
   final Widget? suffixIcon;
   final bool obscureText;
+  final Iterable<String>? autofillHints;
 
   const _StyledFormField({
     required this.controller,
@@ -2402,6 +2450,7 @@ class _StyledFormField extends StatelessWidget {
     this.textInputAction,
     this.suffixIcon,
     this.obscureText = false,
+    this.autofillHints,
   });
 
   @override
@@ -2412,6 +2461,7 @@ class _StyledFormField extends StatelessWidget {
       validator: validator,
       textInputAction: textInputAction,
       obscureText: obscureText,
+      autofillHints: autofillHints,
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
@@ -2506,7 +2556,7 @@ class _RegionDropdown extends StatelessWidget {
         child: DropdownButton<String>(
           value: value,
           isExpanded: true,
-          hint: const Text('Select region (optional)'),
+          hint: const Text('Select region'),
           borderRadius: BorderRadius.circular(12),
           icon: const Icon(Icons.expand_more_rounded),
           items: options
@@ -2693,33 +2743,44 @@ class _DemoInsightsChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final demoData = [
-      _DemoChartItem(
-          '🍽️', 'Supermarkets & grocery', 0.35, const Color(0xFF4CAF50)),
-      _DemoChartItem(
-          '🏡', 'Rent', 0.28, const Color(0xFF2196F3)),
-      _DemoChartItem('🚌', 'Fuel', 0.15, const Color(0xFFFF9800)),
-      _DemoChartItem('⚡️', 'Electricity', 0.12, const Color(0xFF9C27B0)),
-      _DemoChartItem('🎉', 'Cafes & restaurants', 0.10, const Color(0xFFE91E63)),
+      _DemoChartItem('🏡', 'Housing & Rent', 0.35, BuxlyColors.skyBlue),
+      _DemoChartItem('🛒', 'Groceries & Food', 0.22, BuxlyColors.limeGreen),
+      _DemoChartItem('🚗', 'Transport', 0.14, BuxlyColors.teal),
+      _DemoChartItem('⚡', 'Power & Utilities', 0.10, BuxlyColors.sunshineYellow),
+      _DemoChartItem('📱', 'Phone & Internet', 0.08, BuxlyColors.blushPink),
+      _DemoChartItem('🎉', 'Entertainment', 0.06, BuxlyColors.coralOrange),
+      _DemoChartItem('⚕️', 'Health & Wellbeing', 0.05, BuxlyColors.limeGreen),
     ];
 
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 3),
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const Text(
+            'Average NZ spending breakdown',
+            style: TextStyle(
+              fontFamily: BuxlyTheme.fontFamily,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: BuxlyColors.darkText,
+            ),
+          ),
+          const SizedBox(height: 14),
           for (final item in demoData) ...[
             _DemoChartBar(item: item),
-            if (item != demoData.last) const SizedBox(height: 8),
+            if (item != demoData.last) const SizedBox(height: 10),
           ],
         ],
       ),
@@ -2743,51 +2804,49 @@ class _DemoChartBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(item.emoji, style: const TextStyle(fontSize: 20)),
-        const SizedBox(width: 10),
-        Expanded(
-          flex: 3,
-          child: Text(
-            item.label,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          flex: 2,
-          child: Container(
-            height: 20,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              color: Colors.grey.shade100,
-            ),
-            child: FractionallySizedBox(
-              alignment: Alignment.centerLeft,
-              widthFactor: item.percentage,
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  color: item.color,
+        Row(
+          children: [
+            Text(item.emoji, style: const TextStyle(fontSize: 20)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                item.label,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: BuxlyColors.darkText,
                 ),
               ),
             ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: 36,
-          child: Text(
-            '${(item.percentage * 100).toInt()}%',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Colors.black.withOpacity(0.5),
+            Text(
+              '${(item.percentage * 100).toInt()}%',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: Colors.black.withOpacity(0.55),
+              ),
             ),
-            textAlign: TextAlign.right,
+          ],
+        ),
+        const SizedBox(height: 4),
+        Container(
+          height: 8,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(4),
+            color: Colors.grey.shade100,
+          ),
+          child: FractionallySizedBox(
+            alignment: Alignment.centerLeft,
+            widthFactor: item.percentage,
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(4),
+                color: item.color,
+              ),
+            ),
           ),
         ),
       ],
@@ -2801,28 +2860,19 @@ class _DemoBudgetList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final demoBudgets = [
-      _DemoBudgetItem('🍽️', 'Supermarkets & grocery', 150.0),
-      _DemoBudgetItem('🎉', 'Cafes & restaurants', 50.0),
-      _DemoBudgetItem('🚌', 'Fuel', 80.0),
-      _DemoBudgetItem('⚕️', 'Gym & fitness', 40.0),
+      _DemoBudgetItem('🛒', 'Supermarkets & grocery', 150.0, true),
+      _DemoBudgetItem('🎉', 'Cafes & restaurants', 50.0, true),
+      _DemoBudgetItem('🚗', 'Fuel', 80.0, false),
+      _DemoBudgetItem('⚕️', 'Gym & fitness', 40.0, true),
     ];
 
-    return Card(
-      margin: EdgeInsets.zero,
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.black.withOpacity(0.08)),
-      ),
-      child: Column(
-        children: [
-          for (var i = 0; i < demoBudgets.length; i++) ...[
-            _DemoBudgetTile(item: demoBudgets[i]),
-            if (i < demoBudgets.length - 1)
-              Divider(height: 1, color: Colors.black.withOpacity(0.06)),
-          ],
+    return Column(
+      children: [
+        for (var i = 0; i < demoBudgets.length; i++) ...[
+          _DemoBudgetTile(item: demoBudgets[i]),
+          if (i < demoBudgets.length - 1) const SizedBox(height: 6),
         ],
-      ),
+      ],
     );
   }
 }
@@ -2831,8 +2881,9 @@ class _DemoBudgetItem {
   final String emoji;
   final String label;
   final double budget;
+  final bool selected;
 
-  const _DemoBudgetItem(this.emoji, this.label, this.budget);
+  const _DemoBudgetItem(this.emoji, this.label, this.budget, this.selected);
 }
 
 class _DemoBudgetTile extends StatelessWidget {
@@ -2842,70 +2893,72 @@ class _DemoBudgetTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isSelected = item.selected;
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primary.withOpacity(0.08),
-        border: Border(
-          left: BorderSide(
-            width: 3,
-            color: Theme.of(context).colorScheme.primary,
-          ),
+        color: isSelected
+            ? BuxlyColors.teal.withOpacity(0.08)
+            : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isSelected
+              ? BuxlyColors.teal.withOpacity(0.4)
+              : Colors.black12,
+          width: isSelected ? 1.5 : 1,
         ),
       ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: Row(
-          children: [
-            Text(item.emoji, style: const TextStyle(fontSize: 22)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.label,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: Colors.black,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(4),
-                      color: Theme.of(context)
-                          .colorScheme
-                          .primary
-                          .withOpacity(0.1),
-                    ),
-                    child: Text(
-                      '\$${item.budget.toStringAsFixed(0)}/week',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  ),
-                ],
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          Text(item.emoji, style: const TextStyle(fontSize: 28)),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Text(
+              item.label,
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? BuxlyColors.teal.withOpacity(0.1)
+                  : Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '\$${item.budget.toStringAsFixed(0)}/wk',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: isSelected ? BuxlyColors.darkText : Colors.black87,
               ),
             ),
-            Container(
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(width: 10),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: isSelected ? BuxlyColors.teal : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                width: 2,
+                color: isSelected ? BuxlyColors.teal : Colors.black26,
               ),
-              child: const Icon(Icons.check, size: 16, color: Colors.white),
             ),
-          ],
-        ),
+            child: isSelected
+                ? const Icon(Icons.check, size: 18, color: Colors.white)
+                : null,
+          ),
+        ],
       ),
     );
   }

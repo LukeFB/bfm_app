@@ -72,20 +72,38 @@ class _EnterPinScreenState extends State<EnterPinScreen>
   Future<void> _verifyPin() async {
     setState(() => _verifying = true);
 
-    final ok = await widget.pinStore.verifyPin(_pin);
-    if (!mounted) return;
+    try {
+      final ok = await widget.pinStore.verifyPin(_pin);
+      if (!mounted) return;
 
-    if (ok) {
-      HapticFeedback.mediumImpact();
-      Navigator.of(context).pop(true);
-    } else {
+      if (ok) {
+        HapticFeedback.mediumImpact();
+        Navigator.of(context).pop(true);
+      } else {
+        HapticFeedback.heavyImpact();
+        _shakeController.forward(from: 0);
+        final attempts = await widget.pinStore.getFailedAttempts();
+        final remaining = PinStore.maxAttemptsBeforeWipe - attempts;
+        setState(() {
+          _error = remaining <= 5
+              ? 'Wrong PIN. $remaining attempts remaining.'
+              : 'Wrong PIN. Try again.';
+          _pin = '';
+          _verifying = false;
+        });
+      }
+    } on PinLockedException catch (e) {
+      if (!mounted) return;
       HapticFeedback.heavyImpact();
-      _shakeController.forward(from: 0);
       setState(() {
-        _error = 'Wrong PIN. Try again.';
+        _error = e.toString();
         _pin = '';
         _verifying = false;
       });
+    } on PinWipedException {
+      if (!mounted) return;
+      HapticFeedback.heavyImpact();
+      Navigator.of(context).pop(false);
     }
   }
 

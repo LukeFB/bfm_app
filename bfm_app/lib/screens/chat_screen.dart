@@ -1,22 +1,3 @@
-// ---------------------------------------------------------------------------
-// File: lib/screens/chat_screen.dart
-// Author: Luke Fraser-Brown
-//
-// Called by:
-//   - `/chat` route via the bottom navigation.
-//
-// Purpose:
-//   - Chat UI that talks to Moni AI directly (no backend) while preserving
-//     context between sessions.
-//
-// Inputs:
-//   - User-entered text, stored chat history, optional API key.
-//
-// Outputs:
-//   - Renders AI responses, persists conversation history, and surfaces helpful
-//     errors if no key is configured.
-// ---------------------------------------------------------------------------
-
 import 'dart:async';
 import 'dart:convert';
 
@@ -34,21 +15,13 @@ import 'package:bfm_app/repositories/budget_repository.dart';
 import 'package:bfm_app/repositories/category_repository.dart';
 import 'package:bfm_app/repositories/goal_repository.dart';
 import 'package:bfm_app/repositories/referral_repository.dart';
-import 'package:bfm_app/services/ai_client.dart';
-import 'package:bfm_app/services/api_key_store.dart';
-import 'package:bfm_app/services/dev_config.dart';
-import 'package:bfm_app/services/chat_action_extractor.dart';
 import 'package:bfm_app/services/alert_notification_service.dart';
-import 'package:bfm_app/services/chat_constants.dart';
 import 'package:bfm_app/services/chat_storage.dart';
 import 'package:bfm_app/services/context_builder.dart';
 import 'package:bfm_app/services/manual_budget_store.dart';
 import 'package:bfm_app/providers/api_providers.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:bfm_app/widgets/manual_alert_sheet.dart';
-
-/// Whether the chat uses the local OpenAI path or the Moni backend.
-enum ChatMode { local, backend }
 
 /// Example questions that scroll through to show chatbot capabilities.
 const List<String> _exampleQuestions = [
@@ -73,30 +46,19 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-/// Handles conversation state, persistence, and network calls.
-///
-/// Supports two modes:
-/// - **local**: Direct OpenAI calls via [AiClient] (existing, needs API key).
-/// - **backend**: Proxied via Moni backend [MessagesApi] (needs backend auth).
+/// Handles conversation state, persistence, and network calls via the backend.
 class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
-  ChatMode _chatMode = kDevMode ? ChatMode.local : ChatMode.backend;
-  // Replaced _Message with ChatMessage to integrate with storage + AI.
   final List<ChatMessage> _messages = [];
   final List<ChatMessage> _allMessages = [];
 
   final TextEditingController _controller = TextEditingController();
 
-  // scroll controller to keep view pinned to the latest messages.
   final ScrollController _scroll = ScrollController();
 
-  // Services
-  late final AiClient _ai;
   late final ChatStorage _store;
-  final ChatActionExtractor _actionExtractor = ChatActionExtractor();
 
   // UI guards
   bool _sending = false;
-  bool _hasApiKey = false;
   Map<String, String> _referralLinks = {};
   bool _actionLoading = false;
   bool _savingAction = false;
@@ -108,15 +70,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   late Animation<double> _hintFadeAnimation;
   Timer? _hintCycleTimer;
 
-  // How many most-recent turns to send with each request
-  static const int kContextWindowTurns = kChatContextWindowTurns;
+  static const int kContextWindowTurns = 12;
   static const int _kMaxUiMessages = 100;
 
-  /// Sets up the AI + storage services and loads history.
   @override
   void initState() {
     super.initState();
-    _ai = AiClient(); // pulls API key internally from ApiKeyStore
     _store = ChatStorage();
     _initHintAnimation();
     _bootstrap();
@@ -160,10 +119,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  /// Loads persisted messages, seeds the greeting when empty, and checks if an
-  /// API key exists so the UI can hint accordingly.
   Future<void> _bootstrap() async {
-    // Load persisted messages (if any)
     final persistedAll = await _store.loadAllMessages();
     if (persistedAll.isNotEmpty) {
       _allMessages.addAll(persistedAll);
@@ -173,10 +129,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             : 0;
         _messages.addAll(_allMessages.sublist(start));
       });
-      // ensure the list is scrolled to bottom after loading history.
       _scrollToBottom();
     } else {
-      // Seed welcome greeting
       final greeting = ChatMessage.assistant(
         "Kia ora! How can I help with your budget today?",
       );
@@ -184,15 +138,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       _allMessages.add(greeting);
       await _store.saveMessages(_allMessages);
       setState(() {});
-      // scroll to the bottom after first paint.
       _scrollToBottom();
     }
-
-    // Check if an API key is present (so we can optionally disable send)
-    final key = await ApiKeyStore.get();
-    setState(() {
-      _hasApiKey = (key != null && key.isNotEmpty);
-    });
 
     await _loadReferralLinks();
   }
@@ -292,8 +239,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     return '';
   }
 
-  /// Pushes the user message, sends it through AiClient, handles retries, and
-  /// appends the assistant response (or an error bubble) while persisting both.
   Future<void> _sendMessage() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending) return;
@@ -315,13 +260,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _scrollToBottom(); // keep view pinned to newest message.
 
     try {
-      late final String replyText;
-      if (_chatMode == ChatMode.backend) {
-        replyText = await _sendViaBackend(text);
-      } else {
-        final recent = _buildRecentTurns();
-        replyText = await _ai.complete(recent);
-      }
+      final replyText = await _sendViaBackend(text);
       final replyWithLinks = _injectReferralLinks(replyText);
 
       // Append assistant response and persist
@@ -335,11 +274,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       // Only run action detection if user is actually asking to CREATE something
       // Don't suggest actions for simple questions like "what's my left to spend"
       if (_shouldDetectActions(lastUserText, replyWithLinks)) {
-        unawaited(_detectActions(
-          _buildRecentTurns(),
+        _detectActions(
           lastUserMessage: lastUserText,
           lastAssistantMessage: replyWithLinks,
-        ));
+        );
       }
     } catch (e) {
       // Friendly error bubble (keeps your style)
@@ -376,56 +314,36 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         cleaned.contains('due:');
   }
   
-  /// Detects actionable items from the conversation.
-  /// 
-  /// Simplified pipeline to avoid duplicate processing bugs:
-  /// 1. Extract actions from AI
-  /// 2. Apply single-pass enhancements
-  /// 3. Filter and normalize
-  Future<void> _detectActions(
-    List<Map<String, String>> turns, {
+  /// Detects actionable items from the assistant's reply using pattern matching.
+  void _detectActions({
     String? lastUserMessage,
     String? lastAssistantMessage,
-  }) async {
-    if (!_hasApiKey) return;
+  }) {
     setState(() => _actionLoading = true);
-    
+
     try {
       final actionContext = _buildActionContextText(
         lastUserMessage: lastUserMessage,
       );
-      
-      // Step 1: Get base actions from AI
-      var actions = await _actionExtractor.identifyActions(
-        turns,
-        assistantReply: lastAssistantMessage,
-      );
-      
-      // Step 2: Fallback extraction if AI extractor returned nothing but assistant suggested an action
-      if (actions.isEmpty && lastAssistantMessage != null) {
-        final fallbackActions = _extractActionsFromAssistantText(lastAssistantMessage);
-        if (fallbackActions.isNotEmpty) {
-          debugPrint('Action extractor returned empty, using fallback extraction');
-          actions = fallbackActions;
-        }
-      }
-      
-      // Step 3: Single-pass enhancement (removed duplicate calls)
+
+      var actions = lastAssistantMessage != null
+          ? _extractActionsFromAssistantText(lastAssistantMessage)
+          : <ChatSuggestedAction>[];
+
       actions = _enhanceActions(
         actions,
         userText: lastUserMessage,
         assistantText: lastAssistantMessage,
         actionContext: actionContext,
       );
-      
-      // Step 4: Normalize and prefill - prioritize assistant text for extraction
+
       actions = _normalizeActionTitles(actions, lastUserMessage);
       actions = _prefillMissingActionData(
         actions,
         userText: actionContext,
         assistantText: lastAssistantMessage,
       );
-      
+
       if (!mounted) return;
       setState(() {
         _actionLoading = false;
@@ -862,13 +780,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
-  /// Converts raw exceptions into user-friendly hints (e.g., missing API key).
   String _prettyErr(Object e) {
     final s = e.toString();
-    if (s.contains('No API key') || s.contains('401')) {
-      return "\n\nTip: Add your API key in Settings.";
+    if (s.contains('401') || s.contains('403')) {
+      return "\n\nPlease sign in again.";
     }
-    // Surface the underlying error (trimmed) so users know what to fix.
     final trimmed = s.length > 180 ? '${s.substring(0, 177)}…' : s;
     return '\n\nError: $trimmed';
   }
@@ -1126,8 +1042,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final inlineActions = (hasGoal && linkedAlert != null)
         ? _pendingActions.where((action) => action.type != ChatActionType.alert).toList()
         : _pendingActions;
-    final canSend = _chatMode == ChatMode.backend || _hasApiKey;
-
     return Scaffold(
       backgroundColor: BuxlyColors.offWhite,
       body: SafeArea(
@@ -1197,23 +1111,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                         color: BuxlyColors.midGrey),
                     onPressed: _sending ? null : _clearChat,
                   ),
-                  if (kDevMode)
-                    GestureDetector(
-                      onTap: _sending
-                          ? null
-                          : () => setState(() {
-                                _chatMode = _chatMode == ChatMode.local
-                                    ? ChatMode.backend
-                                    : ChatMode.local;
-                              }),
-                      child: Icon(
-                        _chatMode == ChatMode.local
-                            ? Icons.computer
-                            : Icons.cloud,
-                        size: 20,
-                        color: BuxlyColors.midGrey,
-                      ),
-                    ),
                 ],
               ),
             ),
@@ -1400,14 +1297,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                     child: AnimatedBuilder(
                       animation: _hintFadeAnimation,
                       builder: (context, child) {
-                        final hintText = canSend
-                            ? _exampleQuestions[_hintIndex]
-                                .replaceAll('"', '')
-                            : 'Add API key in Settings';
+                        final hintText = _exampleQuestions[_hintIndex]
+                            .replaceAll('"', '');
                         return TextField(
                           controller: _controller,
                           onSubmitted: (_) {
-                            if (canSend && !_sending) _sendMessage();
+                            if (!_sending) _sendMessage();
                           },
                           style: const TextStyle(
                             fontFamily: BuxlyTheme.fontFamily,
@@ -1417,9 +1312,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                             hintText: 'Ask Buxly anything...',
                             hintStyle: TextStyle(
                               color: BuxlyColors.midGrey.withOpacity(
-                                _hasApiKey
-                                    ? _hintFadeAnimation.value
-                                    : 1.0,
+                                _hintFadeAnimation.value,
                               ),
                               fontFamily: BuxlyTheme.fontFamily,
                             ),
@@ -1457,7 +1350,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                     width: 44,
                     height: 44,
                     decoration: BoxDecoration(
-                      color: (canSend && !_sending)
+                      color: !_sending
                           ? BuxlyColors.teal
                           : BuxlyColors.disabled,
                       shape: BoxShape.circle,
@@ -1477,8 +1370,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                               color: BuxlyColors.white,
                               size: 20,
                             ),
-                      onPressed:
-                          (canSend && !_sending) ? _sendMessage : null,
+                      onPressed: !_sending ? _sendMessage : null,
                     ),
                   ),
                 ],

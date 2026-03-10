@@ -30,11 +30,7 @@ class BackendChatState {
   }
 }
 
-/// Controller for backend-proxied AI messages.
-///
-/// The existing [ChatScreen] talks directly to OpenAI. This controller wraps
-/// the backend /messages endpoint as an alternative. The chat screen offers a
-/// toggle between "local" (direct OpenAI) and "backend" (this).
+/// Controller for backend-proxied AI messages via the /messages endpoint.
 class BackendChatController extends Notifier<BackendChatState> {
   late final MessagesApi _api;
 

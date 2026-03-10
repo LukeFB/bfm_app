@@ -13,12 +13,19 @@
 ///   - Recovery goal logic to use savings before creating debt
 /// ---------------------------------------------------------------------------
 
+import 'dart:async';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Tracks cumulative savings achieved through the app's budgeting system.
+/// All mutating operations are serialized through [_lock] to prevent
+/// concurrent read-modify-write races that could lose financial data.
 class AppSavingsStore {
   static const _prefsTotalKey = 'app_savings_total';
   static const _prefsHistoryKey = 'app_savings_history';
+
+  /// Sequential lock that ensures only one read-modify-write runs at a time.
+  static final _lock = _AsyncMutex();
 
   /// Returns the total amount saved via the app.
   static Future<double> getTotal() async {
@@ -26,16 +33,18 @@ class AppSavingsStore {
     return prefs.getDouble(_prefsTotalKey) ?? 0.0;
   }
 
-  /// Adds to the savings total.
+  /// Adds to the savings total (serialized to prevent data races).
   /// Returns the new total.
   static Future<double> add(double amount) async {
     if (amount <= 0) return getTotal();
-    final prefs = await SharedPreferences.getInstance();
-    final current = prefs.getDouble(_prefsTotalKey) ?? 0.0;
-    final newTotal = current + amount;
-    await prefs.setDouble(_prefsTotalKey, newTotal);
-    await _recordHistory(prefs, amount, 'add');
-    return newTotal;
+    return _lock.run(() async {
+      final prefs = await SharedPreferences.getInstance();
+      final current = prefs.getDouble(_prefsTotalKey) ?? 0.0;
+      final newTotal = current + amount;
+      await prefs.setDouble(_prefsTotalKey, newTotal);
+      await _recordHistory(prefs, amount, 'add');
+      return newTotal;
+    });
   }
 
   /// Withdraws from savings (e.g., to cover a deficit).
@@ -44,12 +53,14 @@ class AppSavingsStore {
   /// Returns the amount withdrawn (always equals [amount]).
   static Future<double> withdraw(double amount) async {
     if (amount <= 0) return 0.0;
-    final prefs = await SharedPreferences.getInstance();
-    final current = prefs.getDouble(_prefsTotalKey) ?? 0.0;
-    final newTotal = current - amount;
-    await prefs.setDouble(_prefsTotalKey, newTotal);
-    await _recordHistory(prefs, amount, 'withdraw');
-    return amount;
+    return _lock.run(() async {
+      final prefs = await SharedPreferences.getInstance();
+      final current = prefs.getDouble(_prefsTotalKey) ?? 0.0;
+      final newTotal = current - amount;
+      await prefs.setDouble(_prefsTotalKey, newTotal);
+      await _recordHistory(prefs, amount, 'withdraw');
+      return amount;
+    });
   }
 
   /// Sets the total directly (use sparingly, mainly for testing/debugging).
@@ -96,5 +107,24 @@ class AppSavingsStore {
         'amount': double.tryParse(parts[2]) ?? 0.0,
       };
     }).where((e) => e.isNotEmpty).toList();
+  }
+}
+
+/// Minimal async mutex that serializes access to a critical section.
+class _AsyncMutex {
+  Completer<void>? _current;
+
+  Future<T> run<T>(Future<T> Function() action) async {
+    while (_current != null) {
+      await _current!.future;
+    }
+    _current = Completer<void>();
+    try {
+      return await action();
+    } finally {
+      final c = _current!;
+      _current = null;
+      c.complete();
+    }
   }
 }

@@ -3,11 +3,10 @@
 /// Author: Luke Fraser-Brown
 ///
 /// Called by:
-///   - `akahu_service.dart`, `bank_service.dart`, and `api_key_store.dart`.
+///   - `akahu_service.dart`, `bank_service.dart`.
 ///
 /// Purpose:
-///   - Centralises reads/writes to `FlutterSecureStorage` for Akahu tokens and
-///     OpenAI keys.
+///   - Centralises reads/writes to `FlutterSecureStorage` for Akahu tokens.
 ///
 /// Inputs:
 ///   - Token strings provided during onboarding or settings changes.
@@ -33,7 +32,6 @@ class SecureCredentialStore {
 
   static const _akahuAppKey = 'cred.akahu.app';
   static const _akahuUserKey = 'cred.akahu.user';
-  static const _openAiKeyKey = 'cred.openai.api_key';
 
   /// Saves both Akahu tokens in parallel.
   Future<void> saveAkahuTokens({
@@ -63,20 +61,5 @@ class SecureCredentialStore {
       _storage.delete(key: _akahuAppKey),
       _storage.delete(key: _akahuUserKey),
     ]);
-  }
-
-  /// Saves the OpenAI API key as-is.
-  Future<void> saveOpenAiKey(String key) async {
-    await _storage.write(key: _openAiKeyKey, value: key);
-  }
-
-  /// Reads the OpenAI key if present.
-  Future<String?> readOpenAiKey() async {
-    return _storage.read(key: _openAiKeyKey);
-  }
-
-  /// Removes the stored OpenAI key.
-  Future<void> clearOpenAiKey() async {
-    await _storage.delete(key: _openAiKeyKey);
   }
 }

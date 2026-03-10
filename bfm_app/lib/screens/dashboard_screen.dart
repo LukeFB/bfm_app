@@ -307,14 +307,6 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
           IconButton(
-            tooltip: 'Notifications',
-            icon: const Icon(
-              Icons.notifications_outlined,
-              color: BuxlyColors.darkText,
-            ),
-            onPressed: () {},
-          ),
-          IconButton(
             tooltip: 'Settings',
             icon: const Icon(
               Icons.settings_outlined,

@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 
 import 'package:bfm_app/models/weekly_report.dart';
 import 'package:bfm_app/services/insights_service.dart';
+import 'package:bfm_app/theme/buxly_theme.dart';
 import 'package:bfm_app/widgets/weekly_report_widgets.dart';
 
 /// Screen for viewing weekly insights snapshots.
@@ -123,15 +124,15 @@ class _InsightsScreenState extends State<InsightsScreen> {
               return const Center(child: CircularProgressIndicator());
             }
             if (snapshot.hasError || snapshot.data == null) {
-              return ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(24),
-                children: [
-                  Text(
-                    "Unable to build report:\n${snapshot.error}",
-                    style: const TextStyle(color: Colors.red),
-                  ),
-                ],
+            return ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(BuxlySpacing.xl),
+              children: [
+                Text(
+                  "Unable to build report:\n${snapshot.error}",
+                  style: const TextStyle(color: BuxlyColors.hotPink),
+                ),
+              ],
               );
             }
             final payload = snapshot.data!;
@@ -147,50 +148,47 @@ class _InsightsScreenState extends State<InsightsScreen> {
             
             return ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(BuxlySpacing.lg),
               children: [
-                // Navigation bar with arrows and date range
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     IconButton(
                       icon: const Icon(Icons.chevron_left),
                       onPressed: canGoBack ? () => _goToPrevious(maxIndex) : null,
+                      color: BuxlyColors.teal,
+                      disabledColor: BuxlyColors.disabled,
                       tooltip: 'Previous week',
                     ),
                     Column(
                       children: [
                         Text(
                           _formatDateRange(report.weekStart, report.weekEnd),
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
-                          ),
+                          style: Theme.of(context).textTheme.titleLarge,
                         ),
                         if (isCurrentWeek)
                           Text(
                             'This week',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade600,
-                            ),
+                            style: Theme.of(context).textTheme.bodySmall,
                           ),
                       ],
                     ),
                     IconButton(
                       icon: const Icon(Icons.chevron_right),
                       onPressed: canGoForward ? _goToNext : null,
+                      color: BuxlyColors.teal,
+                      disabledColor: BuxlyColors.disabled,
                       tooltip: 'Next week',
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: BuxlySpacing.lg),
                 // Combined chart card with toggle for all weeks
                 CombinedChartCard(
                   report: report,
                   showStats: true,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: BuxlySpacing.lg),
                 WeeklyBudgetBreakdownCard(
                   key: ValueKey(report.weekStart),
                   forWeekStart: report.weekStart,

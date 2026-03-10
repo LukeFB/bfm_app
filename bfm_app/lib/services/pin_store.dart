@@ -21,6 +21,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Stores and validates the user's app-specific PIN with a salt+hash combo.
+/// Includes brute-force protection with exponential lockout after failed attempts.
 class PinStore {
   /// Allow dependency injection for tests while using the real secure storage
   /// in production builds.
@@ -30,8 +31,12 @@ class PinStore {
   static const String _pinKey = 'lockgate.pin.hash';
   static const String _saltKey = 'lockgate.pin.salt';
   static const String _lastAuthKey = 'lockgate.last_auth_ms';
+  static const String _failedAttemptsKey = 'lockgate.failed_attempts';
+  static const String _lockoutUntilKey = 'lockgate.lockout_until_ms';
 
   static const Duration gracePeriod = Duration(minutes: 5);
+  static const int maxAttemptsBeforeLockout = 5;
+  static const int maxAttemptsBeforeWipe = 15;
 
   final FlutterSecureStorage _storage;
 
@@ -53,11 +58,47 @@ class PinStore {
     ]);
   }
 
-  /// Validates user input by:
-  /// - Loading the stored salt + hash.
-  /// - Recomputing a hash with the supplied `pin`.
-  /// - Running a constant-time check to avoid timing attacks.
+  /// Returns the number of consecutive failed attempts.
+  Future<int> getFailedAttempts() async {
+    final raw = await _storage.read(key: _failedAttemptsKey);
+    return raw != null ? (int.tryParse(raw) ?? 0) : 0;
+  }
+
+  /// Returns `null` if not locked, otherwise the [DateTime] the lockout expires.
+  Future<DateTime?> getLockoutEnd() async {
+    final raw = await _storage.read(key: _lockoutUntilKey);
+    if (raw == null) return null;
+    final ms = int.tryParse(raw);
+    if (ms == null) return null;
+    final end = DateTime.fromMillisecondsSinceEpoch(ms);
+    return end.isAfter(DateTime.now()) ? end : null;
+  }
+
+  /// Returns the lockout duration for the given attempt count.
+  /// 5 failures → 30s, 6 → 60s, 7 → 120s, 8 → 300s, 9+ → 600s.
+  static Duration lockoutDuration(int attempts) {
+    if (attempts < maxAttemptsBeforeLockout) return Duration.zero;
+    final tier = attempts - maxAttemptsBeforeLockout;
+    const durations = [
+      Duration(seconds: 30),
+      Duration(seconds: 60),
+      Duration(seconds: 120),
+      Duration(seconds: 300),
+    ];
+    return tier < durations.length ? durations[tier] : const Duration(seconds: 600);
+  }
+
+  /// Validates user input with brute-force protection.
+  /// Returns `true` on match, `false` on mismatch. Throws [PinLockedException]
+  /// if the account is currently locked out, or [PinWipedException] if too many
+  /// failures triggered a data wipe.
   Future<bool> verifyPin(String pin) async {
+    // Check lockout first.
+    final lockoutEnd = await getLockoutEnd();
+    if (lockoutEnd != null) {
+      throw PinLockedException(lockoutEnd);
+    }
+
     final salt = await _storage.read(key: _saltKey);
     final storedHash = await _storage.read(key: _pinKey);
     if (salt == null || storedHash == null) {
@@ -65,7 +106,35 @@ class PinStore {
     }
 
     final hash = _hashPin(pin, salt);
-    return _constantTimeEquals(hash, storedHash);
+    final ok = _constantTimeEquals(hash, storedHash);
+
+    if (ok) {
+      await _storage.delete(key: _failedAttemptsKey);
+      await _storage.delete(key: _lockoutUntilKey);
+      return true;
+    }
+
+    // Handle failure.
+    final attempts = (await getFailedAttempts()) + 1;
+    await _storage.write(key: _failedAttemptsKey, value: attempts.toString());
+
+    if (attempts >= maxAttemptsBeforeWipe) {
+      await clearPin();
+      await _storage.delete(key: _failedAttemptsKey);
+      await _storage.delete(key: _lockoutUntilKey);
+      throw PinWipedException();
+    }
+
+    if (attempts >= maxAttemptsBeforeLockout) {
+      final duration = lockoutDuration(attempts);
+      final until = DateTime.now().add(duration);
+      await _storage.write(
+        key: _lockoutUntilKey,
+        value: until.millisecondsSinceEpoch.toString(),
+      );
+    }
+
+    return false;
   }
 
   /// Stamps the current time so the grace period window starts now.
@@ -82,13 +151,15 @@ class PinStore {
     return DateTime.now().difference(lastAuth) < gracePeriod;
   }
 
-  /// Completely removes the stored hash and salt so the app behaves like
-  /// no PIN was ever set.
+  /// Completely removes the stored hash, salt, and lockout state so the app
+  /// behaves like no PIN was ever set.
   Future<void> clearPin() async {
     await Future.wait([
       _storage.delete(key: _pinKey),
       _storage.delete(key: _saltKey),
       _storage.delete(key: _lastAuthKey),
+      _storage.delete(key: _failedAttemptsKey),
+      _storage.delete(key: _lockoutUntilKey),
     ]);
   }
 
@@ -108,17 +179,39 @@ class PinStore {
     return base64UrlEncode(values);
   }
 
-  /// Compares two strings without leaking timing differences so brute-force
-  /// attempts cannot infer shared prefixes.
+  /// Compares two strings in constant time regardless of where they differ.
   bool _constantTimeEquals(String a, String b) {
-    if (a.length != b.length) {
-      return false;
-    }
-    var diff = 0;
-    for (var i = 0; i < a.length; i++) {
-      diff |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
+    final maxLen = a.length > b.length ? a.length : b.length;
+    var diff = a.length ^ b.length;
+    for (var i = 0; i < maxLen; i++) {
+      final ca = i < a.length ? a.codeUnitAt(i) : 0;
+      final cb = i < b.length ? b.codeUnitAt(i) : 0;
+      diff |= ca ^ cb;
     }
     return diff == 0;
   }
+}
+
+/// Thrown when PIN entry is temporarily locked after too many failed attempts.
+class PinLockedException implements Exception {
+  final DateTime lockoutEnd;
+  PinLockedException(this.lockoutEnd);
+
+  Duration get remaining => lockoutEnd.difference(DateTime.now());
+
+  @override
+  String toString() {
+    final secs = remaining.inSeconds;
+    if (secs <= 0) return 'Lockout expired.';
+    if (secs < 60) return 'Too many attempts. Try again in ${secs}s.';
+    return 'Too many attempts. Try again in ${remaining.inMinutes + 1} min.';
+  }
+}
+
+/// Thrown when the maximum failure threshold is reached and the PIN is wiped.
+class PinWipedException implements Exception {
+  @override
+  String toString() =>
+      'Too many failed attempts. PIN has been reset for security. Please sign in again.';
 }
 

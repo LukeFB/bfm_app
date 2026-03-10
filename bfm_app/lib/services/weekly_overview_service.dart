@@ -67,6 +67,15 @@ class WeeklyOverviewService {
     await prefs.setString(_prefsLastWeekKey, _iso(weekStart));
   }
 
+  /// Marks the previous week as already handled so the weekly overview is
+  /// not shown for pre-setup historical data. Call once after initial bank
+  /// connection so users aren't greeted with last week's overview on first
+  /// app open.
+  static Future<void> suppressInitialOverview() async {
+    final targetWeekStart = _previousWeekStart(DateTime.now());
+    await markOverviewHandled(targetWeekStart);
+  }
+
   /// Resets the "last shown" marker (useful for QA or debugging).
   static Future<void> resetLastShown() async {
     final prefs = await SharedPreferences.getInstance();

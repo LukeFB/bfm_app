@@ -38,6 +38,11 @@ import 'package:bfm_app/utils/category_emoji_helper.dart';
 
 /// Aggregates all database work needed to populate the dashboard.
 class DashboardService {
+  /// SQL fragment that filters out transactions belonging to excluded accounts.
+  static const _excludeDeselectedAccounts =
+      "(account_id IS NULL OR account_id NOT IN "
+      "(SELECT akahu_id FROM accounts WHERE excluded = 1))";
+
   /// Expenses for the current week (Mon to today) across *all* categories.
   /// Kept for backwards compatibility; new discretionary calc excludes budgeted
   /// spend up to the budgeted amount.
@@ -56,7 +61,8 @@ class DashboardService {
       FROM transactions
       WHERE type='expense'
         AND excluded = 0
-        AND date BETWEEN ? AND ?;
+        AND date BETWEEN ? AND ?
+        AND $_excludeDeselectedAccounts;
     ''',
       [start, end],
     );
@@ -154,7 +160,8 @@ class DashboardService {
       FROM transactions
       WHERE type='income'
         AND excluded = 0
-        AND date BETWEEN ? AND ?;
+        AND date BETWEEN ? AND ?
+        AND $_excludeDeselectedAccounts;
     ''',
       [start, end],
     );
@@ -176,7 +183,8 @@ class DashboardService {
       FROM transactions
       WHERE type='income'
         AND excluded = 0
-        AND date BETWEEN ? AND ?;
+        AND date BETWEEN ? AND ?
+        AND $_excludeDeselectedAccounts;
     ''',
       [start, end],
     );
@@ -200,7 +208,8 @@ class DashboardService {
       FROM transactions
       WHERE type='income'
         AND excluded = 0
-        AND date BETWEEN ? AND ?;
+        AND date BETWEEN ? AND ?
+        AND $_excludeDeselectedAccounts;
     ''',
       [start, end],
     );
@@ -237,7 +246,8 @@ class DashboardService {
         FROM transactions
         WHERE type='income'
           AND excluded = 0
-          AND date BETWEEN ? AND ?;
+          AND date BETWEEN ? AND ?
+          AND $_excludeDeselectedAccounts;
       ''',
         [start, end],
       );
@@ -255,7 +265,8 @@ class DashboardService {
         FROM transactions
         WHERE type='income'
           AND excluded = 0
-          AND date BETWEEN ? AND ?;
+          AND date BETWEEN ? AND ?
+          AND $_excludeDeselectedAccounts;
       ''',
         [start, end],
       );
@@ -306,6 +317,7 @@ class DashboardService {
       WHERE type='expense'
         AND excluded = 0
         AND date BETWEEN ? AND ?
+        AND $_excludeDeselectedAccounts
       GROUP BY category_id;
       ''',
       [start, end],
@@ -583,7 +595,8 @@ class DashboardService {
       FROM transactions
       WHERE type='expense'
         AND excluded = 0
-        AND date BETWEEN ? AND ?;
+        AND date BETWEEN ? AND ?
+        AND $_excludeDeselectedAccounts;
       ''',
       [start, end],
     );

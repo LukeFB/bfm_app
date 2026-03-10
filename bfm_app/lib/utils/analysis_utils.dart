@@ -35,6 +35,8 @@ class AnalysisUtils {
       SELECT MIN(date) AS first, MAX(date) AS last
       FROM transactions
       WHERE excluded = 0
+        AND (account_id IS NULL OR account_id NOT IN
+             (SELECT akahu_id FROM accounts WHERE excluded = 1))
     ''');
     if (res.isEmpty) return {'first': null, 'last': null};
     return {

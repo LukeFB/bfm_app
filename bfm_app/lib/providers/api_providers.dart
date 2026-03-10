@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:bfm_app/auth/credential_store.dart';
 import 'package:bfm_app/auth/token_store.dart';
 import 'package:bfm_app/api/api_client.dart';
 import 'package:bfm_app/api/auth_api.dart';
@@ -7,6 +8,10 @@ import 'package:bfm_app/api/akahu_api.dart';
 import 'package:bfm_app/api/messages_api.dart';
 import 'package:bfm_app/api/profile_api.dart';
 import 'package:bfm_app/api/content_api.dart';
+
+/// Single shared [CredentialStore] instance.
+final credentialStoreProvider =
+    Provider<CredentialStore>((_) => CredentialStore());
 
 /// Single shared [TokenStore] instance.
 final tokenStoreProvider = Provider<TokenStore>((_) => TokenStore());

@@ -32,6 +32,8 @@ import 'package:flutter/material.dart';
 import 'package:bfm_app/screens/transactions_screen.dart';
 import 'package:bfm_app/screens/goals_screen.dart';
 import 'package:bfm_app/screens/settings_screen.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
+
 import 'package:bfm_app/screens/bank_connect_screen.dart';
 import 'package:bfm_app/screens/debug_screen.dart';
 import 'package:bfm_app/screens/debug_api_screen.dart';
@@ -198,7 +200,6 @@ class _LockGateState extends State<LockGate> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -234,13 +235,13 @@ class _LockGateState extends State<LockGate> {
 
 /// Root MaterialApp shell wired up by `main.dart`. Handles theming, route
 /// wiring, and navigator observers for analytics.
-class MyApp extends StatelessWidget {
+class MyApp extends ConsumerWidget {
   const MyApp({Key? key}) : super(key: key);
 
   /// Creates the MaterialApp with all named routes so every screen can navigate
   /// by string. Keep this minimal—expensive work should stay in services.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       navigatorObservers: [appRouteObserver],
@@ -254,12 +255,10 @@ class MyApp extends StatelessWidget {
       theme: BuxlyTheme.light.copyWith(
         textTheme: GoogleFonts.nunitoTextTheme(BuxlyTheme.light.textTheme),
       ),
-      home: const LockGate(), // Set the home to our LockGate
+      home: const LockGate(),
       routes: {
         '/login': (_) => const LoginScreen(),
         '/onboarding': (_) => const OnboardingScreen(),
-        // TODO: BankConnectScreen kept for dev/debug only (manual token entry)
-        '/bankconnect': (_) => const BankConnectScreen(),
         // Main navigation shell with swipeable screens
         // Order: Insights(0), Budget(1), Dashboard(2), Savings(3), Chat(4)
         '/dashboard': (_) => const MainShell(initialPage: 2),
@@ -271,9 +270,11 @@ class MyApp extends StatelessWidget {
         '/transaction': (_) => const TransactionsScreen(),
         '/goals': (_) => const GoalsScreen(),
         '/settings': (_) => const SettingsScreen(),
-        '/debug': (_) => const DebugScreen(),
-        '/debug-api': (_) => const DebugApiScreen(),
         '/subscriptions': (_) => const SubscriptionsScreen(),
+        // Debug-only routes — inaccessible in release builds.
+        if (kDebugMode) '/debug': (_) => const DebugScreen(),
+        if (kDebugMode) '/debug-api': (_) => const DebugApiScreen(),
+        if (kDebugMode) '/bankconnect': (_) => const BankConnectScreen(),
         '/subscriptions/edit': (_) => const SubscriptionsScreen(editMode: true),
         '/budget/build': (_) => const BudgetBuildScreen(),
         '/budget/edit': (_) => const BudgetBuildScreen(editMode: true),
